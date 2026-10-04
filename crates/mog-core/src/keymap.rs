@@ -83,6 +83,7 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("f8", "problems.next"),
     ("shift+f8", "problems.prev"),
     ("ctrl+shift+m", "problems.list"),
+    ("alt+m", "problems.list"),
     ("shift+alt+f", "lsp.format"),
     ("alt+,", "settings.open"),
     ("ctrl+g", "goto.prompt"),
