@@ -13,10 +13,11 @@ use lsp_types::{
 };
 use serde_json::{Value, json};
 use thiserror::Error;
-use tokio::io::{BufReader, BufWriter};
-use tokio::process::{ChildStdin, ChildStdout, Command};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader, BufWriter};
+use tokio::process::Command;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tokio::time;
 
 use crate::convert;
@@ -126,21 +127,41 @@ impl Client {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err(io::Error::other("language server has no stdio"));
         };
+        let (client, connection) = Self::connect(name, stdout, stdin, root, events);
+        tokio::spawn(async move {
+            let _ = connection.await;
+            // a server that ignores shutdown gets killed when the child is dropped
+            let _ = time::timeout(EXIT_TIMEOUT, child.wait()).await;
+        });
+        Ok(client)
+    }
+
+    /// Connects to a server that reads from `writer` and writes to `reader`.
+    ///
+    /// Returns the client and the handle of the background task driving the connection.
+    pub fn connect<R, W>(
+        name: impl Into<String>,
+        reader: R,
+        writer: W,
+        root: &Path,
+        events: UnboundedSender<LspEvent>,
+    ) -> (Self, JoinHandle<()>)
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        let name = name.into();
         let (outgoing, queue) = mpsc::unbounded_channel();
         let connection = Connection {
             name: name.clone(),
-            writer: BufWriter::new(stdin),
+            writer: BufWriter::new(writer),
             events,
             pending: HashMap::new(),
             next_id: INITIALIZE_ID + 1,
         };
         let params = initialize_params(root);
-        tokio::spawn(async move {
-            connection.run(stdout, queue, params).await;
-            // a server that ignores shutdown gets killed when the child is dropped
-            let _ = time::timeout(EXIT_TIMEOUT, child.wait()).await;
-        });
-        Ok(Self { name, outgoing })
+        let handle = tokio::spawn(connection.run(reader, queue, params));
+        (Self { name, outgoing }, handle)
     }
 
     /// Returns the name of the server.
@@ -235,11 +256,11 @@ fn initialize_params(root: &Path) -> Value {
 }
 
 /// The background half of a [`Client`] that owns the pipes.
-struct Connection {
+struct Connection<W> {
     /// The name of the server.
     name: String,
     /// The server stdin.
-    writer: BufWriter<ChildStdin>,
+    writer: BufWriter<W>,
     /// Where events for the editor go.
     events: UnboundedSender<LspEvent>,
     /// Requests waiting for a response, by id.
@@ -248,18 +269,18 @@ struct Connection {
     next_id: u64,
 }
 
-impl Connection {
+impl<W: AsyncWrite + Unpin> Connection<W> {
     /// Runs the connection until the server exits or the client is dropped.
     async fn run(
         mut self,
-        stdout: ChildStdout,
+        reader: impl AsyncRead + Unpin + Send + 'static,
         mut queue: UnboundedReceiver<Outgoing>,
         params: Value,
     ) {
         let (incoming_tx, mut incoming) = mpsc::unbounded_channel();
         // reading is not cancel safe so it gets its own task instead of a select branch
         tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout);
+            let mut reader = BufReader::new(reader);
             while let Ok(Some(message)) = transport::read_message(&mut reader).await {
                 if incoming_tx.send(message).is_err() {
                     break;
