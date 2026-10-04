@@ -49,6 +49,8 @@ pub enum SettingKey {
     Volume,
     /// Whether Discord shows what you are editing.
     Discord,
+    /// A toggle in the `[updates]` table, by field name.
+    Updates(&'static str),
 }
 
 /// The built in toggles as `(category, key, label, help)`.
@@ -173,6 +175,18 @@ const TOGGLES: &[(&str, SettingKey, &str, &str)] = &[
         "Discord status",
         "Show what you are editing on your Discord profile.",
     ),
+    (
+        "updates",
+        SettingKey::Updates("check"),
+        "Check for updates",
+        "Look for a new mog release on GitHub when mog starts.",
+    ),
+    (
+        "updates",
+        SettingKey::Updates("install"),
+        "Install updates",
+        "Download new releases by itself so they are ready next time.",
+    ),
 ];
 
 /// One row of the menu.
@@ -228,6 +242,11 @@ pub fn get(config: &Config, key: &SettingKey) -> SettingValue {
         SettingKey::Volume => SettingValue::Int(i64::from(config.audio.volume)),
         SettingKey::GhostText => SettingValue::Bool(config.ai.ghost_text),
         SettingKey::Discord => SettingValue::Bool(config.discord.enabled),
+        SettingKey::Updates(name) => SettingValue::Bool(match *name {
+            "check" => config.updates.check,
+            "install" => config.updates.install,
+            _ => false,
+        }),
     }
 }
 
@@ -265,6 +284,11 @@ fn toggle_mut<'a>(config: &'a mut Config, key: &SettingKey) -> Option<&'a mut bo
         SettingKey::FlairEnabled => &mut config.flair.enabled,
         SettingKey::GhostText => &mut config.ai.ghost_text,
         SettingKey::Discord => &mut config.discord.enabled,
+        SettingKey::Updates(name) => match *name {
+            "check" => &mut config.updates.check,
+            "install" => &mut config.updates.install,
+            _ => return None,
+        },
         _ => return None,
     })
 }
@@ -322,6 +346,7 @@ pub fn persisted(config: &Config, key: &SettingKey) -> (Vec<&'static str>, Setti
         SettingKey::Volume => (vec!["audio", "volume"], get(config, key)),
         SettingKey::GhostText => (vec!["ai", "ghost_text"], get(config, key)),
         SettingKey::Discord => (vec!["discord", "enabled"], get(config, key)),
+        SettingKey::Updates(name) => (vec!["updates", name], get(config, key)),
     }
 }
 

@@ -193,6 +193,15 @@ API keys are never read from or written to the config file.
 | `explorer` | `true` | Open the file explorer when opening a folder |
 | `icons` | `true` | File icons |
 
+### `[updates]`
+
+| key | default | |
+| --- | --- | --- |
+| `check` | `true` | Look for a new release on GitHub when mog starts |
+| `install` | `true` | Download and install it by itself, ready the next time mog starts |
+
+Builds made with `cargo build` or `cargo run` are never replaced.
+
 ### `[themes]`
 
 Make your own theme from a built in one. Every color is optional and missing ones come from

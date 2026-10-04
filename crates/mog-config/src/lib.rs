@@ -22,6 +22,7 @@ pub mod save;
 pub mod terminal;
 pub mod theme;
 pub mod ui;
+pub mod updates;
 
 pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
 pub use audio::AudioConfig;
@@ -31,6 +32,7 @@ pub use save::{SettingValue, config_path, save_setting};
 pub use terminal::TerminalConfig;
 pub use theme::ThemeConfig;
 pub use ui::UiConfig;
+pub use updates::UpdatesConfig;
 
 /// The environment variable that overrides the config directory.
 pub const CONFIG_DIR_ENV: &str = "MOG_CONFIG_DIR";
@@ -104,6 +106,8 @@ pub struct Config {
     pub discord: DiscordConfig,
     /// Custom color themes by name, picked with `ui.theme`.
     pub themes: BTreeMap<String, ThemeConfig>,
+    /// Updating from GitHub releases.
+    pub updates: UpdatesConfig,
 }
 
 /// Settings for editing behavior.

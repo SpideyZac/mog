@@ -90,3 +90,9 @@ show_file = true
 base = "ocean"
 accent = "#ff5ccd"
 bg = "#070b14"
+
+[updates]
+# look for a new release on github when mog starts
+check = true
+# download and install it by itself, ready the next time mog starts
+install = true
