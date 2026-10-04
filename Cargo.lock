@@ -1027,6 +1027,7 @@ dependencies = [
  "futures",
  "mog-config",
  "mog-core",
+ "mog-flair",
  "mog-tui",
  "ratatui",
  "tokio",

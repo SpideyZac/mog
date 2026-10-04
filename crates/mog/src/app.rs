@@ -1,17 +1,24 @@
 //! The application state and event loop.
 
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
 use mog_config::Config;
 use mog_core::{Command, Editor, Keymap, Outcome};
+use mog_flair::{FlairLayer, builtin};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 use ratatui::layout::Rect;
+use tokio::time::{self, MissedTickBehavior};
 
 use crate::cli::Args;
 use crate::clipboard;
 use crate::settings;
 use crate::terminal::Tui;
+
+/// The time between animation frames, about 30 per second.
+const FRAME_TIME: Duration = Duration::from_millis(33);
 
 /// The running editor.
 pub struct App {
@@ -34,6 +41,11 @@ impl App {
     pub fn new(args: Args) -> Self {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
+        let mut flair = FlairLayer::new();
+        for item in builtin::all() {
+            flair.register(item);
+        }
+        compositor.push(Box::new(flair));
         compositor.push(Box::new(StatusLine::new()));
         let mut problems = Vec::new();
         let config = Config::load().unwrap_or_else(|err| {
@@ -70,10 +82,22 @@ impl App {
     /// Returns an error if drawing or reading terminal events fails.
     pub async fn run(&mut self, terminal: &mut Tui) -> Result<()> {
         let mut events = EventStream::new();
+        let mut frames = time::interval(FRAME_TIME);
+        frames.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut last_tick = Instant::now();
         while !self.quit {
             self.draw(terminal)?;
-            if let Some(event) = events.next().await {
-                self.handle_event(event?);
+            let animating = self.compositor.is_animating();
+            tokio::select! {
+                event = events.next() => match event {
+                    Some(event) => self.handle_event(event?),
+                    None => break,
+                },
+                _ = frames.tick(), if animating => {
+                    let now = Instant::now();
+                    self.compositor.tick(now - last_tick);
+                    last_tick = now;
+                }
             }
         }
         Ok(())
