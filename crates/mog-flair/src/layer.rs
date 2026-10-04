@@ -5,7 +5,7 @@ use std::{collections::HashSet, time::Duration};
 use mog_tui::{Context, Layer, Layout, Ui};
 use ratatui::{buffer::Buffer, layout::Rect};
 
-use crate::flair::{Flair, FlairContext};
+use crate::flair::{Flair, FlairContext, Placement};
 
 /// Holds the registered flairs and draws them above the editor.
 #[derive(Default)]
@@ -52,46 +52,62 @@ impl FlairLayer {
             .collect()
     }
 
-    /// Returns the flairs that should currently run.
-    fn active(&self) -> impl Iterator<Item = &dyn Flair> {
-        self.flairs
-            .iter()
-            .filter(|flair| !self.hidden && !self.disabled.contains(flair.id()))
-            .map(AsRef::as_ref)
+    /// Returns whether the flair called `id` should run.
+    fn is_on(&self, id: &str) -> bool {
+        !self.hidden && !self.disabled.contains(id)
     }
 }
 
 impl Layer for FlairLayer {
     fn area(&self, layout: &Layout, _ui: &Ui) -> Rect {
-        layout.editor
+        layout.screen
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
         // the settings menu changes the config so follow it every frame
         self.hidden = !cx.ui.config.flair.enabled;
         self.disabled = cx.ui.config.flair.disabled.iter().cloned().collect();
+        let layout = cx.ui.layout(area);
         let flair_cx = FlairContext {
             editor: cx.editor,
             theme: cx.theme,
+            ui: cx.ui,
+            layout,
         };
-        for flair in self.active() {
-            let flair_area = flair.placement().area(area);
-            flair.render(flair_area, buf, &flair_cx);
+        let mut segments = Vec::new();
+        let (hidden, disabled) = (self.hidden, &self.disabled);
+        for flair in &mut self.flairs {
+            if hidden || disabled.contains(flair.id()) {
+                continue;
+            }
+            for event in &flair_cx.ui.events {
+                flair.observe(event);
+            }
+            match flair.placement() {
+                Placement::Status(_) => segments.extend(flair.segment(&flair_cx)),
+                placement => {
+                    let flair_area = placement.area(&layout);
+                    if !flair_area.is_empty() {
+                        flair.render(flair_area, buf, &flair_cx);
+                    }
+                }
+            }
         }
+        cx.ui.segments.extend(segments);
     }
 
     fn tick(&mut self, dt: Duration) {
-        if self.hidden {
-            return;
-        }
+        let (hidden, disabled) = (self.hidden, &self.disabled);
         for flair in &mut self.flairs {
-            if !self.disabled.contains(flair.id()) {
+            if !hidden && !disabled.contains(flair.id()) {
                 flair.tick(dt);
             }
         }
     }
 
     fn is_animating(&self) -> bool {
-        self.active().any(Flair::is_animating)
+        self.flairs
+            .iter()
+            .any(|flair| self.is_on(flair.id()) && flair.is_animating())
     }
 }

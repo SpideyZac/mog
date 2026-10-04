@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use mog_core::Editor;
-use mog_tui::Theme;
+use mog_tui::{Layout, Segment, Side, Theme, Ui, UiEvent};
 use ratatui::{buffer::Buffer, layout::Rect};
 
 /// Which corner of the editor area a flair sits in.
@@ -34,13 +34,20 @@ pub enum Placement {
     /// The whole editor area, for things that wander over the text. Only cells the flair draws
     /// are changed.
     Overlay,
+    /// The whole screen, for things like screensavers.
+    Screen,
+    /// A piece of the status line, see [`Flair::segment`].
+    Status(Side),
 }
 
 impl Placement {
-    /// Returns the area this placement covers within `editor_area`.
-    pub fn area(self, editor_area: Rect) -> Rect {
+    /// Returns the area this placement covers on a screen split like `layout`.
+    pub fn area(self, layout: &Layout) -> Rect {
+        let editor_area = layout.editor;
         match self {
             Self::Overlay => editor_area,
+            Self::Screen => layout.screen,
+            Self::Status(_) => layout.status,
             Self::Corner {
                 corner,
                 width,
@@ -68,11 +75,16 @@ pub struct FlairContext<'a> {
     pub editor: &'a Editor,
     /// The active theme.
     pub theme: &'a Theme,
+    /// The shared ui state, read only.
+    pub ui: &'a Ui,
+    /// Where everything is on screen.
+    pub layout: Layout,
 }
 
 /// A silly or cool widget drawn on top of the editor.
 ///
-/// Flairs are purely decorative. They never take input and never change the editor.
+/// Flairs are purely decorative. They never take input and never change the editor, but they
+/// can react to what happens through [`Flair::observe`].
 pub trait Flair {
     /// Returns a unique name, used to turn the flair off in the config.
     fn id(&self) -> &str;
@@ -85,6 +97,9 @@ pub trait Flair {
     /// Returns where the flair is drawn.
     fn placement(&self) -> Placement;
 
+    /// Reacts to something that happened, like typing or saving.
+    fn observe(&mut self, _event: &UiEvent) {}
+
     /// Advances animations by `dt`.
     fn tick(&mut self, _dt: Duration) {}
 
@@ -93,13 +108,19 @@ pub trait Flair {
         false
     }
 
-    /// Draws the flair into `buf` within `area`.
-    fn render(&self, area: Rect, buf: &mut Buffer, cx: &FlairContext<'_>);
+    /// Draws the flair into `buf` within `area`. Not called for status line flairs.
+    fn render(&mut self, _area: Rect, _buf: &mut Buffer, _cx: &FlairContext<'_>) {}
+
+    /// Returns the status line piece of a [`Placement::Status`] flair.
+    fn segment(&mut self, _cx: &FlairContext<'_>) -> Option<Segment> {
+        None
+    }
 }
 
 #[cfg(test)]
 /// Tests for [`Placement`].
 mod tests {
+    use mog_tui::Layout;
     use ratatui::layout::Rect;
 
     use super::{Corner, Placement};
@@ -107,14 +128,20 @@ mod tests {
     /// Corner boxes hug the right edges and get clamped to the area.
     #[test]
     fn corner_area() {
-        let area = Rect::new(0, 0, 80, 20);
+        let layout = Layout {
+            editor: Rect::new(0, 0, 80, 20),
+            ..Layout::default()
+        };
         let placement = Placement::Corner {
             corner: Corner::BottomRight,
             width: 10,
             height: 3,
         };
-        assert_eq!(placement.area(area), Rect::new(70, 17, 10, 3));
-        let tiny = Rect::new(0, 0, 4, 2);
-        assert_eq!(placement.area(tiny), Rect::new(0, 0, 4, 2));
+        assert_eq!(placement.area(&layout), Rect::new(70, 17, 10, 3));
+        let tiny = Layout {
+            editor: Rect::new(0, 0, 4, 2),
+            ..Layout::default()
+        };
+        assert_eq!(placement.area(&tiny), Rect::new(0, 0, 4, 2));
     }
 }

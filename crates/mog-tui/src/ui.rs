@@ -73,12 +73,20 @@ pub enum Side {
 /// A piece of text other layers add to the status line for one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
-    /// The text to show.
-    pub text: String,
-    /// How to draw it.
-    pub style: Style,
+    /// The pieces of text and how to draw each.
+    pub parts: Vec<(String, Style)>,
     /// Which end it goes on.
     pub side: Side,
+}
+
+impl Segment {
+    /// Creates a segment of one piece of text.
+    pub fn new(text: impl Into<String>, style: Style, side: Side) -> Self {
+        Self {
+            parts: vec![(text.into(), style)],
+            side,
+        }
+    }
 }
 
 /// Something that happened since the last frame, for flair and sound to react to.

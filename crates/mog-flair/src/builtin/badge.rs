@@ -2,16 +2,13 @@
 
 use std::time::Duration;
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-};
+use mog_tui::{Segment, Side};
+use ratatui::style::{Color, Modifier, Style};
 
-use crate::flair::{Corner, Flair, FlairContext, Placement};
+use crate::flair::{Flair, FlairContext, Placement};
 
 /// The text the badge shows.
-const TEXT: &str = " ~mog~ ";
+const TEXT: &str = "~mog~";
 
 /// How long one full trip around the color wheel takes.
 const CYCLE: Duration = Duration::from_secs(3);
@@ -60,11 +57,7 @@ impl Flair for Badge {
     }
 
     fn placement(&self) -> Placement {
-        Placement::Corner {
-            corner: Corner::TopRight,
-            width: u16::try_from(TEXT.len()).unwrap_or(u16::MAX),
-            height: 1,
-        }
+        Placement::Status(Side::Right)
     }
 
     fn tick(&mut self, dt: Duration) {
@@ -78,15 +71,25 @@ impl Flair for Badge {
         true
     }
 
-    fn render(&self, area: Rect, buf: &mut Buffer, cx: &FlairContext<'_>) {
+    fn segment(&mut self, cx: &FlairContext<'_>) -> Option<Segment> {
         let base = self.elapsed.as_secs_f32() / CYCLE.as_secs_f32() * 360.0;
         let bg = cx.theme.status.bg.unwrap_or(Color::Reset);
-        for (i, ch) in TEXT.chars().enumerate().take(usize::from(area.width)) {
-            let hue = base + HUE_STEP * i as f32;
-            let style = Style::new().fg(hue_to_color(hue)).bg(bg);
-            let x = area.x + u16::try_from(i).unwrap_or(u16::MAX);
-            buf.set_string(x, area.y, ch.to_string(), style);
-        }
+        let parts = TEXT
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| {
+                let hue = base + HUE_STEP * i as f32;
+                let style = Style::new()
+                    .fg(hue_to_color(hue))
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD);
+                (ch.to_string(), style)
+            })
+            .collect();
+        Some(Segment {
+            parts,
+            side: Side::Right,
+        })
     }
 }
 

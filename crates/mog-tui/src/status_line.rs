@@ -48,11 +48,14 @@ impl Layer for StatusLine {
         ];
         let mut right = Vec::new();
         for segment in &cx.ui.segments {
-            let span = Span::styled(format!("{} ", segment.text), segment.style);
-            match segment.side {
-                Side::Left => left.push(span),
-                Side::Right => right.push(span),
+            let side = match segment.side {
+                Side::Left => &mut left,
+                Side::Right => &mut right,
+            };
+            for (text, style) in &segment.parts {
+                side.push(Span::styled(text.clone(), *style));
             }
+            side.push(Span::raw(" "));
         }
         left.push(Span::styled(
             cx.editor.status().unwrap_or_default().to_owned(),
