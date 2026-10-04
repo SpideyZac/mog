@@ -13,7 +13,8 @@ const SCROLL_MARGIN: usize = 3;
 /// Tabs stretch to the next multiple of `tab_width`. Control chars are drawn as one cell.
 pub fn char_width(ch: char, col: usize, tab_width: usize) -> usize {
     if ch == '\t' {
-        tab_width - col % tab_width.max(1)
+        let tab_width = tab_width.max(1);
+        tab_width - col % tab_width
     } else {
         ch.width().unwrap_or(1).max(1)
     }
