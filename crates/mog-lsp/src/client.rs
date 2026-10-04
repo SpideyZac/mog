@@ -9,9 +9,10 @@ use std::{
 };
 
 use lsp_types::{
-    ClientCapabilities, ClientInfo, InitializeParams, PublishDiagnosticsClientCapabilities,
-    PublishDiagnosticsParams, TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities,
-    WorkspaceFolder,
+    ClientCapabilities, ClientInfo, CompletionClientCapabilities, CompletionItemCapability,
+    GotoCapability, HoverClientCapabilities, InitializeParams, MarkupKind,
+    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, TextDocumentClientCapabilities,
+    TextDocumentSyncClientCapabilities, WorkspaceFolder,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -99,7 +100,8 @@ enum Outgoing {
 
 /// A running language server.
 ///
-/// Dropping the client kills the server process.
+/// Clones share the connection. Dropping the last one shuts the server down.
+#[derive(Clone)]
 pub struct Client {
     /// The name of the server, from the config.
     name: String,
@@ -254,6 +256,21 @@ fn initialize_params(root: &Path) -> Value {
             text_document: Some(TextDocumentClientCapabilities {
                 synchronization: Some(TextDocumentSyncClientCapabilities::default()),
                 publish_diagnostics: Some(PublishDiagnosticsClientCapabilities::default()),
+                completion: Some(CompletionClientCapabilities {
+                    completion_item: Some(CompletionItemCapability {
+                        // snippets need a placeholder engine mog does not have
+                        snippet_support: Some(false),
+                        documentation_format: Some(vec![MarkupKind::PlainText]),
+                        ..CompletionItemCapability::default()
+                    }),
+                    ..CompletionClientCapabilities::default()
+                }),
+                hover: Some(HoverClientCapabilities {
+                    content_format: Some(vec![MarkupKind::PlainText, MarkupKind::Markdown]),
+                    ..HoverClientCapabilities::default()
+                }),
+                definition: Some(GotoCapability::default()),
+                formatting: Some(Default::default()),
                 ..TextDocumentClientCapabilities::default()
             }),
             ..ClientCapabilities::default()
