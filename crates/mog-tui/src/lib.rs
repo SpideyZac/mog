@@ -2,6 +2,7 @@
 //!
 //! Everything that draws to the screen or reads terminal input lives here.
 
+pub mod completion;
 pub mod compositor;
 pub mod editor_view;
 pub mod explorer;
@@ -18,6 +19,7 @@ pub mod tabs;
 pub mod theme;
 pub mod ui;
 
+pub use completion::CompletionMenu;
 pub use compositor::{Compositor, Context, EventResult, Layer};
 pub use editor_view::EditorView;
 pub use explorer::Explorer;

@@ -10,7 +10,10 @@ use ratatui::{
     style::Style,
 };
 
-use crate::{search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT};
+use crate::{
+    completion::CompletionState, search::SearchState, settings::SettingKey,
+    status_line::STATUS_HEIGHT,
+};
 
 /// The widest the file explorer gets, in cells.
 const EXPLORER_MAX_WIDTH: u16 = 30;
@@ -176,6 +179,10 @@ pub struct Ui {
     pub setting_changes: Vec<SettingKey>,
     /// Where the text cursor was drawn this frame, if it is on screen.
     pub cursor_screen: Option<Position>,
+    /// The open completion menu.
+    pub completion: Option<CompletionState>,
+    /// Hover text and the char offset it is about.
+    pub hover: Option<(String, usize)>,
 }
 
 impl Ui {
