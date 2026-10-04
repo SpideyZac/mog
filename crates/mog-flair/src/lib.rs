@@ -4,5 +4,7 @@
 //! Flairs never get input and never change the document, they just look good.
 
 pub mod flair;
+pub mod layer;
 
 pub use flair::{Corner, Flair, FlairContext, Placement};
+pub use layer::FlairLayer;
