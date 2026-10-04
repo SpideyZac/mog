@@ -1,9 +1,11 @@
 //! Key chords and the bindings from chords to commands.
 
-use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
-use std::str::FromStr;
+use std::{
+    collections::HashMap,
+    error::Error,
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
 use crate::command::Command;
 

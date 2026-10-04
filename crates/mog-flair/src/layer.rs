@@ -1,12 +1,9 @@
 //! The compositor layer that draws every registered flair.
 
-use std::collections::HashSet;
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
-use mog_tui::status_line::STATUS_HEIGHT;
-use mog_tui::{Context, Layer};
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use mog_tui::{Context, Layer, status_line::STATUS_HEIGHT};
+use ratatui::{buffer::Buffer, layout::Rect};
 
 use crate::flair::{Flair, FlairContext};
 

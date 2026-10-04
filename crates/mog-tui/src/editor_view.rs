@@ -4,11 +4,15 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use mog_core::{Command, movement, view};
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
+use ratatui::{
+    buffer::Buffer,
+    layout::{Position, Rect},
+};
 
-use crate::compositor::{Context, EventResult, Layer};
-use crate::status_line::STATUS_HEIGHT;
+use crate::{
+    compositor::{Context, EventResult, Layer},
+    status_line::STATUS_HEIGHT,
+};
 
 /// Blank cells between the line numbers and the text.
 const GUTTER_PADDING: usize = 2;
@@ -216,13 +220,13 @@ impl Layer for EditorView {
 /// Tests for [`EditorView`].
 mod tests {
     use mog_core::{Editor, MemoryClipboard, Range, Transaction};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    use ratatui::layout::Position;
+    use ratatui::{Terminal, backend::TestBackend, layout::Position};
 
     use super::EditorView;
-    use crate::compositor::{Compositor, Context};
-    use crate::theme::Theme;
+    use crate::{
+        compositor::{Compositor, Context},
+        theme::Theme,
+    };
 
     /// Text is drawn after the gutter with tabs expanded and the cursor placed.
     #[test]

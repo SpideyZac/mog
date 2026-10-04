@@ -1,11 +1,9 @@
 //! A smoke test against a real `rust-analyzer`, ignored by default since it needs one installed.
 
-use std::env;
-use std::time::Duration;
+use std::{env, time::Duration};
 
 use mog_lsp::{Client, LspEvent};
-use tokio::sync::mpsc;
-use tokio::time;
+use tokio::{sync::mpsc, time};
 
 /// The client finishes the handshake with `rust-analyzer`.
 #[tokio::test]

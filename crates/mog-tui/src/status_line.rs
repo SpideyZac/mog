@@ -1,10 +1,12 @@
 //! The bar at the bottom of the screen.
 
 use mog_core::{Severity, view};
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Widget;
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    text::{Line, Span},
+    widgets::Widget,
+};
 
 use crate::compositor::{Context, Layer};
 

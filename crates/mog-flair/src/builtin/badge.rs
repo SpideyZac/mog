@@ -2,9 +2,11 @@
 
 use std::time::Duration;
 
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Style},
+};
 
 use crate::flair::{Corner, Flair, FlairContext, Placement};
 

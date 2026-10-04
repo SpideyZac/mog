@@ -1,7 +1,9 @@
 //! Starting language servers and keeping them in sync with open documents.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::{Path, PathBuf},
+};
 
 use lsp_types::{DiagnosticSeverity, PublishDiagnosticsParams};
 use mog_config::ServerConfig;

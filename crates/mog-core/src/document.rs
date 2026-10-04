@@ -1,15 +1,19 @@
 //! Open files and their text.
 
-use std::fs::File;
-use std::io::{self, BufWriter, ErrorKind};
-use std::path::{self, Path, PathBuf};
+use std::{
+    fs::File,
+    io::{self, BufWriter, ErrorKind},
+    path::{self, Path, PathBuf},
+};
 
 use ropey::Rope;
 
-use crate::diagnostic::Diagnostic;
-use crate::history::{History, Step};
-use crate::range::Range;
-use crate::transaction::Transaction;
+use crate::{
+    diagnostic::Diagnostic,
+    history::{History, Step},
+    range::Range,
+    transaction::Transaction,
+};
 
 /// The name shown for a document that has no path yet.
 const SCRATCH_NAME: &str = "[scratch]";
@@ -244,14 +248,12 @@ impl Document {
 #[cfg(test)]
 /// Tests for [`Document`].
 mod tests {
-    use std::env;
-    use std::fs;
+    use std::{env, fs};
 
     use ropey::Rope;
 
     use super::{Document, LineEnding};
-    use crate::range::Range;
-    use crate::transaction::Transaction;
+    use crate::{range::Range, transaction::Transaction};
 
     /// Undo and redo move both the text and the selection.
     #[test]

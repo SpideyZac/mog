@@ -1,7 +1,6 @@
 //! The [`AiProvider`] trait every AI backend implements.
 
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
 use thiserror::Error;
 

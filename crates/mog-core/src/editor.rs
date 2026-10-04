@@ -1,17 +1,18 @@
 //! The editor state and command execution.
 
-use std::io;
-use std::path::PathBuf;
+use std::{io, path::PathBuf};
 
 use ropey::Rope;
 
-use crate::clipboard::Clipboard;
-use crate::command::{Command, Motion};
-use crate::document::Document;
-use crate::movement;
-use crate::range::Range;
-use crate::transaction::Transaction;
-use crate::view::{self, View};
+use crate::{
+    clipboard::Clipboard,
+    command::{Command, Motion},
+    document::Document,
+    movement,
+    range::Range,
+    transaction::Transaction,
+    view::{self, View},
+};
 
 /// Settings that change how editing commands behave.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -413,10 +414,12 @@ impl Editor {
 /// Tests for [`Editor`].
 mod tests {
     use super::{Editor, Outcome};
-    use crate::clipboard::MemoryClipboard;
-    use crate::command::{Command, Motion};
-    use crate::document::Document;
-    use crate::range::Range;
+    use crate::{
+        clipboard::MemoryClipboard,
+        command::{Command, Motion},
+        document::Document,
+        range::Range,
+    };
 
     /// Creates an editor holding `text` with the cursor at `pos`.
     fn editor_with(text: &str, pos: usize) -> Editor {

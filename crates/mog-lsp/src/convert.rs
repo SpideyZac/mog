@@ -1,7 +1,9 @@
 //! Conversions between editor and protocol types.
 
-use std::path::{Path, PathBuf};
-use std::str::{self, FromStr};
+use std::{
+    path::{Path, PathBuf},
+    str::{self, FromStr},
+};
 
 use lsp_types::{Position, Uri};
 use ropey::Rope;

@@ -1,7 +1,6 @@
 //! Turning the loaded config into editor state.
 
-use std::env;
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use mog_ai::{AiProvider, Claude, Copilot, claude};
 use mog_config::Config;

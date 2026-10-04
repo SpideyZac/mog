@@ -1,9 +1,6 @@
 //! The Lua runtime plugins run in and the `mog` table they talk to.
 
-use std::cell::RefCell;
-use std::fs;
-use std::path::Path;
-use std::rc::Rc;
+use std::{cell::RefCell, fs, path::Path, rc::Rc};
 
 use mlua::{Error as LuaError, Function, Lua, Result as LuaResult, Table, Value};
 

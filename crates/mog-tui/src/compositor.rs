@@ -4,9 +4,11 @@ use std::time::Duration;
 
 use crossterm::event::{MouseEvent, MouseEventKind};
 use mog_core::Editor;
-use ratatui::Frame;
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
+use ratatui::{
+    Frame,
+    buffer::Buffer,
+    layout::{Position, Rect},
+};
 
 use crate::theme::Theme;
 

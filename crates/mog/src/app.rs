@@ -1,7 +1,9 @@
 //! The application state and event loop.
 
-use std::env;
-use std::time::{Duration, Instant};
+use std::{
+    env,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
@@ -12,16 +14,19 @@ use mog_lsp::LspEvent;
 use mog_plugin::{PluginHost, PluginRequest};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 use ratatui::layout::Rect;
-use tokio::sync::mpsc::{self, UnboundedReceiver};
-use tokio::time::{self, MissedTickBehavior};
+use tokio::{
+    sync::mpsc::{self, UnboundedReceiver},
+    time::{self, MissedTickBehavior},
+};
 
-use crate::ai::Assistant;
-use crate::cli::Args;
-use crate::clipboard;
-use crate::lsp::{self, LanguageServers};
-use crate::plugins;
-use crate::settings;
-use crate::terminal::Tui;
+use crate::{
+    ai::Assistant,
+    cli::Args,
+    clipboard,
+    lsp::{self, LanguageServers},
+    plugins, settings,
+    terminal::Tui,
+};
 
 /// The time between animation frames, about 30 per second.
 const FRAME_TIME: Duration = Duration::from_millis(33);

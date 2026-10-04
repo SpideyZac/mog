@@ -1,10 +1,12 @@
 //! A connection to one language server process.
 
-use std::collections::HashMap;
-use std::io::{self, ErrorKind};
-use std::path::Path;
-use std::process::{self, Stdio};
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    io::{self, ErrorKind},
+    path::Path,
+    process::{self, Stdio},
+    time::Duration,
+};
 
 use lsp_types::{
     ClientCapabilities, ClientInfo, InitializeParams, PublishDiagnosticsClientCapabilities,
@@ -13,15 +15,21 @@ use lsp_types::{
 };
 use serde_json::{Value, json};
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncWrite, BufReader, BufWriter};
-use tokio::process::Command;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
-use tokio::time;
+use tokio::{
+    io::{AsyncRead, AsyncWrite, BufReader, BufWriter},
+    process::Command,
+    sync::{
+        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        oneshot,
+    },
+    task::JoinHandle,
+    time,
+};
 
-use crate::convert;
-use crate::transport::{self, Message};
+use crate::{
+    convert,
+    transport::{self, Message},
+};
 
 /// The id of the initialize request, always the first request sent.
 const INITIALIZE_ID: u64 = 0;

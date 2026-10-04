@@ -1,14 +1,17 @@
 //! Tests the client against a scripted server over in memory pipes.
 
-use std::env;
-use std::time::Duration;
+use std::{env, time::Duration};
 
-use mog_lsp::transport::{read_message, write_message};
-use mog_lsp::{Client, LspEvent, Message};
+use mog_lsp::{
+    Client, LspEvent, Message,
+    transport::{read_message, write_message},
+};
 use serde_json::json;
-use tokio::io::{self, BufReader};
-use tokio::sync::mpsc;
-use tokio::time;
+use tokio::{
+    io::{self, BufReader},
+    sync::mpsc,
+    time,
+};
 
 /// The client does the handshake, gets diagnostics and gets request results.
 #[tokio::test]

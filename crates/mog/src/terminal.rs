@@ -1,17 +1,16 @@
 //! Terminal setup and teardown.
 
-use std::io::{self, Stdout, stdout};
-use std::panic;
+use std::{
+    io::{self, Stdout, stdout},
+    panic,
+};
 
-use crossterm::event::{
-    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+use crossterm::{
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 /// The terminal type the editor draws to.
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;

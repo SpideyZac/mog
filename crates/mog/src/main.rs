@@ -10,9 +10,8 @@ mod settings;
 mod terminal;
 
 use anyhow::Result;
-use clap::Parser;
-
 use app::App;
+use clap::Parser;
 use cli::Args;
 
 /// Runs the editor.

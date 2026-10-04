@@ -3,11 +3,12 @@
 //! The config is a TOML file at `<config dir>/mog/config.toml`. Every field has a default so an
 //! empty or missing file is a valid config.
 
-use std::collections::BTreeMap;
-use std::env;
-use std::fs;
-use std::io::{self, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    io::{self, ErrorKind},
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 use thiserror::Error;

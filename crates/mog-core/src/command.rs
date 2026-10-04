@@ -1,8 +1,10 @@
 //! Things the editor can be told to do.
 
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
-use std::str::FromStr;
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+    str::FromStr,
+};
 
 /// A way of moving the cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

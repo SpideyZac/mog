@@ -1,7 +1,6 @@
 //! Undo and redo history.
 
-use crate::range::Range;
-use crate::transaction::Transaction;
+use crate::{range::Range, transaction::Transaction};
 
 /// One applied [`Transaction`] along with the transaction that undoes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,8 +71,7 @@ impl History {
 /// Tests for [`History`].
 mod tests {
     use super::{History, Step};
-    use crate::range::Range;
-    use crate::transaction::Transaction;
+    use crate::{range::Range, transaction::Transaction};
 
     /// Builds a step that inserts `text` at `pos` with a dummy inverse.
     fn step(pos: usize, text: &str) -> Step {

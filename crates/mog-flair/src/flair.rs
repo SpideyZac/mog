@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use mog_core::Editor;
 use mog_tui::Theme;
-use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::{buffer::Buffer, layout::Rect};
 
 /// Which corner of the editor area a flair sits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
