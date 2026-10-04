@@ -182,6 +182,7 @@ API keys are never read from or written to the config file.
 | `auto_close_brackets` | `true` | Typing `(`, `[`, `{` or a quote also types the closing one |
 | `auto_complete` | `true` | Completions pop up while typing |
 | `diagnostics_delay` | `500` | Milliseconds of no typing before language servers check the file |
+| `alt_gr` | `true` | Symbols typed with AltGr (`{` on QWERTZ, `@` on AZERTY) type text instead of running `ctrl+alt` shortcuts. Only matters on layouts with AltGr |
 
 ### `[ui]`
 
@@ -380,6 +381,12 @@ whenever it changes. Saving it applies it right away.
 `ctrl+k` lists everything and lets you rebind. `mog --keys` prints the same list. Where two
 chords are listed, either works; the `alt` versions are there for terminals that eat the `ctrl`
 ones.
+
+On layouts with AltGr (German, Swiss, French, Spanish, Italian, Nordic, Polish and most other
+European ones), Windows sends AltGr as `ctrl+alt`, so `editor.alt_gr` turns those into typed
+symbols. A few default chords use keys that are awkward or dead keys there, like `` ctrl+` ``,
+`ctrl+\` and `ctrl+/`; rebind them from `ctrl+k`. On macOS, keep "Option as Meta" off in your
+terminal (or on for the left Option only) so Option still types symbols.
 
 ### File
 

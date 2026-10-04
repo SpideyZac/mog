@@ -126,6 +126,11 @@ pub struct EditorConfig {
     pub auto_complete: bool,
     /// How long typing has to pause, in milliseconds, before language servers check the file.
     pub diagnostics_delay: u64,
+    /// Whether symbols typed with `AltGr` type text instead of running `ctrl+alt` shortcuts.
+    ///
+    /// Windows reports `AltGr` as `ctrl+alt`, which layouts like QWERTZ and AZERTY need for
+    /// `{`, `[`, `@` and friends.
+    pub alt_gr: bool,
 }
 
 impl Default for EditorConfig {
@@ -136,6 +141,7 @@ impl Default for EditorConfig {
             auto_close_brackets: true,
             auto_complete: true,
             diagnostics_delay: 500,
+            alt_gr: true,
         }
     }
 }

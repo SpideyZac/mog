@@ -721,7 +721,7 @@ impl App {
         match event {
             // windows reports releases too and we only care about presses
             Event::Key(key) if key.kind != KeyEventKind::Release => {
-                if let Some(chord) = input::key_chord(key) {
+                if let Some(chord) = input::key_chord(key, self.ui.config.editor.alt_gr) {
                     self.handle_key(chord);
                 }
             }

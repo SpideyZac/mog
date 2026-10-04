@@ -158,6 +158,12 @@ const TOGGLES: &[(&str, SettingKey, &str, &str)] = &[
     ),
     (
         "code",
+        SettingKey::Editor("alt_gr"),
+        "AltGr types symbols",
+        "For layouts like QWERTZ or AZERTY. Turn off to use ctrl+alt symbol shortcuts.",
+    ),
+    (
+        "code",
         SettingKey::GhostText,
         "AI ghost text",
         "Gray AI suggestions after the cursor, tab to accept.",
@@ -233,6 +239,7 @@ pub fn get(config: &Config, key: &SettingKey) -> SettingValue {
             "auto_close_brackets" => config.editor.auto_close_brackets,
             "auto_complete" => config.editor.auto_complete,
             "insert_spaces" => config.editor.insert_spaces,
+            "alt_gr" => config.editor.alt_gr,
             _ => false,
         }),
         SettingKey::TabWidth => {
@@ -280,6 +287,7 @@ fn toggle_mut<'a>(config: &'a mut Config, key: &SettingKey) -> Option<&'a mut bo
             "auto_close_brackets" => &mut config.editor.auto_close_brackets,
             "auto_complete" => &mut config.editor.auto_complete,
             "insert_spaces" => &mut config.editor.insert_spaces,
+            "alt_gr" => &mut config.editor.alt_gr,
             _ => return None,
         },
         SettingKey::Audio(name) => match *name {

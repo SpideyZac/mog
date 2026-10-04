@@ -207,12 +207,9 @@ impl KeyChord {
     }
 
     /// Returns the char this chord types, if it is plain text input.
-    ///
-    /// Symbols typed with `alt` or `ctrl+alt` count as text, since that is how `AltGr` arrives
-    /// on layouts like QWERTZ, where `{` is `AltGr+7`.
     pub fn typed_char(&self) -> Option<char> {
         match self.key {
-            Key::Char(ch) if self.is_plain() || self.is_alt_gr() => Some(if self.mods.shift {
+            Key::Char(ch) if !self.mods.ctrl && !self.mods.alt => Some(if self.mods.shift {
                 ch.to_uppercase().next().unwrap_or(ch)
             } else {
                 ch
@@ -221,16 +218,27 @@ impl KeyChord {
         }
     }
 
-    /// Returns whether no `ctrl` or `alt` is held.
-    fn is_plain(&self) -> bool {
-        !self.mods.ctrl && !self.mods.alt
-    }
-
-    /// Returns whether this looks like a symbol typed through `AltGr` or `Option`.
+    /// Returns whether this looks like a char typed with `AltGr`, which Windows reports as
+    /// `ctrl+alt`, like `{` on QWERTZ or `@` on AZERTY.
+    ///
+    /// Letters and digits do not count, so `ctrl+alt+a` stays a shortcut.
     pub fn is_alt_gr(&self) -> bool {
         match self.key {
-            Key::Char(ch) => self.mods.alt && !ch.is_ascii_alphanumeric() && !ch.is_whitespace(),
+            Key::Char(ch) => {
+                self.mods.ctrl
+                    && self.mods.alt
+                    && !ch.is_ascii_alphanumeric()
+                    && !ch.is_whitespace()
+            }
             _ => false,
+        }
+    }
+
+    /// Returns the plain chord that types the char, if this was typed with `AltGr`.
+    pub fn without_alt_gr(self) -> Self {
+        match self.key {
+            Key::Char(ch) if self.is_alt_gr() => Self::new(Key::Char(ch), Modifiers::default()),
+            _ => self,
         }
     }
 }
@@ -410,27 +418,31 @@ mod tests {
         assert_eq!(upper.typed_char(), Some('Z'));
     }
 
-    /// `AltGr` symbols type text, but `ctrl` and `alt` letters do not.
+    /// `AltGr` symbols turn into plain typed chars, but letters and plain `alt` keys do not.
     #[test]
-    fn alt_gr_types_symbols() {
-        for text in ["ctrl+alt+{", "alt+}", "ctrl+alt+@", "alt+["] {
+    fn alt_gr_becomes_plain() {
+        for (text, plain) in [
+            ("ctrl+alt+{", "{"),
+            ("ctrl+alt+@", "@"),
+            ("ctrl+alt+\\", "\\"),
+        ] {
             let chord: KeyChord = text.parse().expect("valid chord");
-            assert!(chord.typed_char().is_some(), "{text} should type");
+            let plain: KeyChord = plain.parse().expect("valid chord");
+            assert_eq!(chord.without_alt_gr(), plain, "{text}");
+            assert!(chord.without_alt_gr().typed_char().is_some());
         }
-        for text in ["ctrl+alt+a", "alt+e", "ctrl+[", "alt+space"] {
+        for text in [
+            "ctrl+alt+a",
+            "alt+[",
+            "ctrl+[",
+            "ctrl+alt+up",
+            "ctrl+alt+space",
+        ] {
             let chord: KeyChord = text.parse().expect("valid chord");
-            assert_eq!(chord.typed_char(), None, "{text} should not type");
+            assert_eq!(chord.without_alt_gr(), chord, "{text} should stay");
         }
-    }
-
-    /// Bound `alt` symbols still run their command before typing.
-    #[test]
-    fn bindings_beat_alt_gr() {
-        let keymap = Keymap::default();
-        let chord: KeyChord = "alt+/".parse().expect("valid chord");
-        assert_eq!(keymap.resolve(&chord), Some(Command::ToggleComment));
         let brace: KeyChord = "ctrl+alt+{".parse().expect("valid chord");
-        assert_eq!(keymap.resolve(&brace), Some(Command::InsertChar('{')));
+        assert_eq!(brace.typed_char(), None);
     }
 
     /// Bindings can be listed and looked up by command.
