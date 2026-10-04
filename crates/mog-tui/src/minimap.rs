@@ -90,7 +90,9 @@ impl Layer for Minimap {
             let y = area.y + u16::try_from(row).unwrap_or(u16::MAX);
             let top = self.first + row * LINES_PER_ROW;
             let row_lines = top..top + LINES_PER_ROW;
-            let in_view = row_lines.clone().any(|line| view_lines.contains(&line));
+            let in_view = row_lines
+                .clone()
+                .any(|line| line < lines && view_lines.contains(&line));
             let base = if in_view {
                 theme.minimap.patch(theme.minimap_view)
             } else {
