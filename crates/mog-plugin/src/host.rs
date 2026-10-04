@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::rc::Rc;
 
-use mlua::{Function, Lua, Result as LuaResult, Table, Value};
+use mlua::{Error as LuaError, Function, Lua, Result as LuaResult, Table, Value};
 
 /// The file loaded from each plugin directory.
 const ENTRY_FILE: &str = "init.lua";
@@ -191,7 +191,7 @@ fn install_api(lua: &Lua, requests: &Rc<RefCell<Vec<PluginRequest>>>) -> LuaResu
         "command",
         lua.create_function(|lua, (name, command): (String, Function)| {
             if !name.contains('.') {
-                return Err(mlua::Error::runtime(
+                return Err(LuaError::runtime(
                     "command names need a namespace like `myplugin.wave`",
                 ));
             }
