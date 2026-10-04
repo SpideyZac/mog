@@ -200,6 +200,7 @@ impl Layer for EditorView {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
         self.refresh_cache(cx);
+        cx.ui.cursor_screen = self.cursor_position(area, cx);
         let theme = cx.theme;
         let settings = &cx.ui.config.ui;
         let lines = cx.editor.document().text().len_lines();
@@ -477,6 +478,15 @@ impl Layer for EditorView {
         if cx.ui.focus != Focus::Editor || cx.ui.overlay.is_some() {
             return None;
         }
+        self.cursor_position(area, cx)
+    }
+}
+
+impl EditorView {
+    /// Returns where the text cursor is on screen, if it is visible.
+    fn cursor_position(&self, area: Rect, cx: &Context<'_>) -> Option<Position> {
+        let gutter = Self::gutter_width_for(cx.editor.document().text().len_lines(), cx.ui);
+        let gutter = gutter.min(area.width);
         let document = cx.editor.document();
         let text = document.text();
         let head = document.selection().head;
@@ -484,7 +494,7 @@ impl Layer for EditorView {
         let line = text.char_to_line(head).checked_sub(scroll.scroll_line)?;
         let col = view::visual_col(text, head, cx.editor.options().tab_width)
             .checked_sub(scroll.scroll_col)?;
-        let x = usize::from(self.gutter_width) + col;
+        let x = usize::from(gutter) + col;
         if line >= usize::from(area.height) || x >= usize::from(area.width) {
             return None;
         }

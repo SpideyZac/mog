@@ -284,6 +284,7 @@ impl App {
                 }
             }
             Event::Mouse(mouse) => {
+                self.ui.events.push(UiEvent::Activity);
                 let mut cx = Context {
                     editor: &mut self.editor,
                     theme: &self.theme,
@@ -298,6 +299,7 @@ impl App {
 
     /// Offers a key to the layers, then runs its bound command if none of them took it.
     fn handle_key(&mut self, chord: KeyChord) {
+        self.ui.events.push(UiEvent::Activity);
         let mut cx = Context {
             editor: &mut self.editor,
             theme: &self.theme,

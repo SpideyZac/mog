@@ -6,6 +6,7 @@
 pub mod builtin;
 pub mod flair;
 pub mod layer;
+pub mod rng;
 
 pub use flair::{Corner, Flair, FlairContext, Placement};
 pub use layer::FlairLayer;

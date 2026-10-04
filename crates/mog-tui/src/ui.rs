@@ -5,7 +5,10 @@ use std::{collections::HashMap, path::PathBuf};
 use mog_config::Config;
 use mog_core::Command;
 use mog_git::FileStatus;
-use ratatui::{layout::Rect, style::Style};
+use ratatui::{
+    layout::{Position, Rect},
+    style::Style,
+};
 
 use crate::{search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT};
 
@@ -98,8 +101,10 @@ pub enum UiEvent {
     Deleted,
     /// A document was saved.
     Saved,
-    /// A file was opened.
+    /// A file was opened or focused.
     Opened,
+    /// A key was pressed or the mouse was used.
+    Activity,
     /// The number of problems in the focused document changed.
     Diagnostics {
         /// The number of errors.
@@ -169,6 +174,8 @@ pub struct Ui {
     pub flairs: Vec<(String, String)>,
     /// Settings changed in the menu that the app still has to apply and save.
     pub setting_changes: Vec<SettingKey>,
+    /// Where the text cursor was drawn this frame, if it is on screen.
+    pub cursor_screen: Option<Position>,
 }
 
 impl Ui {
