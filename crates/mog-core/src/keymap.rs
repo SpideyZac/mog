@@ -281,6 +281,32 @@ impl Keymap {
         self.bindings.remove(chord);
     }
 
+    /// Returns every binding, sorted by command name and then chord.
+    pub fn bindings(&self) -> Vec<(KeyChord, Command)> {
+        let mut bindings: Vec<_> = self
+            .bindings
+            .iter()
+            .map(|(chord, command)| (*chord, command.clone()))
+            .collect();
+        bindings.sort_by_key(|(chord, command)| (command.to_string(), chord.to_string()));
+        bindings
+    }
+
+    /// Returns the chords bound to `command`, shortest first.
+    pub fn chords_for(&self, command: &Command) -> Vec<KeyChord> {
+        let mut chords: Vec<KeyChord> = self
+            .bindings
+            .iter()
+            .filter(|(_, bound)| *bound == command)
+            .map(|(chord, _)| *chord)
+            .collect();
+        chords.sort_by_key(|chord| {
+            let text = chord.to_string();
+            (text.len(), text)
+        });
+        chords
+    }
+
     /// Returns the command for `chord`, falling back to typing the char for unbound text keys.
     pub fn resolve(&self, chord: &KeyChord) -> Option<Command> {
         self.bindings
@@ -320,6 +346,21 @@ mod tests {
         let upper = KeyChord::new(Key::Char('Z'), Modifiers::default());
         assert_eq!(upper, "shift+z".parse().expect("valid chord"));
         assert_eq!(upper.typed_char(), Some('Z'));
+    }
+
+    /// Bindings can be listed and looked up by command.
+    #[test]
+    fn lists_bindings() {
+        let keymap = Keymap::default();
+        let chords = keymap.chords_for(&Command::Redo);
+        let names: Vec<String> = chords.iter().map(ToString::to_string).collect();
+        assert_eq!(names, ["ctrl+y", "ctrl+shift+z"]);
+        assert!(
+            keymap
+                .bindings()
+                .iter()
+                .any(|(_, command)| *command == Command::Save)
+        );
     }
 
     /// Unbound text keys type themselves and control chords do not.

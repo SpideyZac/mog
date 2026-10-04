@@ -122,6 +122,8 @@ pub enum Command {
     CloseTab,
     /// Scrolls the view without moving the cursor. Negative values scroll up.
     Scroll(isize),
+    /// Moves the cursor to the start of a line, counting from 1.
+    GotoLine(usize),
     /// A namespaced command handled outside the core, like `ai.explain`.
     Custom(String),
 }
@@ -157,6 +159,7 @@ impl Display for Command {
             Self::InsertChar(ch) => write!(f, "insert_char:{ch}"),
             Self::InsertText(text) => write!(f, "insert_text:{text}"),
             Self::Scroll(lines) => write!(f, "scroll:{lines}"),
+            Self::GotoLine(line) => write!(f, "goto_line:{line}"),
             Self::Custom(name) => f.write_str(name),
             simple => {
                 let name = SIMPLE
@@ -200,6 +203,7 @@ impl FromStr for Command {
                 }
                 "insert_text" => Ok(Self::InsertText(arg.to_owned())),
                 "scroll" => arg.parse().map(Self::Scroll).map_err(|_| unknown()),
+                "goto_line" => arg.parse().map(Self::GotoLine).map_err(|_| unknown()),
                 _ => Err(unknown()),
             };
         }
@@ -246,6 +250,7 @@ mod tests {
             },
             Command::InsertChar('x'),
             Command::Scroll(-3),
+            Command::GotoLine(42),
             Command::Custom("hello.wave".into()),
         ];
         for command in commands {

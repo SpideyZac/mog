@@ -262,6 +262,14 @@ impl Editor {
             }
             Command::Save => self.save(),
             Command::Quit => return self.quit(),
+            Command::GotoLine(line) => {
+                let text = self.document().text();
+                let line = line.saturating_sub(1).min(text.len_lines() - 1);
+                let pos = text.line_to_char(line);
+                self.document_mut().set_selection(Range::point(pos));
+                self.views[self.active].preferred_col = None;
+                self.reveal_cursor();
+            }
             Command::NextTab => self.focus((self.active + 1) % self.documents.len()),
             Command::PrevTab => {
                 let count = self.documents.len();
