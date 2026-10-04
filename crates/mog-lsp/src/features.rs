@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use lsp_types::{
-    CompletionItem, CompletionResponse, Documentation, GotoDefinitionResponse, Hover,
-    HoverContents, Location, MarkedString, Position, TextEdit,
+    CompletionItem, CompletionResponse, DocumentChanges, Documentation, GotoDefinitionResponse,
+    Hover, HoverContents, Location, MarkedString, OneOf, Position, TextEdit, WorkspaceEdit,
 };
 use serde_json::{Value, json};
 
@@ -117,6 +117,49 @@ impl Client {
                 _ => None,
             },
         )
+    }
+
+    /// Asks how to rename the symbol at `position` in `path` to `new_name`.
+    ///
+    /// Returns the edits for every file that changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is gone or fails the request.
+    pub async fn rename(
+        &self,
+        path: &Path,
+        position: Position,
+        new_name: &str,
+    ) -> Result<Vec<(PathBuf, Vec<TextEdit>)>, LspError> {
+        let Some(mut params) = at(path, position) else {
+            return Ok(Vec::new());
+        };
+        params["newName"] = json!(new_name);
+        let value = self.request("textDocument/rename", params).await?;
+        let Ok(Some(edit)) = serde_json::from_value::<Option<WorkspaceEdit>>(value) else {
+            return Ok(Vec::new());
+        };
+        let mut files = Vec::new();
+        for (uri, edits) in edit.changes.unwrap_or_default() {
+            files.extend(convert::uri_to_path(&uri).map(|path| (path, edits)));
+        }
+        if let Some(DocumentChanges::Edits(documents)) = edit.document_changes {
+            for document in documents {
+                let edits = document
+                    .edits
+                    .into_iter()
+                    .map(|edit| match edit {
+                        OneOf::Left(edit) => edit,
+                        OneOf::Right(annotated) => annotated.text_edit,
+                    })
+                    .collect();
+                files.extend(
+                    convert::uri_to_path(&document.text_document.uri).map(|path| (path, edits)),
+                );
+            }
+        }
+        Ok(files)
     }
 
     /// Asks how to format the whole of `path`.

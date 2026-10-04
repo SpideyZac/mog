@@ -273,6 +273,7 @@ fn initialize_params(root: &Path) -> Value {
                 }),
                 definition: Some(GotoCapability::default()),
                 formatting: Some(Default::default()),
+                rename: Some(Default::default()),
                 ..TextDocumentClientCapabilities::default()
             }),
             ..ClientCapabilities::default()
