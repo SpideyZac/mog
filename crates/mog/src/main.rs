@@ -1,11 +1,14 @@
 //! The `mog` binary, the entry point of the editor.
 
 mod app;
+mod cli;
 mod terminal;
 
 use anyhow::Result;
+use clap::Parser;
 
 use app::App;
+use cli::Args;
 
 /// Runs the editor.
 ///
@@ -14,8 +17,9 @@ use app::App;
 /// Returns an error if the terminal cannot be set up or the app fails.
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
     let mut tui = terminal::init()?;
-    let result = App::new().run(&mut tui).await;
+    let result = App::new(args).run(&mut tui).await;
     terminal::restore()?;
     result
 }

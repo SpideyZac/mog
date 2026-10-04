@@ -6,6 +6,7 @@ use futures::StreamExt;
 use mog_core::{Command, Editor, Keymap, MemoryClipboard, Outcome};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 
+use crate::cli::Args;
 use crate::terminal::Tui;
 
 /// The running editor.
@@ -23,13 +24,19 @@ pub struct App {
 }
 
 impl App {
-    /// Creates a new app with an empty document.
-    pub fn new() -> Self {
+    /// Creates a new app, opening the file named in `args` if there is one.
+    pub fn new(args: Args) -> Self {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         compositor.push(Box::new(StatusLine::new()));
+        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        if let Some(path) = args.file
+            && let Err(err) = editor.open(&path)
+        {
+            editor.set_status(format!("could not open {}: {err}", path.display()));
+        }
         Self {
-            editor: Editor::new(Box::new(MemoryClipboard::default())),
+            editor,
             keymap: Keymap::default(),
             compositor,
             theme: Theme::default(),
