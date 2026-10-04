@@ -5,6 +5,7 @@
 
 pub mod clipboard;
 pub mod command;
+pub mod diagnostic;
 pub mod document;
 pub mod editor;
 pub mod history;
@@ -16,6 +17,7 @@ pub mod view;
 
 pub use clipboard::{Clipboard, MemoryClipboard};
 pub use command::{Command, Motion};
+pub use diagnostic::{Diagnostic, Severity};
 pub use document::{Document, LineEnding};
 pub use editor::{Editor, Options, Outcome};
 pub use history::History;
