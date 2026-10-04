@@ -40,6 +40,7 @@ mog-syntax = { path = "crates/mog-syntax" }
 mog-term = { path = "crates/mog-term" }
 mog-tui = { path = "crates/mog-tui" }
 notify = "8"
+open = "5"
 portable-pty = "0.9"
 ratatui = "0.30"
 rodio = { version = "0.22", default-features = false, features = ["playback"] }

@@ -13,8 +13,9 @@ use lsp_types::{
     ClientCapabilities, ClientInfo, CodeActionClientCapabilities, CodeActionKindLiteralSupport,
     CodeActionLiteralSupport, CompletionClientCapabilities, CompletionItemCapability,
     GotoCapability, HoverClientCapabilities, InitializeParams, MarkupKind,
-    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, TextDocumentClientCapabilities,
-    TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
+    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, ShowDocumentClientCapabilities,
+    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, WindowClientCapabilities,
+    WorkspaceClientCapabilities, WorkspaceFolder,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -64,6 +65,24 @@ pub enum LspEvent {
         server: String,
         /// The message text.
         text: String,
+    },
+    /// The server asked to show a document, like a sign in page in the browser.
+    ShowDocument {
+        /// The name of the server.
+        server: String,
+        /// The address to show.
+        uri: String,
+        /// Whether the server wants it shown outside the editor.
+        external: bool,
+    },
+    /// The server sent a notification mog has no special handling for.
+    Notification {
+        /// The name of the server.
+        server: String,
+        /// The notification method.
+        method: String,
+        /// The notification arguments.
+        params: Value,
     },
     /// The server process went away.
     Exited {
@@ -411,6 +430,10 @@ fn initialize_params(root: &Path, settings: &Value) -> Value {
                 configuration: Some(true),
                 ..WorkspaceClientCapabilities::default()
             }),
+            window: Some(WindowClientCapabilities {
+                show_document: Some(ShowDocumentClientCapabilities { support: true }),
+                ..WindowClientCapabilities::default()
+            }),
             ..ClientCapabilities::default()
         },
         ..InitializeParams::default()
@@ -569,6 +592,14 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                             })
                             .collect()
                     }
+                    "window/showDocument" => {
+                        let _ = self.events.send(LspEvent::ShowDocument {
+                            server: self.name.clone(),
+                            uri: params["uri"].as_str().unwrap_or_default().to_owned(),
+                            external: params["external"].as_bool().unwrap_or(false),
+                        });
+                        json!({ "success": true })
+                    }
                     _ => Value::Null,
                 };
                 self.write(Message::Response {
@@ -593,7 +624,11 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                 server,
                 text: params["message"].as_str().unwrap_or_default().to_owned(),
             },
-            _ => return,
+            _ => LspEvent::Notification {
+                server,
+                method: method.to_owned(),
+                params,
+            },
         };
         let _ = self.events.send(event);
     }
@@ -616,7 +651,7 @@ mod tests {
         time,
     };
 
-    use super::{Client, settings_section};
+    use super::{Client, LspEvent, settings_section};
     use crate::transport::{self, Message};
 
     /// Sections are looked up by dotted path and fall back to everything.
@@ -693,5 +728,66 @@ mod tests {
                 "textDocument/didClose"
             ]
         );
+    }
+
+    /// Asking to show a document becomes an event and is answered with success.
+    #[tokio::test]
+    async fn shows_documents() {
+        let (client_side, server_side) = io::duplex(1 << 16);
+        let (client_read, client_write) = io::split(client_side);
+        let (server_read, mut server_write) = io::split(server_side);
+        let (events, mut events_rx) = mpsc::unbounded_channel();
+        let (_client, _task) = Client::connect(
+            "test",
+            client_read,
+            client_write,
+            &env::temp_dir(),
+            &Value::Null,
+            events,
+        );
+        let mut server_read = BufReader::new(server_read);
+        let mut read = async || {
+            time::timeout(
+                Duration::from_secs(5),
+                transport::read_message(&mut server_read),
+            )
+            .await
+            .expect("in time")
+            .expect("read")
+            .expect("message")
+        };
+        let Message::Request { id, .. } = read().await else {
+            panic!("expected initialize");
+        };
+        let reply = Message::Response {
+            id,
+            result: Ok(json!({ "capabilities": {} })),
+        };
+        transport::write_message(&mut server_write, &reply)
+            .await
+            .expect("write");
+        let ask = Message::Request {
+            id: json!("show"),
+            method: "window/showDocument".into(),
+            params: json!({ "uri": "https://github.com/login/device", "external": true }),
+        };
+        transport::write_message(&mut server_write, &ask)
+            .await
+            .expect("write");
+        loop {
+            if let Message::Response { id, result } = read().await {
+                assert_eq!(id, json!("show"));
+                assert_eq!(result.expect("success")["success"], true);
+                break;
+            }
+        }
+        loop {
+            let event = events_rx.recv().await.expect("event");
+            if let LspEvent::ShowDocument { uri, external, .. } = event {
+                assert_eq!(uri, "https://github.com/login/device");
+                assert!(external);
+                break;
+            }
+        }
     }
 }

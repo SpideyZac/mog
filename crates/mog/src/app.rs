@@ -1227,10 +1227,31 @@ impl App {
             LspEvent::Message { server, text } => {
                 self.editor.set_status(format!("{server}: {text}"));
             }
+            LspEvent::ShowDocument { uri, external, .. } => self.show_document(&uri, external),
+            LspEvent::Notification { .. } => {}
             LspEvent::Exited { server, reason } => {
                 if self.lsp.exited(&server) {
                     self.editor
                         .set_status(lsp::exit_message(&server, reason.as_deref()));
+                }
+            }
+        }
+    }
+
+    /// Shows a document a server asked for, in the browser if it is not a local file.
+    fn show_document(&mut self, uri: &str, external: bool) {
+        let path = uri.parse().ok().and_then(|uri| convert::uri_to_path(&uri));
+        match path {
+            Some(path) if !external => {
+                if let Err(err) = self.editor.open(&path) {
+                    self.editor
+                        .set_status(format!("could not open {}: {err}", path.display()));
+                }
+            }
+            _ => {
+                if let Err(err) = open::that_detached(uri) {
+                    self.editor
+                        .set_status(format!("could not open {uri}: {err}"));
                 }
             }
         }

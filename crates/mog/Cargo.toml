@@ -27,6 +27,7 @@ mog-lsp.workspace = true
 mog-term.workspace = true
 mog-tui.workspace = true
 notify.workspace = true
+open.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
 
