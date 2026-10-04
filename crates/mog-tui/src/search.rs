@@ -1,21 +1,29 @@
 //! The find and replace bar, and the search logic commands share with it.
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Editor, Key, KeyChord, search};
+use mog_core::{
+    Change, Editor, Key, KeyChord,
+    search::{self, Matcher, SearchOptions},
+};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
+    style::{Modifier, Style},
     widgets::{Clear, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
+    theme::Theme,
     ui::{Focus, Layout, Ui},
 };
 
 /// The widest the bar gets.
-const BAR_WIDTH: u16 = 58;
+const BAR_WIDTH: u16 = 64;
+
+/// The width of the option toggles, three labels with a space between.
+pub const TOGGLES_WIDTH: u16 = 8;
 
 /// The state of the find and replace bar.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -32,12 +40,18 @@ pub struct SearchState {
     pub replacement: String,
     /// Whether case must match, or `None` for smart case.
     pub case_sensitive: Option<bool>,
+    /// Whether matches have to be whole words.
+    pub whole_word: bool,
+    /// Whether the query is a regular expression.
+    pub regex: bool,
+    /// Why the query cannot be used, like a broken regex.
+    pub error: Option<String>,
     /// The char ranges of matches in the focused document.
     pub matches: Vec<(usize, usize)>,
     /// The index of the match the cursor is on.
     pub current: Option<usize>,
-    /// What the matches were computed for, as `(document, version, query, case)`.
-    computed_for: Option<(usize, u64, String, bool)>,
+    /// What the matches were computed for, as `(document, version, query, options)`.
+    computed_for: Option<(usize, u64, String, SearchOptions)>,
 }
 
 impl SearchState {
@@ -45,6 +59,24 @@ impl SearchState {
     pub fn is_case_sensitive(&self) -> bool {
         self.case_sensitive
             .unwrap_or_else(|| search::smart_case(&self.query))
+    }
+
+    /// Returns how the query matches right now.
+    pub fn options(&self) -> SearchOptions {
+        SearchOptions {
+            case_sensitive: self.is_case_sensitive(),
+            whole_word: self.whole_word,
+            regex: self.regex,
+        }
+    }
+
+    /// Switches `toggle` on or off.
+    pub fn flip(&mut self, toggle: Toggle) {
+        match toggle {
+            Toggle::Case => self.case_sensitive = Some(!self.is_case_sensitive()),
+            Toggle::Word => self.whole_word = !self.whole_word,
+            Toggle::Regex => self.regex = !self.regex,
+        }
     }
 }
 
@@ -85,18 +117,27 @@ pub fn refresh(ui: &mut Ui, editor: &Editor) {
     if !state.open {
         return;
     }
-    let case = state.is_case_sensitive();
+    let options = state.options();
     let document = editor.document();
     let key = (
         editor.active(),
         document.version(),
         state.query.clone(),
-        case,
+        options,
     );
     if state.computed_for.as_ref() == Some(&key) {
         return;
     }
-    state.matches = search::find_all(document.text(), &state.query, case);
+    match search::find_matches(document.text(), &state.query, options) {
+        Ok(matches) => {
+            state.matches = matches;
+            state.error = None;
+        }
+        Err(err) => {
+            state.matches.clear();
+            state.error = Some(err);
+        }
+    }
     state.current = search::next_match(&state.matches, document.selection().from());
     state.computed_for = Some(key);
 }
@@ -131,8 +172,21 @@ pub fn replace_one(ui: &mut Ui, editor: &mut Editor) {
     else {
         return;
     };
-    let replacement = ui.search.replacement.clone();
-    editor.replace_ranges(&[range], &replacement);
+    let Ok(matcher) = Matcher::new(&ui.search.query, ui.search.options()) else {
+        return;
+    };
+    let text = editor.document().text();
+    let haystack = text.to_string();
+    let replacement = matcher.replacement_for(
+        &haystack,
+        text.char_to_byte(range.0),
+        &ui.search.replacement,
+    );
+    editor.replace_with(vec![Change {
+        start: range.0,
+        end: range.1,
+        text: replacement,
+    }]);
     refresh(ui, editor);
     let index = search::next_match(&ui.search.matches, editor.document().selection().head);
     select(ui, editor, index);
@@ -145,11 +199,79 @@ pub fn replace_all(ui: &mut Ui, editor: &mut Editor) {
     if count == 0 {
         return;
     }
-    let matches = ui.search.matches.clone();
-    let replacement = ui.search.replacement.clone();
-    editor.replace_ranges(&matches, &replacement);
+    let Ok(matcher) = Matcher::new(&ui.search.query, ui.search.options()) else {
+        return;
+    };
+    let changes =
+        search::replace_changes(editor.document().text(), &matcher, &ui.search.replacement);
+    editor.replace_with(changes);
     editor.set_status(format!("replaced {count} match(es), mogged"));
     refresh(ui, editor);
+}
+
+/// A search option that can be switched on and off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Toggle {
+    /// Match case.
+    Case,
+    /// Whole words only.
+    Word,
+    /// Regular expressions.
+    Regex,
+}
+
+impl Toggle {
+    /// Every toggle, in the order they are drawn.
+    pub const ALL: [Self; 3] = [Self::Case, Self::Word, Self::Regex];
+
+    /// Returns the two cell label drawn for the toggle.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Case => "Aa",
+            Self::Word => "ab",
+            Self::Regex => ".*",
+        }
+    }
+
+    /// Returns whether the toggle is on in `options`.
+    fn is_on(self, options: SearchOptions) -> bool {
+        match self {
+            Self::Case => options.case_sensitive,
+            Self::Word => options.whole_word,
+            Self::Regex => options.regex,
+        }
+    }
+}
+
+/// Draws the toggles for `options` starting at `x`, and returns where each one went.
+///
+/// They take [`TOGGLES_WIDTH`] cells.
+pub fn draw_toggles(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    options: SearchOptions,
+    theme: &Theme,
+) -> Vec<(Rect, Toggle)> {
+    let mut x = x;
+    let mut hits = Vec::new();
+    for toggle in Toggle::ALL {
+        let mut style = if toggle.is_on(options) {
+            Style::new()
+                .fg(theme.palette.bg)
+                .bg(theme.palette.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            theme.popup_dim
+        };
+        if toggle == Toggle::Word {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        buf.set_string(x, y, toggle.label(), style);
+        hits.push((Rect::new(x, y, 2, 1), toggle));
+        x += 3;
+    }
+    hits
 }
 
 /// The find and replace bar in the top right of the editor.
@@ -157,6 +279,8 @@ pub fn replace_all(ui: &mut Ui, editor: &mut Editor) {
 pub struct SearchBar {
     /// Where the text cursor goes.
     cursor: Option<Position>,
+    /// Where the option toggles were drawn.
+    toggles: Vec<(Rect, Toggle)>,
 }
 
 impl SearchBar {
@@ -173,7 +297,7 @@ impl Layer for SearchBar {
         }
         let editor = layout.editor;
         let width = BAR_WIDTH.min(editor.width);
-        let height = if ui.search.replacing { 2 } else { 1 };
+        let height = u16::from(ui.search.replacing) + u16::from(ui.search.error.is_some()) + 1;
         Rect::new(
             editor.right() - width,
             editor.y,
@@ -190,25 +314,26 @@ impl Layer for SearchBar {
         Clear.render(area, buf);
         buf.set_style(area, theme.popup);
         let count = match (state.current, state.matches.len()) {
+            _ if state.error.is_some() => "bad regex".to_owned(),
             (_, 0) if state.query.is_empty() => String::new(),
             (_, 0) => "no results".to_owned(),
             (Some(i), n) => format!("{}/{n}", i + 1),
             (None, n) => format!("?/{n}"),
         };
-        let case = if state.is_case_sensitive() {
-            "Aa"
-        } else {
-            "aa"
-        };
-        let right = format!(" {count}  {case} ");
-        let right_width = u16::try_from(right.width()).unwrap_or(0);
+        let right = format!(" {count} ");
+        let right_width = u16::try_from(right.width()).unwrap_or(0) + TOGGLES_WIDTH + 1;
         let field_width = usize::from(area.width.saturating_sub(right_width + 3));
         let rows = [
             ("\u{2315} ", &state.query, !state.in_replacement),
             ("\u{21bb} ", &state.replacement, state.in_replacement),
         ];
+        let field_rows = if state.replacing { 2 } else { 1 };
         self.cursor = None;
-        for (row, (icon, text, active)) in rows.iter().enumerate().take(usize::from(area.height)) {
+        for (row, (icon, text, active)) in rows
+            .iter()
+            .enumerate()
+            .take(field_rows.min(usize::from(area.height)))
+        {
             let y = area.y + u16::try_from(row).unwrap_or(0);
             buf.set_string(area.x, y, "\u{2590}", theme.popup_border);
             buf.set_string(area.x + 1, y, icon, theme.popup_title);
@@ -230,7 +355,24 @@ impl Layer for SearchBar {
             }
         }
         let rx = area.right().saturating_sub(right_width);
-        buf.set_string(rx, area.y, &right, theme.popup_dim);
+        let count_style = if state.error.is_some() {
+            theme.error
+        } else {
+            theme.popup_dim
+        };
+        buf.set_string(rx, area.y, &right, count_style);
+        let toggles_x = area.right().saturating_sub(TOGGLES_WIDTH + 1);
+        self.toggles = draw_toggles(buf, toggles_x, area.y, state.options(), theme);
+        // the bar grows a row to say what is wrong with the regex
+        let error_row = if state.replacing { 2 } else { 1 };
+        if let Some(error) = &state.error
+            && area.height > error_row
+        {
+            let y = area.y + error_row;
+            buf.set_string(area.x, y, "\u{2590}", theme.popup_border);
+            let room = usize::from(area.width.saturating_sub(3));
+            buf.set_stringn(area.x + 3, y, error, room, theme.error);
+        }
     }
 
     fn handle_key(&mut self, chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
@@ -249,10 +391,14 @@ impl Layer for SearchBar {
             Key::Down => step(cx.ui, cx.editor, true),
             Key::Up => step(cx.ui, cx.editor, false),
             Key::Tab if replacing => cx.ui.search.in_replacement = !in_replacement,
-            Key::Char('c') if chord.mods.alt => {
-                let sensitive = cx.ui.search.is_case_sensitive();
-                cx.ui.search.case_sensitive = Some(!sensitive);
-                refresh(cx.ui, cx.editor);
+            Key::Char(key @ ('c' | 'w' | 'r')) if chord.mods.alt && !chord.mods.ctrl => {
+                let toggle = match key {
+                    'c' => Toggle::Case,
+                    'w' => Toggle::Word,
+                    _ => Toggle::Regex,
+                };
+                cx.ui.search.flip(toggle);
+                self.after_toggle(cx);
             }
             Key::Backspace => {
                 let state = &mut cx.ui.search;
@@ -287,7 +433,13 @@ impl Layer for SearchBar {
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect, cx: &mut Context<'_>) -> EventResult {
         if let MouseEventKind::Down(MouseButton::Left) = event.kind {
             cx.ui.focus = Focus::Search;
-            cx.ui.search.in_replacement = event.row > area.y;
+            let point = Position::new(event.column, event.row);
+            if let Some(&(_, toggle)) = self.toggles.iter().find(|(rect, _)| rect.contains(point)) {
+                cx.ui.search.flip(toggle);
+                self.after_toggle(cx);
+            } else if cx.ui.search.replacing {
+                cx.ui.search.in_replacement = event.row == area.y + 1;
+            }
         }
         EventResult::Consumed
     }
@@ -300,6 +452,13 @@ impl Layer for SearchBar {
 }
 
 impl SearchBar {
+    /// Searches again and jumps to the nearest match after an option changed.
+    fn after_toggle(&self, cx: &mut Context<'_>) {
+        refresh(cx.ui, cx.editor);
+        let index = cx.ui.search.current;
+        select(cx.ui, cx.editor, index);
+    }
+
     /// Jumps to the nearest match after the query changed.
     fn after_typing(&self, cx: &mut Context<'_>) {
         if cx.ui.search.in_replacement {
@@ -316,7 +475,7 @@ impl SearchBar {
 mod tests {
     use mog_core::{Document, Editor, MemoryClipboard, Range};
 
-    use super::{open, replace_all, replace_one, step};
+    use super::{Toggle, open, refresh, replace_all, replace_one, step};
     use crate::ui::Ui;
 
     /// Creates an editor holding `text` with the cursor at the start.
@@ -342,6 +501,32 @@ mod tests {
         assert_eq!(editor.document().selection(), Range::new(0, 3));
         step(&mut ui, &mut editor, false);
         assert_eq!(editor.document().selection(), Range::new(12, 15));
+    }
+
+    /// Whole words and regexes narrow matches, groups fill in replacements, bad regexes say so.
+    #[test]
+    fn options_and_regex_replace() {
+        let mut editor = editor_with("let a = 1; let ab = 2; letter");
+        let mut ui = Ui::default();
+        ui.search.query = "let".into();
+        open(&mut ui, &editor, true);
+        assert_eq!(ui.search.matches.len(), 3);
+        ui.search.flip(Toggle::Word);
+        refresh(&mut ui, &editor);
+        assert_eq!(ui.search.matches.len(), 2);
+        ui.search.flip(Toggle::Word);
+        ui.search.flip(Toggle::Regex);
+        ui.search.query = r"let (\w+) =".into();
+        ui.search.replacement = "const $1 =".into();
+        replace_all(&mut ui, &mut editor);
+        assert_eq!(
+            editor.document().text().to_string(),
+            "const a = 1; const ab = 2; letter"
+        );
+        ui.search.query = "(".into();
+        refresh(&mut ui, &editor);
+        assert!(ui.search.error.is_some());
+        assert!(ui.search.matches.is_empty());
     }
 
     /// Replacing one or all matches edits the text.

@@ -584,9 +584,6 @@ impl Editor {
     ///
     /// Ranges must not overlap. The cursor ends after the first replacement.
     pub fn replace_ranges(&mut self, ranges: &[(usize, usize)], text: &str) {
-        let Some(&(first, _)) = ranges.first() else {
-            return;
-        };
         let changes = ranges
             .iter()
             .map(|&(start, end)| Change {
@@ -595,7 +592,16 @@ impl Editor {
                 text: text.to_owned(),
             })
             .collect();
-        let after = Range::point(first + text.chars().count());
+        self.replace_with(changes);
+    }
+
+    /// Applies `changes`, sorted and not overlapping, as one undo step with the cursor after the
+    /// first one.
+    pub fn replace_with(&mut self, changes: Vec<Change>) {
+        let Some(first) = changes.first() else {
+            return;
+        };
+        let after = Range::point(first.start + first.text.chars().count());
         self.document_mut()
             .apply(Transaction::new(changes), after, false);
         self.typing_at = None;
