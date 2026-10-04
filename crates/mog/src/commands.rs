@@ -32,6 +32,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("add_cursor_below", "Cursors: Add cursor below"),
     ("search.find", "Search: Find"),
     ("search.replace", "Search: Find and replace"),
+    ("project_search.open", "Search: Find in project"),
+    ("project_search.replace", "Search: Replace in project"),
     ("search.next", "Search: Next match"),
     ("search.prev", "Search: Previous match"),
     ("goto.prompt", "Go: Go to line"),

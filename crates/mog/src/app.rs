@@ -1,8 +1,13 @@
 //! The application state and event loop.
 
 use std::{
+    collections::HashMap,
     env, fs, mem,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -23,6 +28,7 @@ use mog_config::{
 use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
     movement,
+    project_search::{self, ProjectResults},
 };
 use mog_flair::{GraphView, builtin::screensaver};
 use mog_lsp::{
@@ -32,12 +38,13 @@ use mog_lsp::{
 use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
-    EditorView, EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind,
-    ReleaseNotesPopup, SearchBar, SettingsPanel, SplitState, StatusLine, Tabs, Theme, ThemeEditor,
-    Ui, UiEvent,
+    EditorView, EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups,
+    ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel, SplitState,
+    StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
     completion::{self, CompletionState},
     ghost, input,
     menu::{self, MenuAction, MenuItem},
+    project_search as project_search_panel,
     release_notes::{self, ReleaseNotes},
     search,
     settings::{SettingKey, change as settings_change, persisted},
@@ -51,6 +58,7 @@ use ratatui::{
 };
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    task,
     time::{self, MissedTickBehavior},
 };
 
@@ -78,6 +86,9 @@ const GIT_REFRESH_TIME: Duration = Duration::from_secs(15);
 
 /// How long a snapshot waits for background work before drawing.
 const SNAPSHOT_SETTLE: Duration = Duration::from_millis(800);
+
+/// The most matches a project search keeps.
+const PROJECT_LIMIT: usize = 2000;
 
 /// How many chars before the cursor a ghost suggestion gets to see.
 const GHOST_CONTEXT_BEFORE: usize = 4000;
@@ -170,6 +181,12 @@ pub struct App {
     update: Option<Release>,
     /// A release installed while running, used once mog restarts.
     installed: Option<Release>,
+    /// Where project searches send what they found, with the generation they were for.
+    project_sender: UnboundedSender<(u64, ProjectResults)>,
+    /// What project searches found.
+    project_results: UnboundedReceiver<(u64, ProjectResults)>,
+    /// The generation of the newest project search, so older ones stop early.
+    project_generation: Arc<AtomicU64>,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -231,6 +248,7 @@ impl App {
         compositor.push(Box::new(SettingsPanel::new()));
         compositor.push(Box::new(ThemeEditor::new()));
         compositor.push(Box::new(ReleaseNotesPopup::new()));
+        compositor.push(Box::new(ProjectSearchPanel::new()));
         compositor.push(Box::new(GraphView::new()));
         compositor.push(Box::new(ContextMenu::new()));
         compositor.push(Box::new(Annotations::new()));
@@ -252,6 +270,7 @@ impl App {
         }
         let startup = args.run;
         let (reply_sender, lsp_replies) = mpsc::unbounded_channel();
+        let (project_sender, project_results) = mpsc::unbounded_channel();
         let mut app = Self {
             editor,
             keymap,
@@ -283,6 +302,9 @@ impl App {
             updater: Updater::new(),
             update: None,
             installed: None,
+            project_sender,
+            project_results,
+            project_generation: Arc::new(AtomicU64::new(0)),
             quit: false,
         };
         for name in startup {
@@ -520,6 +542,9 @@ impl App {
                 Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
                 Some(event) = self.updater.event() => self.handle_update(event),
+                Some((generation, results)) = self.project_results.recv() => {
+                    self.show_project_results(generation, results);
+                }
                 () = changed(self.watcher.as_ref()) => self.files_changed = true,
                 () = time::sleep_until(idle_at.into()), if typing => {}
                 _ = housekeeping.tick() => self.housekeeping(),
@@ -591,6 +616,9 @@ impl App {
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
                 Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
+                Some((generation, results)) = self.project_results.recv() => {
+                    self.show_project_results(generation, results);
+                }
                 Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
                 () = &mut deadline => break,
             }
@@ -1032,6 +1060,13 @@ impl App {
                 self.request_rename(text.to_owned());
                 Ok(())
             }
+            PromptKind::ReplaceAll => {
+                if matches!(text, "y" | "yes") {
+                    self.replace_in_project();
+                }
+                self.ui.open(Overlay::ProjectSearch);
+                return;
+            }
             PromptKind::SaveTheme => {
                 self.save_theme(text);
                 return;
@@ -1042,6 +1077,195 @@ impl App {
         if let Err(err) = result {
             self.editor.set_status(format!("that did not work: {err}"));
         }
+    }
+
+    /// Opens project find and replace, starting from the selected text if there is some.
+    fn open_project_search(&mut self, replacing: bool) {
+        if !self.ui.has_explorer {
+            self.editor
+                .set_status("open a folder to search the whole project: mog <folder>");
+            return;
+        }
+        let document = self.editor.document();
+        let selection = document.selection();
+        let selected = document
+            .text()
+            .slice(selection.from()..selection.to())
+            .to_string();
+        let state = &mut self.ui.project_search;
+        state.replacing = replacing;
+        if !selected.is_empty() && !selected.contains('\n') && selected != state.query {
+            state.query = selected;
+            state.changed(&mut self.ui.requests);
+        }
+        self.ui.open(Overlay::ProjectSearch);
+    }
+
+    /// Starts searching the project for the current query, cancelling any older search.
+    fn run_project_search(&mut self) {
+        let state = &self.ui.project_search;
+        let generation = state.generation;
+        self.project_generation.store(generation, Ordering::Relaxed);
+        if state.query.is_empty() {
+            return;
+        }
+        let open: HashMap<PathBuf, String> = self
+            .editor
+            .documents()
+            .iter()
+            .filter_map(|document| Some((document.path()?.to_owned(), document.text().to_string())))
+            .collect();
+        let (root, query, case) = (
+            self.ui.root.clone(),
+            state.query.clone(),
+            state.case_sensitive,
+        );
+        let current = self.project_generation.clone();
+        let sender = self.project_sender.clone();
+        task::spawn_blocking(move || {
+            let cancelled = || current.load(Ordering::Relaxed) != generation;
+            let results = project_search::search_project(
+                &root,
+                &query,
+                case,
+                &open,
+                PROJECT_LIMIT,
+                &cancelled,
+            );
+            if !cancelled() {
+                let _ = sender.send((generation, results));
+            }
+        });
+    }
+
+    /// Shows what a project search found, unless a newer search started since.
+    fn show_project_results(&mut self, generation: u64, results: ProjectResults) {
+        let state = &mut self.ui.project_search;
+        if generation == state.generation {
+            state.results = results;
+            state.searching = false;
+        }
+    }
+
+    /// Opens the match picked in project search.
+    fn pick_project_match(&mut self) {
+        let state = &mut self.ui.project_search;
+        let Some(found) = state
+            .picked
+            .take()
+            .and_then(|index| state.results.matches.get(index).cloned())
+        else {
+            return;
+        };
+        self.ui.close();
+        self.ui.focus = Focus::Editor;
+        if let Err(err) = self.editor.open(&found.path) {
+            self.editor
+                .set_status(format!("could not open {}: {err}", found.path.display()));
+            return;
+        }
+        let text = self.editor.document().text();
+        let line = found.line.min(text.len_lines().saturating_sub(1));
+        let from = (text.line_to_char(line) + found.column).min(text.len_chars());
+        let to = (from + found.len).min(text.len_chars());
+        self.editor.select(from, to);
+    }
+
+    /// Asks before replacing every match in the project.
+    fn ask_replace_in_project(&mut self) {
+        let state = &self.ui.project_search;
+        if state.query.is_empty() || state.results.matches.is_empty() {
+            self.editor.set_status("nothing to replace");
+            return;
+        }
+        let more = if state.results.truncated { "+" } else { "" };
+        let title = format!(
+            "replace {}{more} matches in {} files with \"{}\"?",
+            state.results.matches.len(),
+            state.results.files,
+            state.replacement
+        );
+        self.ui.ask(
+            PromptKind::ReplaceAll,
+            title,
+            "",
+            "type y and enter. open files change in the editor, others are saved right away",
+        );
+    }
+
+    /// Replaces every match of the project search, in open documents and on disk.
+    fn replace_in_project(&mut self) {
+        let state = self.ui.project_search.clone();
+        let focused = self.editor.active();
+        let open: HashMap<PathBuf, String> = self
+            .editor
+            .documents()
+            .iter()
+            .filter_map(|document| Some((document.path()?.to_owned(), document.text().to_string())))
+            .collect();
+        let results = project_search::search_project(
+            &self.ui.root,
+            &state.query,
+            state.case_sensitive,
+            &open,
+            usize::MAX,
+            &|| false,
+        );
+        let mut paths: Vec<PathBuf> = results
+            .matches
+            .iter()
+            .map(|found| found.path.clone())
+            .collect();
+        paths.dedup();
+        let (mut replaced, mut files, mut problems) = (0, 0, Vec::new());
+        for path in paths {
+            let index = self
+                .editor
+                .documents()
+                .iter()
+                .position(|document| document.path() == Some(path.as_path()));
+            let count = match index {
+                Some(index) => {
+                    self.editor.focus(index);
+                    let changes = project_search::replace_changes(
+                        self.editor.document().text(),
+                        &state.query,
+                        &state.replacement,
+                        state.case_sensitive,
+                    );
+                    let count = changes.len();
+                    self.editor.apply_changes(changes);
+                    count
+                }
+                None => match project_search::replace_in_file(
+                    &path,
+                    &state.query,
+                    &state.replacement,
+                    state.case_sensitive,
+                ) {
+                    Ok(count) => count,
+                    Err(err) => {
+                        problems.push(format!("{}: {err}", path.display()));
+                        0
+                    }
+                },
+            };
+            if count > 0 {
+                replaced += count;
+                files += 1;
+            }
+        }
+        self.editor.focus(focused);
+        self.ui.refresh_explorer = true;
+        self.editor.set_status(if problems.is_empty() {
+            format!("replaced {replaced} matches in {files} files")
+        } else {
+            format!(
+                "replaced {replaced} matches, failed: {}",
+                problems.join("; ")
+            )
+        });
+        self.ui.project_search.changed(&mut self.ui.requests);
     }
 
     /// Saves the theme being edited as `[themes.<name>]` and switches to it.
@@ -1864,6 +2088,11 @@ impl App {
                     Focus::Terminal
                 };
             }
+            "project_search.open" => self.open_project_search(false),
+            "project_search.replace" => self.open_project_search(true),
+            project_search_panel::RUN_COMMAND => self.run_project_search(),
+            project_search_panel::PICK_COMMAND => self.pick_project_match(),
+            project_search_panel::REPLACE_ALL_COMMAND => self.ask_replace_in_project(),
             "terminal.restart" => {
                 self.ui.terminal_restart = true;
                 self.ui.terminal_open = true;

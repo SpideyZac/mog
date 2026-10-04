@@ -1,6 +1,7 @@
 //! Finding and replacing text across every file in a project.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
@@ -54,25 +55,66 @@ pub fn search_text(
     query: &str,
     case_sensitive: bool,
 ) -> Vec<ProjectMatch> {
+    if case_sensitive || query.is_ascii() {
+        return search_bytes(path, text, query, case_sensitive);
+    }
     let mut found = Vec::new();
     for (line, content) in text.lines().enumerate() {
         let rope = Rope::from_str(content);
         for (from, to) in find_all(&rope, query, case_sensitive) {
-            let preview: String = content
-                .replace('\t', "    ")
-                .chars()
-                .take(MAX_PREVIEW)
-                .collect();
-            let tabs = content.chars().take(from).filter(|&ch| ch == '\t').count();
-            found.push(ProjectMatch {
-                path: path.to_owned(),
-                line,
-                column: from,
-                preview_column: from + tabs * 3,
-                len: to - from,
-                preview,
-            });
+            let start = rope.char_to_byte(from);
+            found.push(make_match(path, line, content, start, to - from));
         }
+    }
+    found
+}
+
+/// Builds the match of `len` chars at byte `start` of the line `content`.
+fn make_match(path: &Path, line: usize, content: &str, start: usize, len: usize) -> ProjectMatch {
+    let before = &content[..start];
+    let column = before.chars().count();
+    let tabs = before.chars().filter(|&ch| ch == '\t').count();
+    ProjectMatch {
+        path: path.to_owned(),
+        line,
+        column,
+        preview_column: column + tabs * 3,
+        len,
+        preview: content
+            .replace('\t', "    ")
+            .chars()
+            .take(MAX_PREVIEW)
+            .collect(),
+    }
+}
+
+/// Finds `query` with a plain byte search, folding ASCII case when not `case_sensitive`.
+///
+/// Much faster than going char by char, and right whenever the query is ASCII.
+fn search_bytes(path: &Path, text: &str, query: &str, case_sensitive: bool) -> Vec<ProjectMatch> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let (hay, needle) = if case_sensitive {
+        (Cow::Borrowed(text), Cow::Borrowed(query))
+    } else {
+        // ascii folding keeps every byte offset where it was
+        (
+            Cow::Owned(text.to_ascii_lowercase()),
+            Cow::Owned(query.to_ascii_lowercase()),
+        )
+    };
+    let len = query.chars().count();
+    let mut found = Vec::new();
+    let mut offset = 0;
+    for (line, content) in text.split_inclusive('\n').enumerate() {
+        let end = offset + content.len();
+        let content = content.trim_end_matches(['\n', '\r']);
+        let folded = &hay[offset..offset + content.len()];
+        for (start, _) in folded.match_indices(needle.as_ref()) {
+            found.push(make_match(path, line, content, start, len));
+        }
+        offset = end;
     }
     found
 }
@@ -175,7 +217,12 @@ pub fn replace_in_file(
 #[cfg(test)]
 /// Tests for project search.
 mod tests {
-    use std::{collections::HashMap, env, fs, path::PathBuf, process};
+    use std::{
+        collections::HashMap,
+        env, fs,
+        path::{Path, PathBuf},
+        process,
+    };
 
     use ropey::Rope;
 
@@ -187,6 +234,19 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create scratch dir");
         dir
+    }
+
+    /// The fast byte search and the char by char search agree.
+    #[test]
+    fn byte_search_matches_char_search() {
+        let text = "\tl\u{e9}t M\u{f6}g = mog;\r\nMOG mog\n";
+        let path = Path::new("a");
+        assert_eq!(search_text(path, text, "mog", false).len(), 3);
+        assert_eq!(search_text(path, text, "mog", true).len(), 2);
+        assert_eq!(search_text(path, text, "m\u{f6}g", false).len(), 1);
+        let fast = search_text(path, text, "mog", false);
+        assert_eq!((fast[0].line, fast[0].column), (0, 11));
+        assert_eq!((fast[1].line, fast[1].column), (1, 0));
     }
 
     /// Matches know their line, column and length.

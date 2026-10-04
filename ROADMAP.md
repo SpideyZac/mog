@@ -25,6 +25,7 @@
 - [x] Key binding list (`ctrl+k` and `mog --keys`)
 - [x] Change key bindings from the key list
 - [x] Search and replace
+- [x] Find and replace across the project
 - [x] Go to line
 - [x] Tabs
 - [x] Auto indent and bracket pairs
@@ -36,6 +37,7 @@
 - [x] Multiple cursors
 - [x] Splits
 - [x] Built in terminal (`ctrl+backtick`)
+- [x] Scroll back and restart the terminal
 
 ## Look and feel
 

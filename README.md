@@ -20,7 +20,8 @@ mog .
 
 - Modeless editing with the keys you already know, and a mouse that works like VS Code
   (drag select, double and triple click, right click menus)
-- Tabs, splits, multiple cursors, find and replace, a built in terminal
+- Tabs, splits, multiple cursors, find and replace in a file or the whole project, a built in
+  terminal you can scroll and restart
 - File explorer, fuzzy finder, command palette and a key list you can rebind from
 - Tree-sitter highlighting for over thirty languages, including code inside Vue, HTML and
   Markdown blocks
@@ -423,6 +424,8 @@ The selecting versions are named `select_*`, like `select_word_left` and `select
 | --- | --- | --- |
 | `ctrl+f` | `search.find` | Find |
 | `ctrl+h` | `search.replace` | Find and replace |
+| `ctrl+shift+f` `alt+f` | `project_search.open` | Find in every file of the project |
+| `ctrl+shift+h` | `project_search.replace` | Replace in every file of the project |
 | `f3` | `search.next` | Next match |
 | `shift+f3` | `search.prev` | Previous match |
 | `ctrl+g` | `goto.prompt` | Go to line |
@@ -511,6 +514,21 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `alt+c` | Toggle case sensitivity |
 | `ctrl+backspace` | Clear the field |
 | `esc` | Close |
+
+**Find in project** (`ctrl+shift+f`, needs a folder open)
+
+| keys | |
+| --- | --- |
+| type | Search as you type, every file the explorer would show |
+| `tab` | Switch between find and replace fields |
+| `up` `down` `pageup` `pagedown` | Pick a match |
+| `enter` | Open the match |
+| `alt+enter` `ctrl+enter` | Replace every match, after asking |
+| `alt+c` | Toggle case sensitivity |
+| `ctrl+backspace` | Clear the field |
+| `esc` | Close |
+
+Replacing changes open files in the editor so you can undo it, and saves the others right away.
 
 **File explorer**
 

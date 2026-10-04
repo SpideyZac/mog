@@ -12,8 +12,9 @@ use ratatui::{
 
 use crate::{
     annotate::AnnotateState, chat::ChatState, completion::CompletionState, ghost::Ghost,
-    menu::MenuState, release_notes::ReleaseNotes, search::SearchState, settings::SettingKey,
-    status_line::STATUS_HEIGHT, theme_editor::ThemeDraft,
+    menu::MenuState, project_search::ProjectSearchState, release_notes::ReleaseNotes,
+    search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
+    theme_editor::ThemeDraft,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -99,6 +100,8 @@ pub enum Overlay {
     ThemeEditor,
     /// The notes of a mog release.
     ReleaseNotes,
+    /// Find and replace across the project.
+    ProjectSearch,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -133,6 +136,8 @@ pub enum PromptKind {
     CopilotSignIn,
     /// The name to save the theme being edited under.
     SaveTheme,
+    /// Confirmation to replace every match of a project search.
+    ReplaceAll,
 }
 
 /// A one line question, like where to save a file.
@@ -319,6 +324,8 @@ pub struct Ui {
     pub tabs_end: u16,
     /// The release notes the release notes popup shows.
     pub release_notes: Option<ReleaseNotes>,
+    /// Find and replace across the project.
+    pub project_search: ProjectSearchState,
 }
 
 impl Ui {
