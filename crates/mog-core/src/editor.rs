@@ -81,7 +81,8 @@ impl Editor {
 
     /// Opens the file at `path` and focuses it.
     ///
-    /// An untouched empty scratch document is replaced instead of kept around.
+    /// An untouched empty scratch document is replaced instead of kept around, and a file that is
+    /// already open is focused instead of opened twice.
     ///
     /// # Errors
     ///
@@ -89,7 +90,16 @@ impl Editor {
     pub fn open(&mut self, path: impl Into<PathBuf>) -> io::Result<()> {
         let document = Document::open(path)?;
         let current = self.document();
-        if current.path().is_none() && !current.is_modified() && current.text().len_chars() == 0 {
+        if let Some(index) = self
+            .documents
+            .iter()
+            .position(|open| open.path().is_some() && open.path() == document.path())
+        {
+            self.active = index;
+        } else if current.path().is_none()
+            && !current.is_modified()
+            && current.text().len_chars() == 0
+        {
             self.documents[self.active] = document;
         } else {
             self.documents.push(document);
@@ -413,6 +423,8 @@ impl Editor {
 #[cfg(test)]
 /// Tests for [`Editor`].
 mod tests {
+    use std::env;
+
     use super::{Editor, Outcome};
     use crate::{
         clipboard::MemoryClipboard,
@@ -518,5 +530,19 @@ mod tests {
         editor.click(1, 1, false);
         editor.click(0, 0, true);
         assert_eq!(editor.document().selection(), Range::new(14, 0));
+    }
+
+    /// Opening a file that is already open focuses it instead of adding a copy.
+    #[test]
+    fn open_twice_focuses_existing() {
+        let dir = env::temp_dir();
+        let mut editor = editor_with("", 0);
+        editor.open(dir.join("mog-open-a.txt")).expect("open a");
+        editor.open(dir.join("mog-open-b.txt")).expect("open b");
+        editor
+            .open(dir.join("mog-open-a.txt"))
+            .expect("open a again");
+        assert_eq!(editor.documents().len(), 2);
+        assert_eq!(editor.document().name(), "mog-open-a.txt");
     }
 }
