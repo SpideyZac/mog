@@ -737,6 +737,7 @@ name = "mog-core"
 version = "0.1.0"
 dependencies = [
  "ropey",
+ "unicode-width",
 ]
 
 [[package]]

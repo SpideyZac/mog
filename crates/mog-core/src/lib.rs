@@ -11,6 +11,7 @@ pub mod keymap;
 pub mod movement;
 pub mod range;
 pub mod transaction;
+pub mod view;
 
 pub use clipboard::{Clipboard, MemoryClipboard};
 pub use command::{Command, Motion};
@@ -19,3 +20,4 @@ pub use history::History;
 pub use keymap::{Key, KeyChord, Keymap, Modifiers};
 pub use range::Range;
 pub use transaction::{Change, Transaction};
+pub use view::View;

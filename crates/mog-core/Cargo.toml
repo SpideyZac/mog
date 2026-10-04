@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 ropey.workspace = true
+unicode-width.workspace = true
 
 [lints]
 workspace = true
