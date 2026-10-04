@@ -69,7 +69,11 @@
 ## AI
 
 - [x] AI ghost text (Claude)
-- [ ] Copilot ghost text
+- [x] Copilot ghost text
+- [x] Copilot sign in and status
+- [x] Accept ghost text by word and cycle suggestions
+- [x] Turn chat and ghost text on or off for each AI
+- [ ] Copilot chat
 - [x] Claude chat panel
 - [x] Ask Claude about the selection
 

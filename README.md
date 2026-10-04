@@ -15,6 +15,9 @@ editor you can get work done in.
   references, rename, formatting and code actions
 - Git: changed lines in the gutter, branch in the status line, file colors and inline blame
 - Claude: a chat panel, explain the selection and ghost text suggestions
+- Copilot ghost text through GitHub's language server
+  (`npm i -g @github/copilot-language-server`, then `Copilot: Sign in` from the palette)
+- Each AI can be limited to chat or ghost text in the config
 - A settings menu (`ctrl+,`) where almost everything can be switched off, and seven themes
 
 ## The silly part
@@ -38,6 +41,8 @@ editor you can get work done in.
 | `ctrl+,` | settings |
 | `ctrl+b` | file explorer |
 | `ctrl+l` | AI chat |
+| `tab` / `ctrl+right` | accept ghost text, or just its next word |
+| `alt+]` / `alt+[` | cycle ghost text suggestions |
 | `alt+g` | project graph |
 | `ctrl+\` | split |
 | `ctrl+d` | add a cursor on the next match |
