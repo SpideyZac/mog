@@ -2,12 +2,12 @@
 
 ## Foundation
 
-- [ ] Terminal setup, teardown and panic safety
-- [ ] Documents, selections, undo and redo
-- [ ] Editor view with line numbers and scrolling
-- [ ] Status line
-- [ ] Modeless keymap (save, quit, undo, clipboard, select all)
-- [ ] Mouse: click, drag select, shift click, double and triple click, wheel, gutter
+- [x] Terminal setup, teardown and panic safety
+- [x] Documents, selections, undo and redo
+- [x] Editor view with line numbers and scrolling
+- [x] Status line
+- [x] Modeless keymap (save, quit, undo, clipboard, select all)
+- [x] Mouse: click, drag select, shift click, double and triple click, wheel, gutter
 - [ ] Config file
 - [ ] Flair layer and registry
 - [ ] LSP client skeleton
