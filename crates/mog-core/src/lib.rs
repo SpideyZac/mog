@@ -1,7 +1,7 @@
 //! The editing model of mog.
 //!
 //! This crate knows nothing about terminals. It holds documents, selections and edits, and turns
-//! commands into changes.
+//! [`Command`]s into changes through the [`Editor`].
 
 pub mod clipboard;
 pub mod command;
