@@ -13,8 +13,10 @@ use serde::Deserialize;
 use thiserror::Error;
 use toml::de::Error as TomlError;
 
+pub mod ai;
 pub mod lsp;
 
+pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
 pub use lsp::ServerConfig;
 
 /// The environment variable that overrides the config directory.
@@ -58,6 +60,8 @@ pub struct Config {
     pub flair: FlairConfig,
     /// Language servers by name. Entries here override or extend the built in ones.
     pub lsp: BTreeMap<String, ServerConfig>,
+    /// AI providers.
+    pub ai: AiConfig,
 }
 
 /// Settings for editing behavior.
