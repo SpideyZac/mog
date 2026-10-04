@@ -1,5 +1,6 @@
 //! The bar at the bottom of the screen.
 
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use mog_core::{Severity, view};
 use ratatui::{
     buffer::Buffer,
@@ -10,7 +11,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    compositor::{Context, Layer},
+    compositor::{Context, EventResult, Layer},
     ui::{Layout, Side, Ui},
 };
 
@@ -19,12 +20,15 @@ pub const STATUS_HEIGHT: u16 = 1;
 
 /// Shows the file name, status messages and the cursor position.
 #[derive(Debug, Default)]
-pub struct StatusLine;
+pub struct StatusLine {
+    /// Where the clickable parts were drawn, as `(start, end, command)`.
+    hits: Vec<(u16, u16, &'static str)>,
+}
 
 impl StatusLine {
     /// Creates the status line.
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 }
 
@@ -105,7 +109,42 @@ impl Layer for StatusLine {
         let message_room = total.saturating_sub(width(&left) + width(&right) + 1);
         let message: String = message.chars().take(message_room).collect();
         left.push(Span::styled(message, theme.status_message));
+        self.hits.clear();
+        // the badge opens the palette, problem counts open the problem list
+        self.hits.push((area.x, area.x + 5, "command_palette"));
+        let right_width = u16::try_from(width(&right)).unwrap_or(0);
+        let mut x = area.right().saturating_sub(right_width);
+        for span in &right {
+            let span_width = u16::try_from(span.width()).unwrap_or(0);
+            let text = span.content.as_ref();
+            if text.starts_with('E') || text.starts_with('W') {
+                if text[1..].trim().parse::<usize>().is_ok() {
+                    self.hits.push((x, x + span_width, "problems.list"));
+                }
+            } else if text.starts_with("Ln ") {
+                self.hits.push((x, x + span_width, "goto.prompt"));
+            }
+            x += span_width;
+        }
         Line::from(left).render(area, buf);
         Line::from(right).right_aligned().render(area, buf);
+    }
+
+    fn handle_mouse(
+        &mut self,
+        event: MouseEvent,
+        _area: Rect,
+        cx: &mut Context<'_>,
+    ) -> EventResult {
+        if let MouseEventKind::Down(MouseButton::Left) = event.kind
+            && let Some((_, _, name)) = self
+                .hits
+                .iter()
+                .find(|(start, end, _)| (*start..*end).contains(&event.column))
+            && let Ok(command) = name.parse()
+        {
+            cx.ui.request(command);
+        }
+        EventResult::Consumed
     }
 }
