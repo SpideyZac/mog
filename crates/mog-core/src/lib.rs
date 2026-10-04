@@ -6,6 +6,7 @@
 pub mod command;
 pub mod document;
 pub mod history;
+pub mod keymap;
 pub mod movement;
 pub mod range;
 pub mod transaction;
@@ -13,5 +14,6 @@ pub mod transaction;
 pub use command::{Command, Motion};
 pub use document::{Document, LineEnding};
 pub use history::History;
+pub use keymap::{Key, KeyChord, Keymap, Modifiers};
 pub use range::Range;
 pub use transaction::{Change, Transaction};
