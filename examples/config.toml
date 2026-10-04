@@ -61,3 +61,10 @@ volume = 50
 # empty picks powershell on windows and $SHELL elsewhere
 shell = ""
 args = []
+
+[discord]
+enabled = false
+# make an application at https://discord.com/developers/applications and paste its id
+client_id = ""
+large_image = "mog"
+show_file = true

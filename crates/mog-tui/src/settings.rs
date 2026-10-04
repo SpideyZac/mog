@@ -47,6 +47,8 @@ pub enum SettingKey {
     GhostText,
     /// The volume.
     Volume,
+    /// Whether Discord shows what you are editing.
+    Discord,
 }
 
 /// The built in toggles as `(category, key, label, help)`.
@@ -165,6 +167,12 @@ const TOGGLES: &[(&str, SettingKey, &str, &str)] = &[
         "Background music",
         "Chill chiptune that gets tense when the build is broken.",
     ),
+    (
+        "social",
+        SettingKey::Discord,
+        "Discord status",
+        "Show what you are editing on your Discord profile.",
+    ),
 ];
 
 /// One row of the menu.
@@ -219,6 +227,7 @@ pub fn get(config: &Config, key: &SettingKey) -> SettingValue {
         }),
         SettingKey::Volume => SettingValue::Int(i64::from(config.audio.volume)),
         SettingKey::GhostText => SettingValue::Bool(config.ai.ghost_text),
+        SettingKey::Discord => SettingValue::Bool(config.discord.enabled),
     }
 }
 
@@ -255,6 +264,7 @@ fn toggle_mut<'a>(config: &'a mut Config, key: &SettingKey) -> Option<&'a mut bo
         },
         SettingKey::FlairEnabled => &mut config.flair.enabled,
         SettingKey::GhostText => &mut config.ai.ghost_text,
+        SettingKey::Discord => &mut config.discord.enabled,
         _ => return None,
     })
 }
@@ -311,6 +321,7 @@ pub fn persisted(config: &Config, key: &SettingKey) -> (Vec<&'static str>, Setti
         SettingKey::Audio(name) => (vec!["audio", name], get(config, key)),
         SettingKey::Volume => (vec!["audio", "volume"], get(config, key)),
         SettingKey::GhostText => (vec!["ai", "ghost_text"], get(config, key)),
+        SettingKey::Discord => (vec!["discord", "enabled"], get(config, key)),
     }
 }
 
@@ -328,8 +339,11 @@ fn rows(ui: &Ui) -> Vec<Row> {
         "Theme",
         "Pick a color palette. Changes right away.",
     )];
-    // the toggles are listed look first, then code, then sound
-    for (category, key, label, help) in TOGGLES.iter().filter(|t| t.0 != "sound") {
+    // the toggles are listed look first, then code, then sound, then social
+    for (category, key, label, help) in TOGGLES
+        .iter()
+        .filter(|t| !matches!(t.0, "sound" | "social"))
+    {
         rows.push(row(category, key.clone(), label, help));
     }
     rows.push(row(
@@ -356,6 +370,9 @@ fn rows(ui: &Ui) -> Vec<Row> {
         "Volume",
         "How loud the effects and music are.",
     ));
+    for (category, key, label, help) in TOGGLES.iter().filter(|t| t.0 == "social") {
+        rows.push(row(category, key.clone(), label, help));
+    }
     rows
 }
 
@@ -494,6 +511,7 @@ impl Layer for SettingsPanel {
                     "look" => "\u{2726}",
                     "code" => "\u{2692}",
                     "flair" => "\u{273f}",
+                    "social" => "\u{263a}",
                     _ => "\u{266b}",
                 };
                 buf.set_string(

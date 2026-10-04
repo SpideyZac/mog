@@ -16,6 +16,7 @@ use toml::de::Error as TomlError;
 
 pub mod ai;
 pub mod audio;
+pub mod discord;
 pub mod lsp;
 pub mod save;
 pub mod terminal;
@@ -23,6 +24,7 @@ pub mod ui;
 
 pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
 pub use audio::AudioConfig;
+pub use discord::DiscordConfig;
 pub use lsp::ServerConfig;
 pub use save::{SettingValue, save_setting};
 pub use terminal::TerminalConfig;
@@ -96,6 +98,8 @@ pub struct Config {
     pub audio: AudioConfig,
     /// The built in terminal.
     pub terminal: TerminalConfig,
+    /// Discord Rich Presence.
+    pub discord: DiscordConfig,
 }
 
 /// Settings for editing behavior.
