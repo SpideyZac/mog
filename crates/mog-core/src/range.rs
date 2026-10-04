@@ -49,15 +49,18 @@ impl Range {
 }
 
 #[cfg(test)]
+/// Tests for [`Range`].
 mod tests {
     use super::Range;
 
+    /// [`Range::from`] and [`Range::to`] return the ends in order.
     #[test]
     fn from_and_to_are_ordered() {
         let range = Range::new(5, 2);
         assert_eq!((range.from(), range.to()), (2, 5));
     }
 
+    /// [`Range::put_head`] keeps the anchor only when extending.
     #[test]
     fn put_head_extends_or_collapses() {
         let range = Range::point(3);
