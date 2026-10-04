@@ -1835,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "mog"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -1869,7 +1869,7 @@ dependencies = [
 
 [[package]]
 name = "mog-ai"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "lsp-types",
  "mog-lsp",
@@ -1883,14 +1883,14 @@ dependencies = [
 
 [[package]]
 name = "mog-audio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rodio",
 ]
 
 [[package]]
 name = "mog-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "serde",
@@ -1903,7 +1903,7 @@ dependencies = [
 
 [[package]]
 name = "mog-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ignore",
  "regex",
@@ -1913,7 +1913,7 @@ dependencies = [
 
 [[package]]
 name = "mog-flair"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm",
  "mog-audio",
@@ -1926,14 +1926,14 @@ dependencies = [
 
 [[package]]
 name = "mog-git"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "similar",
 ]
 
 [[package]]
 name = "mog-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "lsp-types",
  "ropey",
@@ -1945,7 +1945,7 @@ dependencies = [
 
 [[package]]
 name = "mog-syntax"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "octorus-tree-sitter-vue3",
  "tree-sitter-bash",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "mog-term"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm",
  "mog-core",
@@ -1995,7 +1995,7 @@ dependencies = [
 
 [[package]]
 name = "mog-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm",
  "mog-config",
