@@ -5,6 +5,7 @@
 
 pub mod document;
 pub mod history;
+pub mod movement;
 pub mod range;
 pub mod transaction;
 
