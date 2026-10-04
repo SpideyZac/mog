@@ -27,6 +27,16 @@ pub struct Theme {
     pub error: Style,
     /// Warning counts and markers.
     pub warning: Style,
+    /// The file explorer background and file names.
+    pub sidebar: Style,
+    /// The folder name at the top of the file explorer.
+    pub sidebar_title: Style,
+    /// The file in the explorer that is open in the editor.
+    pub sidebar_active: Style,
+    /// Folder names in the file explorer.
+    pub directory: Style,
+    /// The line between the file explorer and the editor.
+    pub border: Style,
 }
 
 impl Default for Theme {
@@ -48,6 +58,11 @@ impl Default for Theme {
             status_message: Style::new().fg(Color::Rgb(120, 230, 200)),
             error: Style::new().fg(Color::Rgb(255, 85, 110)),
             warning: Style::new().fg(Color::Rgb(255, 196, 87)),
+            sidebar: Style::new().fg(fg).bg(Color::Rgb(27, 22, 39)),
+            sidebar_title: Style::new().fg(accent).add_modifier(Modifier::BOLD),
+            sidebar_active: Style::new().fg(accent).bg(Color::Rgb(40, 32, 60)),
+            directory: Style::new().fg(Color::Rgb(150, 140, 255)),
+            border: Style::new().fg(Color::Rgb(48, 40, 68)),
         }
     }
 }
