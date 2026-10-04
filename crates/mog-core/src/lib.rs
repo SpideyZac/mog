@@ -15,6 +15,7 @@ pub mod history;
 pub mod keymap;
 pub mod lines;
 pub mod movement;
+pub mod project_search;
 pub mod range;
 pub mod search;
 pub mod transaction;
