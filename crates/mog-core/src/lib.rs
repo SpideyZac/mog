@@ -22,7 +22,7 @@ pub use command::{Command, Motion};
 pub use diagnostic::{Diagnostic, Severity};
 pub use document::{Document, LineEnding};
 pub use editor::{Editor, Options, Outcome};
-pub use file_tree::{Entry, FileTree};
+pub use file_tree::{Entry, FileTree, walk_files};
 pub use fuzzy::{Match, fuzzy_match};
 pub use history::History;
 pub use keymap::{Key, KeyChord, Keymap, Modifiers};

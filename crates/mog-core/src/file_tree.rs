@@ -6,6 +6,8 @@ use std::{
     path::{self, Path, PathBuf},
 };
 
+use ignore::WalkBuilder;
+
 /// Entry names that are never listed.
 const HIDDEN: [&str; 1] = [".git"];
 
@@ -132,12 +134,24 @@ impl FileTree {
     }
 }
 
+/// Returns up to `limit` files below `root`, skipping what `.gitignore` files and hidden folders
+/// leave out.
+pub fn walk_files(root: &Path, limit: usize) -> Vec<PathBuf> {
+    WalkBuilder::new(root)
+        .build()
+        .flatten()
+        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
+        .map(|entry| entry.into_path())
+        .take(limit)
+        .collect()
+}
+
 #[cfg(test)]
 /// Tests for [`FileTree`].
 mod tests {
     use std::{env, fs, path::PathBuf, process};
 
-    use super::FileTree;
+    use super::{FileTree, walk_files};
 
     /// Creates an empty scratch folder unique to `name`.
     fn scratch(name: &str) -> PathBuf {
@@ -181,6 +195,20 @@ mod tests {
         assert!(tree.entries()[0].expanded);
         tree.toggle(0);
         assert_eq!(names(&tree), ["src", "README.md"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Walking finds nested files and respects the limit.
+    #[test]
+    fn walks_files() {
+        let dir = scratch("walk");
+        fs::create_dir(dir.join("src")).expect("mkdir");
+        fs::write(dir.join("src").join("a.rs"), "").expect("write");
+        fs::write(dir.join("b.txt"), "").expect("write");
+        let mut files = walk_files(&dir, 10);
+        files.sort();
+        assert_eq!(files, [dir.join("b.txt"), dir.join("src").join("a.rs")]);
+        assert_eq!(walk_files(&dir, 1).len(), 1);
         let _ = fs::remove_dir_all(dir);
     }
 
