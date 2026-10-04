@@ -180,6 +180,15 @@ mod tests {
         assert_eq!(config.keys["ctrl+d"], "select_all");
     }
 
+    /// The example config in the repo stays valid.
+    #[test]
+    fn example_config_parses() {
+        let text = include_str!("../../../examples/config.toml");
+        let config = Config::parse(text, Path::new("config.toml")).expect("valid example");
+        assert!(config.language_servers().contains_key("zig"));
+        assert!(!config.language_servers().contains_key("go"));
+    }
+
     /// Unknown keys are reported instead of silently ignored.
     #[test]
     fn rejects_unknown_keys() {
