@@ -139,7 +139,7 @@ impl Config {
     }
 }
 
-/// Returns the directory mog keeps its config and plugins in.
+/// Returns the directory mog keeps its config in.
 ///
 /// This is [`CONFIG_DIR_ENV`] if set, otherwise `mog` inside the platform config directory.
 pub fn config_dir() -> Option<PathBuf> {

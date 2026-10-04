@@ -71,7 +71,7 @@ impl Motion {
 
 /// An action the editor can perform.
 ///
-/// Keys, mouse input, the command palette and plugins all end up as commands. Every command has a
+/// Keys, mouse input and the command palette all end up as commands. Every command has a
 /// name (see [`Display`] and [`FromStr`]) so it can be bound in config files.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Command {
@@ -116,7 +116,7 @@ pub enum Command {
     CommandPalette,
     /// Scrolls the view without moving the cursor. Negative values scroll up.
     Scroll(isize),
-    /// A command registered at runtime, usually by a plugin.
+    /// A namespaced command handled outside the core, like `ai.explain`.
     Custom(String),
 }
 
@@ -177,7 +177,7 @@ impl FromStr for Command {
 
     /// Parses a command name such as `save`, `select_word_left` or `scroll:-3`.
     ///
-    /// Names containing a `.` are treated as [`Command::Custom`] so plugins can namespace theirs.
+    /// Names containing a `.` are treated as [`Command::Custom`].
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         let unknown = || UnknownCommand(name.to_owned());
         if let Some((verb, arg)) = name.split_once(':') {

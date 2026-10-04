@@ -39,8 +39,8 @@ pub enum Outcome {
     Done,
     /// The editor should exit.
     Quit,
-    /// The command is not something the core handles, like opening the palette or running a
-    /// plugin command.
+    /// The command is not something the core handles, like opening the palette or asking the
+    /// AI.
     Unhandled(Command),
 }
 
