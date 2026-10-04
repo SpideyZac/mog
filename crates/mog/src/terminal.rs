@@ -3,7 +3,9 @@
 use std::io::{self, Stdout, stdout};
 use std::panic;
 
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -24,7 +26,7 @@ pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 pub fn init() -> io::Result<Tui> {
     install_panic_hook();
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen)?;
+    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     // some terminals cannot do bracketed paste and typing the paste out still works there
     let _ = execute!(stdout(), EnableBracketedPaste);
     Terminal::new(CrosstermBackend::new(stdout()))
@@ -37,7 +39,7 @@ pub fn init() -> io::Result<Tui> {
 /// Returns an error if the terminal cannot be reset.
 pub fn restore() -> io::Result<()> {
     let _ = execute!(stdout(), DisableBracketedPaste);
-    execute!(stdout(), LeaveAlternateScreen)?;
+    execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen)?;
     disable_raw_mode()
 }
 

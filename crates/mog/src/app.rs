@@ -5,6 +5,7 @@ use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
 use mog_core::{Command, Editor, Keymap, Outcome};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
+use ratatui::layout::Rect;
 
 use crate::cli::Args;
 use crate::clipboard;
@@ -20,6 +21,8 @@ pub struct App {
     compositor: Compositor,
     /// The active theme.
     theme: Theme,
+    /// The screen size at the last draw, used to place mouse events.
+    screen: Rect,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -41,6 +44,7 @@ impl App {
             keymap: Keymap::default(),
             compositor,
             theme: Theme::default(),
+            screen: Rect::default(),
             quit: false,
         }
     }
@@ -64,6 +68,7 @@ impl App {
     /// Draws one frame.
     fn draw(&mut self, terminal: &mut Tui) -> Result<()> {
         terminal.draw(|frame| {
+            self.screen = frame.area();
             let mut cx = Context {
                 editor: &mut self.editor,
                 theme: &self.theme,
@@ -82,6 +87,13 @@ impl App {
                 if let Some(command) = command {
                     self.run_command(command);
                 }
+            }
+            Event::Mouse(mouse) => {
+                let mut cx = Context {
+                    editor: &mut self.editor,
+                    theme: &self.theme,
+                };
+                self.compositor.handle_mouse(mouse, self.screen, &mut cx);
             }
             Event::Paste(text) => self.run_command(Command::InsertText(text)),
             _ => {}
