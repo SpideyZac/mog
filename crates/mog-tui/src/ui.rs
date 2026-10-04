@@ -63,6 +63,8 @@ pub enum Overlay {
     Menu,
     /// Every diagnostic in open files.
     Problems,
+    /// The places a symbol is used.
+    References,
 }
 
 /// What a [`Prompt`] is asking for.
@@ -232,6 +234,8 @@ pub struct Ui {
     pub menu: Option<MenuState>,
     /// The AI chat.
     pub chat: ChatState,
+    /// Found references as `(file, line, column, line text)`, lines and columns from 0.
+    pub references: Vec<(PathBuf, usize, usize, String)>,
     /// An AI suggestion shown after the cursor, as `(document, version, pos, text)`.
     pub ghost: Option<(usize, u64, usize, String)>,
 }

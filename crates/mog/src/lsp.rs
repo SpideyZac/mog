@@ -2,16 +2,20 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    fs,
     path::{Path, PathBuf},
 };
 
 use lsp_types::{
-    CompletionItem as LspItem, CompletionItemKind, CompletionTextEdit, DiagnosticSeverity,
-    Position, PublishDiagnosticsParams, TextEdit,
+    CompletionItem as LspItem, CompletionItemKind, CompletionTextEdit, Diagnostic as LspDiagnostic,
+    DiagnosticSeverity, Position, PublishDiagnosticsParams, Range as LspRange, TextEdit,
 };
 use mog_config::ServerConfig;
 use mog_core::{Change, Diagnostic, Document, Editor, Severity};
-use mog_lsp::{Client, LspEvent, convert, features};
+use mog_lsp::{
+    Client, LspEvent, convert,
+    features::{self, CodeAction, FileEdits},
+};
 use mog_tui::completion::{CompletionItem, ItemKind};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -36,7 +40,11 @@ pub enum LspReply {
     /// Edits that format a file at a given document version.
     Format(PathBuf, u64, Vec<TextEdit>),
     /// Edits across files that rename a symbol.
-    Rename(Vec<(PathBuf, Vec<TextEdit>)>),
+    Rename(FileEdits),
+    /// Places a symbol is used.
+    References(Vec<(PathBuf, Position)>),
+    /// Code actions as titles with their edits.
+    Actions(Vec<CodeAction>),
     /// A request found nothing or failed, with a message for the status line.
     Nothing(String),
 }
@@ -272,4 +280,47 @@ fn same_path(a: &Path, b: &Path) -> bool {
             .collect()
     };
     parts(a) == parts(b)
+}
+
+/// Returns the diagnostics of `document` on `line` in protocol form, for code action requests.
+pub fn diagnostics_on_line(document: &Document, line: usize) -> Vec<LspDiagnostic> {
+    let text = document.text();
+    document
+        .diagnostics()
+        .iter()
+        .filter(|d| text.char_to_line(d.from.min(text.len_chars())) == line)
+        .map(|d| LspDiagnostic {
+            range: LspRange::new(
+                convert::char_to_position(text, d.from),
+                convert::char_to_position(text, d.to),
+            ),
+            severity: Some(match d.severity {
+                Severity::Error => DiagnosticSeverity::ERROR,
+                Severity::Warning => DiagnosticSeverity::WARNING,
+                Severity::Info => DiagnosticSeverity::INFORMATION,
+                Severity::Hint => DiagnosticSeverity::HINT,
+            }),
+            message: d.message.clone(),
+            ..LspDiagnostic::default()
+        })
+        .collect()
+}
+
+/// Returns line `line` of `path` for previews, from the open document if there is one.
+pub fn line_preview(editor: &Editor, path: &Path, line: usize) -> String {
+    let open = editor
+        .documents()
+        .iter()
+        .find(|document| document.path().is_some_and(|other| same_path(other, path)));
+    if let Some(document) = open {
+        let text = document.text();
+        if line < text.len_lines() {
+            return text.line(line).to_string().trim_end().to_owned();
+        }
+        return String::new();
+    }
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|text| text.lines().nth(line).map(str::to_owned))
+        .unwrap_or_default()
 }

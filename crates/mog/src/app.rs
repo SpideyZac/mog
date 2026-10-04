@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
-use lsp_types::TextEdit;
+use lsp_types::Range as LspRange;
 use mog_ai::CompletionRequest;
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{Config, save_setting};
@@ -18,16 +18,25 @@ use mog_core::{
     movement,
 };
 use mog_flair::GraphView;
-use mog_lsp::{LspEvent, convert};
+use mog_lsp::{
+    LspEvent, convert,
+    features::{CodeAction, FileEdits},
+};
 use mog_tui::{
     ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer,
     Focus, Minimap, Overlay, Popups, PromptKind, SearchBar, SettingsPanel, StatusLine, Tabs, Theme,
     Ui, UiEvent,
     completion::{self, CompletionState},
-    input, search,
+    input,
+    menu::{self, MenuAction, MenuItem},
+    search,
     settings::{SettingKey, change as settings_change, persisted},
 };
-use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    layout::{Position, Rect},
+};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     time::{self, MissedTickBehavior},
@@ -92,6 +101,8 @@ pub struct App {
     lsp_replies: UnboundedReceiver<LspReply>,
     /// The id of the newest completion request, so older answers are ignored.
     completion_request: u64,
+    /// The code actions offered last, picked by index from the menu.
+    code_actions: Vec<CodeAction>,
     /// The AI providers and their pending replies.
     assistant: Assistant,
     /// The git state of the project.
@@ -199,6 +210,7 @@ impl App {
             lsp_sender: reply_sender,
             lsp_replies,
             completion_request: 0,
+            code_actions: Vec::new(),
             assistant: Assistant::new(providers),
             git,
             watcher,
@@ -766,6 +778,8 @@ impl App {
             u32::try_from(options.tab_width).unwrap_or(4),
             options.insert_spaces,
         );
+        let line = document.text().char_to_line(head);
+        let diagnostics = lsp::diagnostics_on_line(document, line);
         let sender = self.lsp_sender.clone();
         let feature = feature.to_owned();
         tokio::spawn(async move {
@@ -778,6 +792,17 @@ impl App {
                     Ok(Some((target, at))) => LspReply::Definition(target, at),
                     _ => LspReply::Nothing("no definition found".into()),
                 },
+                "references" => match client.references(&path, position).await {
+                    Ok(found) if !found.is_empty() => LspReply::References(found),
+                    _ => LspReply::Nothing("no references found".into()),
+                },
+                "actions" => {
+                    let range = LspRange::new(position, position);
+                    match client.code_actions(&path, range, diagnostics).await {
+                        Ok(actions) if !actions.is_empty() => LspReply::Actions(actions),
+                        _ => LspReply::Nothing("no code actions here".into()),
+                    }
+                }
                 _ => match client.formatting(&path, tab_size, spaces).await {
                     Ok(edits) => LspReply::Format(path, version, edits),
                     Err(err) => LspReply::Nothing(format!("could not format: {err}")),
@@ -810,7 +835,7 @@ impl App {
     }
 
     /// Applies rename edits to open documents and writes the rest straight to disk.
-    fn apply_rename(&mut self, files: Vec<(PathBuf, Vec<TextEdit>)>) {
+    fn apply_rename(&mut self, files: FileEdits) {
         let focused = self.editor.active();
         let mut count = 0;
         for (path, edits) in files {
@@ -881,6 +906,32 @@ impl App {
                 });
             }
             LspReply::Rename(files) => self.apply_rename(files),
+            LspReply::References(found) => {
+                self.ui.references = found
+                    .into_iter()
+                    .map(|(path, position)| {
+                        let line = usize::try_from(position.line).unwrap_or(0);
+                        let column = usize::try_from(position.character).unwrap_or(0);
+                        let preview = lsp::line_preview(&self.editor, &path, line);
+                        (path, line, column, preview)
+                    })
+                    .collect();
+                self.ui.open(Overlay::References);
+            }
+            LspReply::Actions(actions) => {
+                let items = actions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (title, _))| MenuItem {
+                        label: title.clone(),
+                        keys: String::new(),
+                        action: Some(MenuAction::Run(Command::Custom(format!("lsp.action.{i}")))),
+                    })
+                    .collect();
+                self.code_actions = actions;
+                let at = self.ui.cursor_screen.unwrap_or_default();
+                menu::open_menu(&mut self.ui, Position::new(at.x, at.y + 1), items);
+            }
             LspReply::Nothing(message) => self.editor.set_status(message),
         }
     }
@@ -1056,6 +1107,16 @@ impl App {
             "lsp.hover" => self.request_feature("hover"),
             "lsp.definition" => self.request_feature("definition"),
             "lsp.format" => self.request_feature("format"),
+            "lsp.references" => self.request_feature("references"),
+            "lsp.actions" => self.request_feature("actions"),
+            action if action.starts_with("lsp.action.") => {
+                let index = action["lsp.action.".len()..].parse::<usize>().ok();
+                if let Some((title, edits)) = index.and_then(|i| self.code_actions.get(i).cloned())
+                {
+                    self.apply_rename(edits);
+                    self.editor.set_status(title);
+                }
+            }
             "lsp.rename" => {
                 let document = self.editor.document();
                 let head = document.selection().head;

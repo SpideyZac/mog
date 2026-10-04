@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Key, KeyChord, Severity, walk_files};
+use mog_core::{Command, Key, KeyChord, Severity, movement, walk_files};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -76,6 +76,7 @@ impl Popups {
                     | Overlay::Keys
                     | Overlay::Prompt
                     | Overlay::Problems
+                    | Overlay::References
             )
         )
     }
@@ -182,6 +183,17 @@ impl Popups {
                 self.problems = rows.iter().map(|(_, _, at)| *at).collect();
                 rows.into_iter().map(|(_, item, _)| item).collect()
             }
+            Some(Overlay::References) => ui
+                .references
+                .iter()
+                .map(|(path, line, _, preview)| {
+                    PickerItem::new(preview.trim()).detail(format!(
+                        "{}:{}",
+                        display_path(path, &ui.root),
+                        line + 1
+                    ))
+                })
+                .collect(),
             _ => Vec::new(),
         };
         self.picker.reset(items);
@@ -200,6 +212,22 @@ impl Popups {
                     Ok(command) => cx.ui.request(command),
                     Err(err) => cx.editor.set_status(err.to_string()),
                 }
+            }
+            Some(Overlay::References) => {
+                let Some((path, line, column, _)) = cx.ui.references.get(index).cloned() else {
+                    return;
+                };
+                cx.ui.focus = Focus::Editor;
+                if let Err(err) = cx.editor.open(path.clone()) {
+                    cx.editor
+                        .set_status(format!("could not open {}: {err}", path.display()));
+                    return;
+                }
+                let text = cx.editor.document().text();
+                let line = line.min(text.len_lines() - 1);
+                let start = text.line_to_char(line);
+                let pos = start + column.min(movement::line_len(text, line));
+                cx.editor.select(pos, pos);
             }
             Some(Overlay::Problems) => {
                 if let Some(&(document, pos)) = self.problems.get(index) {
@@ -271,6 +299,7 @@ impl Layer for Popups {
             Some(Overlay::Finder) => ("\u{2315} find a file", "type part of a file name..."),
             Some(Overlay::Keys) => ("\u{2328} key bindings", "search keys or commands..."),
             Some(Overlay::Problems) => ("\u{26a0} problems", "search problems..."),
+            Some(Overlay::References) => ("\u{21c4} references", "search references..."),
             _ => ("", ""),
         };
         if let Some(prompt) = cx

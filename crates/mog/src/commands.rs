@@ -39,6 +39,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("lsp.complete", "Code: Complete"),
     ("lsp.format", "Code: Format file"),
     ("lsp.rename", "Code: Rename symbol"),
+    ("lsp.references", "Code: Find references"),
+    ("lsp.actions", "Code: Quick fixes and refactors"),
     ("move_doc_start", "Go: Start of file"),
     ("move_doc_end", "Go: End of file"),
     ("graph.toggle", "View: Project graph"),
