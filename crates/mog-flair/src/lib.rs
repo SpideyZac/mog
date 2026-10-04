@@ -5,8 +5,10 @@
 
 pub mod builtin;
 pub mod flair;
+pub mod graph;
 pub mod layer;
 pub mod rng;
 
 pub use flair::{Corner, Flair, FlairContext, Placement};
+pub use graph::GraphView;
 pub use layer::FlairLayer;
