@@ -61,6 +61,7 @@ The lints in the workspace `Cargo.toml` enforce most of these. Do not silence th
 - Keep them short. No paragraphs explaining everything.
 - ASCII only. No em dashes, smart quotes or other unicode.
 - Add `# Panics`, `# Errors` and `# Safety` sections where they apply.
+- Tests too: `/// Tests for ...` on the `mod tests` and a one line `///` on each test.
 
 ### Imports
 
