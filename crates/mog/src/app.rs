@@ -12,8 +12,8 @@ use mog_config::{Config, save_setting};
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome};
 use mog_lsp::LspEvent;
 use mog_tui::{
-    Compositor, Context, EditorView, EventResult, Explorer, Focus, Overlay, Popups, SearchBar,
-    SettingsPanel, StatusLine, Tabs, Theme, Ui, input, search, settings::persisted,
+    Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap, Overlay, Popups,
+    SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, input, search, settings::persisted,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -117,6 +117,7 @@ impl App {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         compositor.push(Box::new(Tabs::new()));
+        compositor.push(Box::new(Minimap::new()));
         compositor.push(Box::new(SearchBar::new()));
         if let Some(tree) = tree {
             ui.has_explorer = true;
