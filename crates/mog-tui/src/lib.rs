@@ -34,4 +34,7 @@ pub use settings::{SettingKey, SettingsPanel};
 pub use status_line::StatusLine;
 pub use tabs::Tabs;
 pub use theme::Theme;
-pub use ui::{CommandInfo, Focus, Layout, Overlay, Prompt, PromptKind, Segment, Side, Ui, UiEvent};
+pub use ui::{
+    CommandInfo, Focus, Layout, Overlay, Pane, Prompt, PromptKind, Segment, Side, SplitState, Ui,
+    UiEvent,
+};

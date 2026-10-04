@@ -24,8 +24,8 @@ use mog_lsp::{
 };
 use mog_tui::{
     ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer,
-    Focus, Minimap, Overlay, Popups, PromptKind, SearchBar, SettingsPanel, StatusLine, Tabs, Theme,
-    Ui, UiEvent,
+    Focus, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar, SettingsPanel, SplitState,
+    StatusLine, Tabs, Theme, Ui, UiEvent,
     completion::{self, CompletionState},
     input,
     menu::{self, MenuAction, MenuItem},
@@ -163,6 +163,7 @@ impl App {
         ui.root.clone_from(&root);
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
+        compositor.push(Box::new(EditorView::side()));
         compositor.push(Box::new(Tabs::new()));
         compositor.push(Box::new(ChatPanel::new()));
         compositor.push(Box::new(Minimap::new()));
@@ -1103,6 +1104,33 @@ impl App {
                 );
             }
             "settings.open" => self.ui.open(Overlay::Settings),
+            "split.toggle" => {
+                self.ui.split = match self.ui.split.take() {
+                    Some(_) => None,
+                    None => Some(SplitState {
+                        focused: Pane::Main,
+                        other_document: self.editor.active(),
+                        other_view: self.editor.view().clone(),
+                    }),
+                };
+            }
+            "split.focus" => {
+                let Some(split) = self.ui.split.as_mut() else {
+                    return;
+                };
+                // swap what the panes show so the focused one is always the active document
+                let document = self.editor.active();
+                let view = self.editor.view().clone();
+                self.editor.focus(split.other_document);
+                *self.editor.view_mut() = split.other_view.clone();
+                split.other_document = document;
+                split.other_view = view;
+                split.focused = match split.focused {
+                    Pane::Main => Pane::Side,
+                    Pane::Side => Pane::Main,
+                };
+                self.ui.focus = Focus::Editor;
+            }
             "lsp.complete" => self.request_completion(true),
             "lsp.hover" => self.request_feature("hover"),
             "lsp.definition" => self.request_feature("definition"),

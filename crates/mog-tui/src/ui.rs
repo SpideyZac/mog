@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use mog_config::Config;
-use mog_core::Command;
+use mog_core::{Command, View};
 use mog_git::FileStatus;
 use ratatui::{
     layout::{Position, Rect},
@@ -42,6 +42,30 @@ pub enum Focus {
     Search,
     /// The AI chat input.
     Chat,
+}
+
+/// One of the two editor panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pane {
+    /// The left pane, the only one when there is no split.
+    #[default]
+    Main,
+    /// The right pane of a split.
+    Side,
+}
+
+/// A side by side split.
+///
+/// The focused pane always shows the editor's focused document. The other pane remembers which
+/// document it shows and how it was scrolled.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SplitState {
+    /// The pane that has focus.
+    pub focused: Pane,
+    /// The document index shown in the other pane.
+    pub other_document: usize,
+    /// The scroll position of the other pane.
+    pub other_view: View,
 }
 
 /// A popup that covers the screen and takes all input while open.
@@ -167,8 +191,10 @@ pub struct Layout {
     pub tabs: Rect,
     /// The file explorer, empty when hidden.
     pub explorer: Rect,
-    /// The document text with its gutter.
+    /// The document text with its gutter, the left pane when split.
     pub editor: Rect,
+    /// The right pane of a split, empty when not split.
+    pub split: Rect,
     /// The minimap, empty when hidden.
     pub minimap: Rect,
     /// The AI chat panel, empty when hidden.
@@ -238,6 +264,8 @@ pub struct Ui {
     pub references: Vec<(PathBuf, usize, usize, String)>,
     /// An AI suggestion shown after the cursor, as `(document, version, pos, text)`.
     pub ghost: Option<(usize, u64, usize, String)>,
+    /// The split, if the editor is split.
+    pub split: Option<SplitState>,
 }
 
 impl Ui {
@@ -355,12 +383,26 @@ impl Ui {
         } else {
             0
         };
-        let editor = Rect {
+        let both = Rect {
             width: main.width - minimap_width,
             ..main
         };
-        let minimap = Rect {
+        let split_width = if self.split.is_some() {
+            both.width / 2
+        } else {
+            0
+        };
+        let editor = Rect {
+            width: both.width - split_width,
+            ..both
+        };
+        let split = Rect {
             x: editor.right(),
+            width: split_width,
+            ..both
+        };
+        let minimap = Rect {
+            x: both.right(),
             width: minimap_width,
             ..main
         };
@@ -369,6 +411,7 @@ impl Ui {
             tabs,
             explorer,
             editor,
+            split,
             minimap,
             chat,
             status,

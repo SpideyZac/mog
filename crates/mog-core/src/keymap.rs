@@ -71,6 +71,8 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl+k", "help.keys"),
     ("ctrl+,", "settings.open"),
     ("alt+g", "graph.toggle"),
+    ("ctrl+\\", "split.toggle"),
+    ("alt+\\", "split.focus"),
     ("ctrl+space", "lsp.complete"),
     ("alt+h", "lsp.hover"),
     ("f12", "lsp.definition"),

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Document, Severity, movement, view};
+use mog_core::{Command, Document, Severity, View, movement, view};
 use mog_git::{LineChange, line_changes};
 use mog_syntax::{Highlighter, Kind, Span, language_for};
 use ratatui::{
@@ -19,7 +19,7 @@ use crate::{
     compositor::{Context, EventResult, Layer},
     menu,
     theme::{RAINBOW_LEN, Theme},
-    ui::{Focus, Layout, Ui},
+    ui::{Focus, Layout, Pane, Ui},
 };
 
 /// Blank cells between the line numbers and the text.
@@ -132,12 +132,42 @@ pub struct EditorView {
     highlighter: Highlighter,
     /// Per document work kept between frames.
     cache: Cache,
+    /// Which pane this view draws.
+    pane: Pane,
 }
 
 impl EditorView {
-    /// Creates the editor view.
+    /// Creates the editor view for the main pane.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates the editor view for the right pane of a split.
+    pub fn side() -> Self {
+        Self {
+            pane: Pane::Side,
+            ..Self::default()
+        }
+    }
+
+    /// Returns whether this pane shows the focused document.
+    fn is_active(&self, ui: &Ui) -> bool {
+        ui.split
+            .as_ref()
+            .is_none_or(|split| split.focused == self.pane)
+    }
+
+    /// Returns which document this pane shows and how it is scrolled.
+    fn shown(&self, cx: &Context<'_>) -> (usize, View) {
+        match cx.ui.split.as_ref().filter(|_| !self.is_active(cx.ui)) {
+            Some(split) => (
+                split
+                    .other_document
+                    .min(cx.editor.documents().len().saturating_sub(1)),
+                split.other_view.clone(),
+            ),
+            None => (cx.editor.active(), cx.editor.view().clone()),
+        }
     }
 
     /// Records a left click at `at` and returns whether it is a single, double or triple click.
@@ -163,11 +193,10 @@ impl EditorView {
     }
 
     /// Brings the cache up to date with the focused document.
-    fn refresh_cache(&mut self, cx: &Context<'_>) {
-        let editor = &cx.editor;
-        let document = editor.document();
+    fn refresh_cache(&mut self, cx: &Context<'_>, index: usize) {
+        let document = &cx.editor.documents()[index];
         let key = (
-            editor.active(),
+            index,
             document.path().map(ToOwned::to_owned),
             document.version(),
         );
@@ -196,29 +225,45 @@ impl EditorView {
 
 impl Layer for EditorView {
     fn area(&self, layout: &Layout, _ui: &Ui) -> Rect {
-        layout.editor
+        match self.pane {
+            Pane::Main => layout.editor,
+            Pane::Side => layout.split,
+        }
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
-        self.refresh_cache(cx);
-        cx.ui.cursor_screen = self.cursor_position(area, cx);
-        let theme = cx.theme;
-        let settings = &cx.ui.config.ui;
-        let lines = cx.editor.document().text().len_lines();
+        let active = self.is_active(cx.ui);
+        let (index, mut shown_view) = self.shown(cx);
+        self.refresh_cache(cx, index);
+        let lines = cx.editor.documents()[index].text().len_lines();
         self.gutter_width = Self::gutter_width_for(lines, cx.ui).min(area.width);
         let text_width = area.width - self.gutter_width;
-        cx.editor
-            .view_mut()
-            .resize(usize::from(text_width), usize::from(area.height));
+        shown_view.resize(usize::from(text_width), usize::from(area.height));
+        if active {
+            cx.editor
+                .view_mut()
+                .resize(usize::from(text_width), usize::from(area.height));
+            cx.ui.cursor_screen = self.cursor_position(area, cx);
+        } else if let Some(split) = cx.ui.split.as_mut() {
+            split.other_view = shown_view.clone();
+        }
+        let theme = cx.theme;
+        let settings = &cx.ui.config.ui;
+        // a split edge keeps the two panes apart
+        if self.pane == Pane::Side {
+            for y in area.top()..area.bottom() {
+                buf.set_string(area.x, y, "\u{258f}", theme.border);
+            }
+        }
 
         let tab_width = cx.editor.options().tab_width;
-        let document = cx.editor.document();
+        let document = &cx.editor.documents()[index];
         let document_version = document.version();
         let text = document.text();
         let selection = document.selection();
-        let extras = document.cursors();
+        let extras = if active { document.cursors() } else { &[] };
         let cursor_line = text.char_to_line(selection.head);
-        let scroll = cx.editor.view();
+        let scroll = &shown_view;
         let brackets = movement::matching_bracket(text, selection.head);
         let path = document.path();
         let blame = cx
@@ -231,7 +276,7 @@ impl Layer for EditorView {
         let mut span_index = 0;
         let number_width = lines.to_string().len();
         let search = &cx.ui.search;
-        let matches = &search.matches[..];
+        let matches = if active { &search.matches[..] } else { &[] };
         let first_visible = text.line_to_char(scroll.scroll_line.min(lines - 1));
         let mut match_index = matches.partition_point(|(_, to)| *to <= first_visible);
         let mut guide_indent = 0;
@@ -468,6 +513,27 @@ impl Layer for EditorView {
     }
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect, cx: &mut Context<'_>) -> EventResult {
+        if !self.is_active(cx.ui) {
+            match event.kind {
+                MouseEventKind::Down(_) => {
+                    cx.ui.request(Command::Custom("split.focus".into()));
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    let lines = if event.kind == MouseEventKind::ScrollUp {
+                        -WHEEL_LINES
+                    } else {
+                        WHEEL_LINES
+                    };
+                    let (index, _) = self.shown(cx);
+                    let text = cx.editor.documents()[index].text().clone();
+                    if let Some(split) = cx.ui.split.as_mut() {
+                        split.other_view.scroll_by(lines, &text);
+                    }
+                }
+                _ => {}
+            }
+            return EventResult::Consumed;
+        }
         let text_x = area.x + self.gutter_width;
         let in_gutter = event.column < text_x;
         let col = usize::from(event.column.saturating_sub(text_x));
@@ -534,7 +600,7 @@ impl Layer for EditorView {
     }
 
     fn cursor(&self, area: Rect, cx: &Context<'_>) -> Option<Position> {
-        if cx.ui.focus != Focus::Editor || cx.ui.overlay.is_some() {
+        if cx.ui.focus != Focus::Editor || cx.ui.overlay.is_some() || !self.is_active(cx.ui) {
             return None;
         }
         self.cursor_position(area, cx)
