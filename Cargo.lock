@@ -1776,6 +1776,7 @@ dependencies = [
  "futures",
  "lsp-types",
  "mog-ai",
+ "mog-audio",
  "mog-config",
  "mog-core",
  "mog-flair",

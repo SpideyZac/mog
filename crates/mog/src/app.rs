@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
+use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{Config, save_setting};
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome, Severity};
 use mog_flair::GraphView;
@@ -16,7 +17,7 @@ use mog_lsp::LspEvent;
 use mog_tui::{
     Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap, Overlay, Popups,
     SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, UiEvent, input, search,
-    settings::persisted,
+    settings::{SettingKey, change as settings_change, persisted},
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -81,6 +82,10 @@ pub struct App {
     last_focus: Option<PathBuf>,
     /// The error and warning counts of the focused file at the last check.
     last_problems: (usize, usize),
+    /// The sound player, started the first time sound is turned on.
+    audio: Option<Audio>,
+    /// The error count the sounds last reacted to.
+    sound_errors: usize,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
     /// Whether the event loop should stop after the current iteration.
@@ -170,6 +175,8 @@ impl App {
             git_refreshed: Instant::now(),
             last_focus: None,
             last_problems: (0, 0),
+            audio: None,
+            sound_errors: 0,
             screen: Rect::default(),
             quit: false,
         };
@@ -180,7 +187,52 @@ impl App {
             }
         }
         app.run_requests();
+        app.apply_audio_settings();
         app
+    }
+
+    /// Starts, stops or adjusts sound to match the settings.
+    fn apply_audio_settings(&mut self) {
+        let settings = &self.ui.config.audio;
+        let wanted = settings.sound_effects || settings.music;
+        if wanted && self.audio.is_none() {
+            self.audio = Some(Audio::start());
+        }
+        if let Some(audio) = &self.audio {
+            audio.set_volume(settings.volume);
+            audio.set_music(settings.music);
+        }
+    }
+
+    /// Plays sounds for what happened since the last frame.
+    fn play_sounds(&mut self) {
+        let Some(audio) = &self.audio else {
+            return;
+        };
+        let effects = self.ui.config.audio.sound_effects;
+        for event in &self.ui.events {
+            let sfx = match event {
+                UiEvent::Typed(_) => Some(Sfx::Key),
+                UiEvent::Deleted => Some(Sfx::Delete),
+                UiEvent::Saved => Some(Sfx::Save),
+                UiEvent::Opened => Some(Sfx::Open),
+                UiEvent::Diagnostics { errors, .. } => {
+                    let sound = match (self.sound_errors, *errors) {
+                        (0, n) if n > 0 => Some(Sfx::Error),
+                        (n, 0) if n > 0 => Some(Sfx::Fixed),
+                        _ => None,
+                    };
+                    self.sound_errors = *errors;
+                    let mood = if *errors > 0 { Mood::Tense } else { Mood::Calm };
+                    audio.set_mood(mood);
+                    sound
+                }
+                UiEvent::Activity => None,
+            };
+            if let Some(sfx) = sfx.filter(|_| effects) {
+                audio.play(sfx);
+            }
+        }
     }
 
     /// Runs the event loop until the user quits.
@@ -199,6 +251,7 @@ impl App {
             self.sync_language_servers();
             self.sync_git();
             self.watch_focus();
+            self.play_sounds();
             self.draw(terminal)?;
             let animating = self.compositor.is_animating();
             tokio::select! {
@@ -315,6 +368,13 @@ impl App {
         }
     }
 
+    /// Changes a setting by one step as if it was picked in the settings menu.
+    fn change_setting(&mut self, key: SettingKey) {
+        settings_change(&mut self.ui.config, &key, 1);
+        self.ui.setting_changes.push(key);
+        self.apply_setting_changes();
+    }
+
     /// Saves and applies settings changed in the settings menu.
     fn apply_setting_changes(&mut self) {
         let changes = mem::take(&mut self.ui.setting_changes);
@@ -334,6 +394,7 @@ impl App {
             self.editor.set_status(problem);
         }
         self.editor.set_options(settings::options(&self.ui.config));
+        self.apply_audio_settings();
     }
 
     /// Runs the commands layers asked for.
@@ -516,6 +577,14 @@ impl App {
             "help.keys" => self.ui.open(Overlay::Keys),
             "goto.prompt" => self.ui.open(Overlay::GotoLine),
             "settings.open" => self.ui.open(Overlay::Settings),
+            "audio.toggle_music" => self.change_setting(SettingKey::Audio("music")),
+            "audio.toggle_effects" => self.change_setting(SettingKey::Audio("sound_effects")),
+            "flair.toggle" => self.change_setting(SettingKey::FlairEnabled),
+            "theme.next" => {
+                self.change_setting(SettingKey::Theme);
+                self.editor
+                    .set_status(format!("theme: {}", self.ui.config.ui.theme));
+            }
             "graph.toggle" => {
                 if self.ui.overlay == Some(Overlay::Graph) {
                     self.ui.close();
