@@ -27,6 +27,7 @@ mog .
   formatting, code actions
 - Git gutter, branch in the status line, file colors and inline blame
 - Claude chat, explain selection and ghost text. Copilot ghost text.
+- Updates itself from GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
   to your config
 
@@ -53,9 +54,13 @@ Grab a build for Windows, macOS or Linux from
 [releases](https://github.com/SpideyZac/mog/releases), unpack it and put `mog` somewhere on your
 `PATH`.
 
+mog updates itself. When a new release is out it downloads in the background, checks it against
+the release checksum and is ready the next time you start mog, which then shows what changed. Turn
+that off in [`[updates]`](#updates), or update by hand with `mog --update`.
+
 ### Building it yourself
 
-You need stable Rust (edition 2024, so 1.85 or newer) and a C compiler for the tree-sitter
+You need stable Rust 1.90 or newer and a C compiler for the tree-sitter
 grammars. On Linux you also need ALSA headers:
 
 ```sh
@@ -82,6 +87,7 @@ Or `cargo install --path crates/mog` to put it in `~/.cargo/bin`.
 mog [PATH]              open a file, or a folder in the explorer
 mog --run <COMMAND>     run a command after starting, can be repeated
 mog --keys              print every key binding and exit
+mog --update            install the newest release and exit
 mog --version
 ```
 
@@ -483,6 +489,9 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `copilot.sign_in` | Sign in to Copilot |
 | `copilot.sign_out` | Sign out of Copilot |
 | `copilot.status` | Show Copilot status |
+| `help.release_notes` | What's new, from the GitHub release |
+| `update.check` | Look for a new release |
+| `update.install` | Install the new release |
 
 ### In panels
 

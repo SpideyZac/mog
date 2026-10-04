@@ -16,6 +16,9 @@ pub struct Args {
     /// Prints every key binding and exits.
     #[arg(long)]
     pub keys: bool,
+    /// Installs the newest release from GitHub and exits.
+    #[arg(long)]
+    pub update: bool,
     /// Renders one frame of the given size, like `120x40`, as text and exits. For debugging.
     #[arg(long, hide = true, value_name = "WxH")]
     pub snapshot: Option<String>,

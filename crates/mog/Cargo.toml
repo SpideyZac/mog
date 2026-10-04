@@ -29,7 +29,16 @@ mog-tui.workspace = true
 notify.workspace = true
 open.workspace = true
 ratatui.workspace = true
+reqwest.workspace = true
+self-replace.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 
-[dev-dependencies]
-serde_json.workspace = true
+[target.'cfg(windows)'.dependencies]
+zip.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+flate2.workspace = true
+tar.workspace = true

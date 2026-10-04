@@ -99,3 +99,8 @@
 ## Social
 
 - [x] Discord Rich Presence
+
+## Updates
+
+- [x] Auto update from GitHub releases
+- [x] Release notes popup

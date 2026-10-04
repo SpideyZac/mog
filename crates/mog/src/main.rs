@@ -10,11 +10,12 @@ mod git;
 mod lsp;
 mod settings;
 mod terminal;
+mod update;
 mod watch;
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use app::App;
 use clap::Parser;
 use cli::Args;
@@ -34,6 +35,13 @@ async fn main() -> Result<()> {
         println!("{}", commands::key_table(&keymap));
         return Ok(());
     }
+    if args.update {
+        match update::update_now().await {
+            Ok(message) => println!("{message}"),
+            Err(err) => return Err(anyhow!("could not update: {err}")),
+        }
+        return Ok(());
+    }
     if let Some(size) = args.snapshot.clone() {
         let wait = Duration::from_millis(args.snapshot_wait);
         let commands = args.snapshot_run.clone();
@@ -42,7 +50,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let mut tui = terminal::init()?;
-    let result = App::new(args).run(&mut tui).await;
+    let mut app = App::new(args);
+    app.start_updates();
+    let result = app.run(&mut tui).await;
     terminal::restore()?;
     result
 }

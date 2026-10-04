@@ -33,10 +33,12 @@ use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
     EditorView, EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind,
-    SearchBar, SettingsPanel, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
+    ReleaseNotesPopup, SearchBar, SettingsPanel, SplitState, StatusLine, Tabs, Theme, ThemeEditor,
+    Ui, UiEvent,
     completion::{self, CompletionState},
     ghost, input,
     menu::{self, MenuAction, MenuItem},
+    release_notes::{self, ReleaseNotes},
     search,
     settings::{SettingKey, change as settings_change, persisted},
     theme::to_hex,
@@ -61,6 +63,7 @@ use crate::{
     lsp::{self, LanguageServers, LspReply},
     settings,
     terminal::Tui,
+    update::{self, Release, UpdateEvent, Updater},
     watch::FolderWatcher,
 };
 
@@ -161,6 +164,12 @@ pub struct App {
     screen: Rect,
     /// When the last key or mouse event came in, to know when the screensaver is up.
     last_input: Instant,
+    /// Finds and installs new releases.
+    updater: Updater,
+    /// A newer release that is not installed yet.
+    update: Option<Release>,
+    /// A release installed while running, used once mog restarts.
+    installed: Option<Release>,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -221,6 +230,7 @@ impl App {
         compositor.push(Box::new(Popups::new()));
         compositor.push(Box::new(SettingsPanel::new()));
         compositor.push(Box::new(ThemeEditor::new()));
+        compositor.push(Box::new(ReleaseNotesPopup::new()));
         compositor.push(Box::new(GraphView::new()));
         compositor.push(Box::new(ContextMenu::new()));
         compositor.push(Box::new(Annotations::new()));
@@ -270,6 +280,9 @@ impl App {
             discord_status: None,
             screen: Rect::default(),
             last_input: Instant::now(),
+            updater: Updater::new(),
+            update: None,
+            installed: None,
             quit: false,
         };
         for name in startup {
@@ -282,6 +295,95 @@ impl App {
         app.apply_audio_settings();
         app.apply_discord_settings();
         app
+    }
+
+    /// Shows what is new after an update and looks for the next one.
+    ///
+    /// Not part of [`App::new`] so snapshots stay offline.
+    pub fn start_updates(&mut self) {
+        if let Some(previous) = update::remember_version()
+            && update::is_newer(update::VERSION, &previous)
+        {
+            self.updater.notes(Some(format!("v{}", update::VERSION)));
+        }
+        if self.ui.config.updates.check {
+            self.updater.check(false, self.ui.config.updates.install);
+        }
+    }
+
+    /// Acts on finished update work.
+    fn handle_update(&mut self, event: UpdateEvent) {
+        match event {
+            UpdateEvent::Checked {
+                result: Ok(Some(release)),
+                install,
+                ..
+            } => {
+                let version = release.version().to_owned();
+                self.update = Some(release.clone());
+                let message = match update::cannot_install() {
+                    None if install => {
+                        self.updater.install(release);
+                        format!("downloading mog v{version} in the background")
+                    }
+                    None => format!("mog v{version} is out, run Help: Update mog"),
+                    Some(reason) => format!("mog v{version} is out, but {reason}"),
+                };
+                self.editor.set_status(message);
+            }
+            UpdateEvent::Checked {
+                result: Ok(None),
+                manual: true,
+                ..
+            } => self.editor.set_status(format!(
+                "mog v{} is the newest, keep mogging",
+                update::VERSION
+            )),
+            UpdateEvent::Checked {
+                result: Err(err),
+                manual: true,
+                ..
+            } => self
+                .editor
+                .set_status(format!("could not check for updates: {err}")),
+            UpdateEvent::Checked { .. } => {}
+            UpdateEvent::Installed(Ok(release)) => {
+                self.update = None;
+                self.editor.set_status(format!(
+                    "updated to mog v{}, restart to use it. Help: What's new has the notes",
+                    release.version()
+                ));
+                self.installed = Some(release);
+            }
+            UpdateEvent::Installed(Err(err)) => {
+                self.editor.set_status(format!("update failed: {err}"));
+            }
+            UpdateEvent::Notes(Ok(release)) => self.show_release_notes(&release),
+            UpdateEvent::Notes(Err(err)) => self
+                .editor
+                .set_status(format!("could not get the release notes: {err}")),
+        }
+    }
+
+    /// Opens the notes of `release` in a popup.
+    fn show_release_notes(&mut self, release: &Release) {
+        let newer = update::is_newer(release.version(), update::VERSION);
+        let installed = self
+            .installed
+            .as_ref()
+            .is_some_and(|installed| installed.tag_name == release.tag_name);
+        let title = if newer && !installed {
+            format!("mog v{} is out", release.version())
+        } else {
+            format!("what's new in mog v{}", release.version())
+        };
+        self.ui.release_notes = Some(ReleaseNotes {
+            title,
+            body: release.body.clone().unwrap_or_default(),
+            url: release.html_url.clone(),
+            can_update: newer && !installed && update::cannot_install().is_none(),
+        });
+        self.ui.open(Overlay::ReleaseNotes);
     }
 
     /// Starts, stops or adjusts sound to match the settings.
@@ -417,6 +519,7 @@ impl App {
                 Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
                 Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
+                Some(event) = self.updater.event() => self.handle_update(event),
                 () = changed(self.watcher.as_ref()) => self.files_changed = true,
                 () = time::sleep_until(idle_at.into()), if typing => {}
                 _ = housekeeping.tick() => self.housekeeping(),
@@ -1699,6 +1802,47 @@ impl App {
                     self.ui.close();
                 } else {
                     self.ui.open(Overlay::Graph);
+                }
+            }
+            "help.release_notes" => match self.installed.clone().or_else(|| self.update.clone()) {
+                Some(release) => self.show_release_notes(&release),
+                None => {
+                    self.editor
+                        .set_status("getting the release notes from github");
+                    self.updater.notes(None);
+                }
+            },
+            "update.check" => {
+                self.editor.set_status("checking for updates");
+                self.updater.check(true, self.ui.config.updates.install);
+            }
+            release_notes::UPDATE_COMMAND => match self.update.clone() {
+                Some(release) => {
+                    let message = match update::cannot_install() {
+                        Some(reason) => format!("can not update: {reason}"),
+                        None if self.updater.install(release) => {
+                            "downloading the update in the background".to_owned()
+                        }
+                        None => "already updating, hang on".to_owned(),
+                    };
+                    self.editor.set_status(message);
+                }
+                None => {
+                    self.editor.set_status("checking for updates");
+                    self.updater.check(true, true);
+                }
+            },
+            release_notes::OPEN_COMMAND => {
+                let url = self
+                    .ui
+                    .release_notes
+                    .as_ref()
+                    .map_or("https://github.com/SpideyZac/mog/releases", |notes| {
+                        notes.url.as_str()
+                    });
+                if let Err(err) = open::that_detached(url) {
+                    self.editor
+                        .set_status(format!("could not open {url}: {err}"));
                 }
             }
             "annotate.toggle" => {
