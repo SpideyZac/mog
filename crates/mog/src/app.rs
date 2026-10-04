@@ -1,22 +1,26 @@
 //! The application state and event loop.
 
 use std::{
-    env, mem,
-    path::PathBuf,
+    env, fs, mem,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
+use lsp_types::TextEdit;
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{Config, save_setting};
-use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome, Severity};
+use mog_core::{
+    Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
+    movement,
+};
 use mog_flair::GraphView;
 use mog_lsp::{LspEvent, convert};
 use mog_tui::{
     CompletionMenu, Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap,
-    Overlay, Popups, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, UiEvent,
+    Overlay, Popups, PromptKind, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, UiEvent,
     completion::{self, CompletionState},
     input, search,
     settings::{SettingKey, change as settings_change, persisted},
@@ -503,6 +507,112 @@ impl App {
         }
     }
 
+    /// Asks where to save the focused document.
+    fn ask_save_as(&mut self) {
+        let current = self
+            .editor
+            .document()
+            .path()
+            .map(|path| {
+                path.strip_prefix(&self.ui.root)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let hint = format!("relative to {}", self.ui.root.display());
+        self.ui
+            .ask(PromptKind::SaveAs, "\u{21e9} save as", current, hint);
+    }
+
+    /// Acts on an answered prompt.
+    fn submit_prompt(&mut self) {
+        let Some(prompt) = self.ui.submitted.take() else {
+            return;
+        };
+        let text = prompt.text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let resolve = |base: &Path| {
+            let path = Path::new(text);
+            if path.is_absolute() {
+                path.to_owned()
+            } else {
+                base.join(path)
+            }
+        };
+        let result = match prompt.kind {
+            PromptKind::GotoLine => {
+                if let Ok(line) = text.parse() {
+                    self.ui.focus = Focus::Editor;
+                    self.execute_command(Command::GotoLine(line));
+                }
+                Ok(())
+            }
+            PromptKind::SaveAs => {
+                let path = resolve(&self.ui.root);
+                let result = self.editor.save_as(&path);
+                if result.is_ok() {
+                    self.ui.events.push(UiEvent::Saved);
+                }
+                result
+            }
+            PromptKind::NewFile(dir) => {
+                let path = resolve(&dir);
+                let result = if text.ends_with('/') || text.ends_with('\\') {
+                    fs::create_dir_all(&path)
+                } else {
+                    path.parent()
+                        .map_or(Ok(()), fs::create_dir_all)
+                        .and_then(|()| fs::OpenOptions::new().create(true).append(true).open(&path))
+                        .and_then(|_| self.editor.open(&path))
+                };
+                if result.is_ok() {
+                    self.ui.focus = Focus::Editor;
+                }
+                result
+            }
+            PromptKind::RenameFile(old) => {
+                let new = resolve(old.parent().unwrap_or(&self.ui.root));
+                let result = fs::rename(&old, &new);
+                if result.is_ok() {
+                    for document in self.editor.documents_mut() {
+                        if document.path() == Some(old.as_path()) {
+                            document.set_path(&new);
+                        }
+                    }
+                    self.editor
+                        .set_status(format!("renamed to {}", new.display()));
+                }
+                result
+            }
+            PromptKind::DeleteFile(path) => {
+                if !matches!(text, "y" | "yes") {
+                    return;
+                }
+                let result = if path.is_dir() {
+                    fs::remove_dir_all(&path)
+                } else {
+                    fs::remove_file(&path)
+                };
+                if result.is_ok() {
+                    self.editor
+                        .set_status(format!("deleted {}, gone forever", path.display()));
+                }
+                result
+            }
+            PromptKind::RenameSymbol => {
+                self.request_rename(text.to_owned());
+                Ok(())
+            }
+        };
+        self.ui.refresh_explorer = true;
+        if let Err(err) = result {
+            self.editor.set_status(format!("that did not work: {err}"));
+        }
+    }
+
     /// Opens or closes the completion menu after `ch` was typed.
     fn auto_complete(&mut self, ch: char) {
         if !self.ui.config.editor.auto_complete {
@@ -593,6 +703,60 @@ impl App {
         });
     }
 
+    /// Asks the language server to rename the symbol at the cursor to `new_name`.
+    fn request_rename(&mut self, new_name: String) {
+        let document = self.editor.document();
+        let Some(path) = document.path().map(ToOwned::to_owned) else {
+            return;
+        };
+        let Some(client) = self.lsp.client_for(&path) else {
+            self.editor.set_status("no language server for this file");
+            return;
+        };
+        let position = convert::char_to_position(document.text(), document.selection().head);
+        let sender = self.lsp_sender.clone();
+        tokio::spawn(async move {
+            let reply = match client.rename(&path, position, &new_name).await {
+                Ok(files) if !files.is_empty() => LspReply::Rename(files),
+                Ok(_) => LspReply::Nothing("nothing to rename here".into()),
+                Err(err) => LspReply::Nothing(format!("could not rename: {err}")),
+            };
+            let _ = sender.send(reply);
+        });
+    }
+
+    /// Applies rename edits to open documents and writes the rest straight to disk.
+    fn apply_rename(&mut self, files: Vec<(PathBuf, Vec<TextEdit>)>) {
+        let focused = self.editor.active();
+        let mut count = 0;
+        for (path, edits) in files {
+            count += edits.len();
+            let open = self
+                .editor
+                .documents()
+                .iter()
+                .position(|document| document.path() == Some(path.as_path()));
+            if let Some(index) = open {
+                self.editor.focus(index);
+                let changes = lsp::to_changes(self.editor.document(), &edits);
+                self.editor.apply_changes(changes);
+                continue;
+            }
+            let result = Document::open(&path).and_then(|mut document| {
+                let changes = lsp::to_changes(&document, &edits);
+                let tx = Transaction::new(changes);
+                document.apply(tx, Range::point(0), false);
+                document.save()
+            });
+            if let Err(err) = result {
+                self.editor
+                    .set_status(format!("could not edit {}: {err}", path.display()));
+            }
+        }
+        self.editor.focus(focused);
+        self.editor.set_status(format!("renamed in {count} places"));
+    }
+
     /// Acts on an answer to a feature request.
     fn handle_lsp_reply(&mut self, reply: LspReply) {
         match reply {
@@ -632,6 +796,7 @@ impl App {
                     format!("formatted ({count} edits)")
                 });
             }
+            LspReply::Rename(files) => self.apply_rename(files),
             LspReply::Nothing(message) => self.editor.set_status(message),
         }
     }
@@ -673,6 +838,10 @@ impl App {
             }
             _ => None,
         };
+        if command == Command::Save && self.editor.document().path().is_none() {
+            self.ask_save_as();
+            return;
+        }
         let saving = command == Command::Save;
         let outcome = self.editor.execute(command);
         let changed = self.editor.document().version() != version;
@@ -751,12 +920,46 @@ impl App {
                 }
             }
             "help.keys" => self.ui.open(Overlay::Keys),
-            "goto.prompt" => self.ui.open(Overlay::GotoLine),
+            "goto.prompt" => {
+                let lines = self.editor.document().text().len_lines();
+                self.ui.ask(
+                    PromptKind::GotoLine,
+                    "\u{21b3} go to line",
+                    "",
+                    format!("a line from 1 to {lines}"),
+                );
+            }
+            "prompt.submit" => self.submit_prompt(),
+            "file.save_as" => self.ask_save_as(),
+            "file.new" => self.editor.new_document(),
             "settings.open" => self.ui.open(Overlay::Settings),
             "lsp.complete" => self.request_completion(true),
             "lsp.hover" => self.request_feature("hover"),
             "lsp.definition" => self.request_feature("definition"),
             "lsp.format" => self.request_feature("format"),
+            "lsp.rename" => {
+                let document = self.editor.document();
+                let head = document.selection().head;
+                // at the end of a word the word is behind the cursor
+                let text = document.text();
+                let is_word = |pos: usize| {
+                    text.get_char(pos)
+                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                };
+                let at = if !is_word(head) && head > 0 && is_word(head - 1) {
+                    head - 1
+                } else {
+                    head
+                };
+                let (from, to) = movement::word_at(text, at);
+                let word = text.slice(from..to).to_string();
+                self.ui.ask(
+                    PromptKind::RenameSymbol,
+                    "\u{270e} rename symbol",
+                    word,
+                    "enter to rename everywhere",
+                );
+            }
             "audio.toggle_music" => self.change_setting(SettingKey::Audio("music")),
             "audio.toggle_effects" => self.change_setting(SettingKey::Audio("sound_effects")),
             "flair.toggle" => self.change_setting(SettingKey::FlairEnabled),

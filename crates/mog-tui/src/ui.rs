@@ -50,10 +50,40 @@ pub enum Overlay {
     Settings,
     /// The list of key bindings.
     Keys,
-    /// The go to line prompt.
-    GotoLine,
+    /// A one line text prompt, see [`Prompt`].
+    Prompt,
     /// The project graph.
     Graph,
+}
+
+/// What a [`Prompt`] is asking for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptKind {
+    /// A line number to jump to.
+    GotoLine,
+    /// Where to save the focused document.
+    SaveAs,
+    /// The name of a new file in a folder.
+    NewFile(PathBuf),
+    /// A new name for a file or folder.
+    RenameFile(PathBuf),
+    /// Confirmation to delete a file or folder.
+    DeleteFile(PathBuf),
+    /// A new name for the symbol under the cursor.
+    RenameSymbol,
+}
+
+/// A one line question, like where to save a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    /// What the answer is for.
+    pub kind: PromptKind,
+    /// The popup title.
+    pub title: String,
+    /// What has been typed so far.
+    pub text: String,
+    /// A quiet hint under the input.
+    pub hint: String,
 }
 
 /// A command the palette can run.
@@ -183,6 +213,10 @@ pub struct Ui {
     pub completion: Option<CompletionState>,
     /// Hover text and the char offset it is about.
     pub hover: Option<(String, usize)>,
+    /// The open prompt.
+    pub prompt: Option<Prompt>,
+    /// A prompt that was answered and waits for the app to act on it.
+    pub submitted: Option<Prompt>,
 }
 
 impl Ui {
@@ -203,6 +237,24 @@ impl Ui {
     /// Closes the open popup.
     pub fn close(&mut self) {
         self.overlay = None;
+        self.prompt = None;
+    }
+
+    /// Opens a prompt asking for `kind`, starting with `text` typed.
+    pub fn ask(
+        &mut self,
+        kind: PromptKind,
+        title: impl Into<String>,
+        text: impl Into<String>,
+        hint: impl Into<String>,
+    ) {
+        self.open(Overlay::Prompt);
+        self.prompt = Some(Prompt {
+            kind,
+            title: title.into(),
+            text: text.into(),
+            hint: hint.into(),
+        });
     }
 
     /// Returns the palette title for the command called `name`, or the name itself.

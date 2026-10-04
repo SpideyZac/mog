@@ -6,6 +6,8 @@ use mog_tui::CommandInfo;
 /// Every command in the palette as `(name, title)`, grouped by what they act on.
 pub const CATALOG: &[(&str, &str)] = &[
     ("save", "File: Save"),
+    ("file.save_as", "File: Save as"),
+    ("file.new", "File: New file"),
     ("finder.files", "File: Find a file"),
     ("close_tab", "File: Close tab"),
     ("next_tab", "File: Next tab"),
@@ -32,6 +34,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("lsp.hover", "Code: Show hover info"),
     ("lsp.complete", "Code: Complete"),
     ("lsp.format", "Code: Format file"),
+    ("lsp.rename", "Code: Rename symbol"),
     ("move_doc_start", "Go: Start of file"),
     ("move_doc_end", "Go: End of file"),
     ("graph.toggle", "View: Project graph"),

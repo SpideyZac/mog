@@ -9,13 +9,14 @@ use ratatui::{
     layout::{Position, Rect},
     style::Style,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
     icons,
     picker::{Picker, PickerAction, PickerItem},
     popup,
-    ui::{Focus, Layout, Overlay, Ui},
+    ui::{Focus, Layout, Overlay, PromptKind, Ui},
 };
 
 /// The most files the finder lists.
@@ -27,8 +28,8 @@ const PICKER_WIDTH: u16 = 84;
 /// The height of picker popups.
 const PICKER_HEIGHT: u16 = 22;
 
-/// The width of the go to line prompt.
-const GOTO_WIDTH: u16 = 40;
+/// The width of text prompts.
+const PROMPT_WIDTH: u16 = 64;
 
 /// Returns `path` relative to `root` with `/` separators, or the whole path if it is outside.
 fn display_path(path: &Path, root: &Path) -> String {
@@ -51,8 +52,6 @@ pub struct Popups {
     files: Vec<PathBuf>,
     /// The command names behind the palette or key list rows.
     commands: Vec<String>,
-    /// The digits typed into the go to line prompt.
-    goto: String,
     /// The box drawn in the last frame.
     area: Rect,
     /// Where the text cursor goes.
@@ -69,13 +68,12 @@ impl Popups {
     fn owns(overlay: Option<Overlay>) -> bool {
         matches!(
             overlay,
-            Some(Overlay::Palette | Overlay::Finder | Overlay::Keys | Overlay::GotoLine)
+            Some(Overlay::Palette | Overlay::Finder | Overlay::Keys | Overlay::Prompt)
         )
     }
 
     /// Fills the picker for the popup that just opened.
     fn fill(&mut self, cx: &Context<'_>) {
-        self.goto.clear();
         let ui = &cx.ui;
         let items = match ui.overlay {
             Some(Overlay::Palette) => {
@@ -166,23 +164,30 @@ impl Popups {
         }
     }
 
-    /// Handles a key in the go to line prompt.
-    fn goto_key(&mut self, chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
+    /// Handles a key in a text prompt.
+    fn prompt_key(chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
+        let Some(prompt) = cx.ui.prompt.as_mut() else {
+            return EventResult::Ignored;
+        };
         match chord.key {
             Key::Esc => cx.ui.close(),
             Key::Enter => {
+                let prompt = cx.ui.prompt.take();
                 cx.ui.close();
-                if let Ok(line) = self.goto.parse() {
-                    cx.ui.focus = Focus::Editor;
-                    cx.ui.request(Command::GotoLine(line));
-                }
+                cx.ui.submitted = prompt;
+                cx.ui.request(Command::Custom("prompt.submit".into()));
             }
+            Key::Backspace if chord.mods.ctrl => prompt.text.clear(),
             Key::Backspace => {
-                self.goto.pop();
+                prompt.text.pop();
             }
-            Key::Char(ch) if ch.is_ascii_digit() && !chord.mods.ctrl => self.goto.push(ch),
-            _ if chord.mods.ctrl || chord.mods.alt => return EventResult::Ignored,
-            _ => {}
+            _ => match chord.typed_char() {
+                Some(ch) if prompt.kind != PromptKind::GotoLine || ch.is_ascii_digit() => {
+                    prompt.text.push(ch);
+                }
+                Some(_) => {}
+                None => return EventResult::Ignored,
+            },
         }
         EventResult::Consumed
     }
@@ -207,33 +212,32 @@ impl Layer for Popups {
             Some(Overlay::Palette) => ("\u{2318} command palette", "type a command..."),
             Some(Overlay::Finder) => ("\u{2315} find a file", "type part of a file name..."),
             Some(Overlay::Keys) => ("\u{2328} key bindings", "search keys or commands..."),
-            _ => ("\u{21b3} go to line", ""),
+            _ => ("", ""),
         };
-        if cx.ui.overlay == Some(Overlay::GotoLine) {
-            self.area = popup::centered(area, GOTO_WIDTH, 3);
+        if let Some(prompt) = cx
+            .ui
+            .prompt
+            .as_ref()
+            .filter(|_| cx.ui.overlay == Some(Overlay::Prompt))
+        {
+            self.area = popup::centered(area, PROMPT_WIDTH, 4);
             popup::dim_around(area, self.area, buf, theme);
-            let inner = popup::frame(self.area, buf, theme, title);
-            let lines = cx.editor.document().text().len_lines();
-            let shown = if self.goto.is_empty() {
-                format!("1-{lines}")
-            } else {
-                self.goto.clone()
-            };
-            let style = if self.goto.is_empty() {
-                theme.popup_dim
-            } else {
-                theme.popup
-            };
-            buf.set_string(inner.x, inner.y, "\u{276f} ", theme.popup_title);
+            let inner = popup::frame(self.area, buf, theme, &prompt.title);
+            let room = usize::from(inner.width.saturating_sub(3));
+            // keep the end of long input visible
+            let chars: Vec<char> = prompt.text.chars().collect();
+            let shown: String = chars[chars.len().saturating_sub(room)..].iter().collect();
+            buf.set_string(inner.x + 1, inner.y, "\u{276f} ", theme.popup_title);
+            buf.set_stringn(inner.x + 3, inner.y, &shown, room, theme.popup);
             buf.set_stringn(
-                inner.x + 2,
-                inner.y,
-                &shown,
+                inner.x + 1,
+                inner.y + 1,
+                &prompt.hint,
                 usize::from(inner.width.saturating_sub(2)),
-                style,
+                theme.popup_dim,
             );
-            let typed = u16::try_from(self.goto.len()).unwrap_or(0);
-            self.cursor = Some(Position::new(inner.x + 2 + typed, inner.y));
+            let typed = u16::try_from(shown.width()).unwrap_or(0);
+            self.cursor = Some(Position::new(inner.x + 3 + typed, inner.y));
             return;
         }
         self.area = popup::centered(area, PICKER_WIDTH, PICKER_HEIGHT);
@@ -252,8 +256,8 @@ impl Layer for Popups {
         if !Self::owns(cx.ui.overlay) {
             return EventResult::Ignored;
         }
-        if cx.ui.overlay == Some(Overlay::GotoLine) {
-            return self.goto_key(chord, cx);
+        if cx.ui.overlay == Some(Overlay::Prompt) {
+            return Self::prompt_key(chord, cx);
         }
         match self.picker.handle_key(chord) {
             PickerAction::Accept(index) => self.accept(index, cx),

@@ -35,6 +35,8 @@ pub enum LspReply {
     Definition(PathBuf, Position),
     /// Edits that format a file at a given document version.
     Format(PathBuf, u64, Vec<TextEdit>),
+    /// Edits across files that rename a symbol.
+    Rename(Vec<(PathBuf, Vec<TextEdit>)>),
     /// A request found nothing or failed, with a message for the status line.
     Nothing(String),
 }
