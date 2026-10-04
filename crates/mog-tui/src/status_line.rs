@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
-    ui::{Layout, Side, Ui},
+    ui::{CopilotState, Layout, Side, Ui},
 };
 
 /// The number of rows the status line takes.
@@ -67,6 +67,15 @@ impl Layer for StatusLine {
             if n > 0 {
                 right.push(Span::styled(format!("{label}{n} "), style));
             }
+        }
+        if let Some(state) = cx.ui.copilot {
+            let (text, style) = match state {
+                CopilotState::Starting => ("copilot \u{2026} ", theme.status_message),
+                CopilotState::Ready => ("copilot \u{2713} ", theme.status_message),
+                CopilotState::SignedOut => ("copilot: sign in ", theme.warning),
+                CopilotState::Problem => ("copilot \u{2716} ", theme.error),
+            };
+            right.push(Span::styled(text, style));
         }
         if let Some(branch) = &cx.ui.branch {
             right.push(Span::styled(
@@ -123,6 +132,13 @@ impl Layer for StatusLine {
                 }
             } else if text.starts_with("Ln ") {
                 self.hits.push((x, x + span_width, "goto.prompt"));
+            } else if text.starts_with("copilot") {
+                let command = if cx.ui.copilot == Some(CopilotState::SignedOut) {
+                    "copilot.sign_in"
+                } else {
+                    "copilot.status"
+                };
+                self.hits.push((x, x + span_width, command));
             }
             x += span_width;
         }
