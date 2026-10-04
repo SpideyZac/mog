@@ -4,5 +4,7 @@
 //! commands into changes.
 
 pub mod range;
+pub mod transaction;
 
 pub use range::Range;
+pub use transaction::{Change, Transaction};
