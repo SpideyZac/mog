@@ -82,6 +82,31 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # mog shows these in its what's new popup, so list the commits since the last tag
+      - name: Write release notes
+        shell: bash
+        run: |
+          previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          range="${previous:+$previous..}${GITHUB_REF_NAME}"
+          section() {
+            lines=$(git log --no-merges --reverse --format='%s' "$range" \
+              | grep -E "^$1(\([^)]*\))?!?: " \
+              | sed -E "s/^$1\(([^)]*)\)!?: /- \1: /; s/^$1!?: /- /" || true)
+            if [ -n "$lines" ]; then
+              printf '## %s\n\n%s\n\n' "$2" "$lines"
+            fi
+          }
+          {
+            section feat "New stuff"
+            section fix "Fixes"
+            section perf "Faster"
+          } > notes.md
+          cat notes.md
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -90,5 +115,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body_path: notes.md
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
