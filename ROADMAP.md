@@ -8,8 +8,8 @@
 - [x] Status line
 - [x] Modeless keymap (save, quit, undo, clipboard, select all)
 - [x] Mouse: click, drag select, shift click, double and triple click, wheel, gutter
-- [ ] Config file
-- [ ] Flair layer and registry
+- [x] Config file
+- [x] Flair layer and registry
 - [ ] LSP client skeleton
 - [ ] AI provider skeleton
 - [ ] Lua plugin host
