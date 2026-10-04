@@ -203,14 +203,30 @@ impl KeyChord {
     }
 
     /// Returns the char this chord types, if it is plain text input.
+    ///
+    /// Symbols typed with `alt` or `ctrl+alt` count as text, since that is how `AltGr` arrives
+    /// on layouts like QWERTZ, where `{` is `AltGr+7`.
     pub fn typed_char(&self) -> Option<char> {
         match self.key {
-            Key::Char(ch) if !self.mods.ctrl && !self.mods.alt => Some(if self.mods.shift {
+            Key::Char(ch) if self.is_plain() || self.is_alt_gr() => Some(if self.mods.shift {
                 ch.to_uppercase().next().unwrap_or(ch)
             } else {
                 ch
             }),
             _ => None,
+        }
+    }
+
+    /// Returns whether no `ctrl` or `alt` is held.
+    fn is_plain(&self) -> bool {
+        !self.mods.ctrl && !self.mods.alt
+    }
+
+    /// Returns whether this looks like a symbol typed through `AltGr` or `Option`.
+    pub fn is_alt_gr(&self) -> bool {
+        match self.key {
+            Key::Char(ch) => self.mods.alt && !ch.is_ascii_alphanumeric() && !ch.is_whitespace(),
+            _ => false,
         }
     }
 }
@@ -388,6 +404,29 @@ mod tests {
         let upper = KeyChord::new(Key::Char('Z'), Modifiers::default());
         assert_eq!(upper, "shift+z".parse().expect("valid chord"));
         assert_eq!(upper.typed_char(), Some('Z'));
+    }
+
+    /// `AltGr` symbols type text, but `ctrl` and `alt` letters do not.
+    #[test]
+    fn alt_gr_types_symbols() {
+        for text in ["ctrl+alt+{", "alt+}", "ctrl+alt+@", "alt+["] {
+            let chord: KeyChord = text.parse().expect("valid chord");
+            assert!(chord.typed_char().is_some(), "{text} should type");
+        }
+        for text in ["ctrl+alt+a", "alt+e", "ctrl+[", "alt+space"] {
+            let chord: KeyChord = text.parse().expect("valid chord");
+            assert_eq!(chord.typed_char(), None, "{text} should not type");
+        }
+    }
+
+    /// Bound `alt` symbols still run their command before typing.
+    #[test]
+    fn bindings_beat_alt_gr() {
+        let keymap = Keymap::default();
+        let chord: KeyChord = "alt+/".parse().expect("valid chord");
+        assert_eq!(keymap.resolve(&chord), Some(Command::ToggleComment));
+        let brace: KeyChord = "ctrl+alt+{".parse().expect("valid chord");
+        assert_eq!(keymap.resolve(&brace), Some(Command::InsertChar('{')));
     }
 
     /// Bindings can be listed and looked up by command.

@@ -63,6 +63,11 @@ fn char_bytes(ch: char, mods: Modifiers) -> Option<Vec<u8>> {
 pub fn chord_bytes(chord: KeyChord, application: bool) -> Option<Vec<u8>> {
     let mods = chord.mods;
     let bytes = match chord.key {
+        // windows reports altgr as ctrl+alt, while plain alt+. and friends stay meta keys
+        Key::Char(ch) if mods.ctrl && chord.is_alt_gr() => {
+            let mut buf = [0; 4];
+            ch.encode_utf8(&mut buf).as_bytes().to_vec()
+        }
         Key::Char(ch) => return char_bytes(ch, mods),
         Key::Enter => b"\r".to_vec(),
         Key::Tab if mods.shift => b"\x1b[Z".to_vec(),
@@ -108,6 +113,8 @@ mod tests {
         assert_eq!(bytes("shift+a"), b"A");
         assert_eq!(bytes("ctrl+c"), [3]);
         assert_eq!(bytes("alt+b"), b"\x1bb");
+        assert_eq!(bytes("alt+."), b"\x1b.");
+        assert_eq!(bytes("ctrl+alt+{"), b"{");
     }
 
     /// Arrows follow the cursor key mode and carry modifiers.
