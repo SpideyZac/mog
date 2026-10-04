@@ -65,6 +65,7 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("f1", "command_palette"),
     ("ctrl+k", "help.keys"),
     ("ctrl+,", "settings.open"),
+    ("alt+g", "graph.toggle"),
     ("alt+,", "settings.open"),
     ("ctrl+g", "goto.prompt"),
     ("ctrl+f", "search.find"),

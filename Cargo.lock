@@ -1701,6 +1701,7 @@ dependencies = [
 name = "mog-flair"
 version = "0.1.0"
 dependencies = [
+ "crossterm",
  "mog-core",
  "mog-tui",
  "ratatui",

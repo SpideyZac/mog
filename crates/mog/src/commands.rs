@@ -30,6 +30,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("goto.prompt", "Go: Go to line"),
     ("move_doc_start", "Go: Start of file"),
     ("move_doc_end", "Go: End of file"),
+    ("graph.toggle", "View: Project graph"),
     ("explorer.toggle", "View: Toggle file explorer"),
     ("explorer.focus", "View: Focus file explorer"),
     ("settings.open", "Settings: Open settings"),

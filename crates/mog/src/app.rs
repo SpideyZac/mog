@@ -11,6 +11,7 @@ use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
 use mog_config::{Config, save_setting};
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome, Severity};
+use mog_flair::GraphView;
 use mog_lsp::LspEvent;
 use mog_tui::{
     Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap, Overlay, Popups,
@@ -136,6 +137,7 @@ impl App {
         compositor.push(Box::new(StatusLine::new()));
         compositor.push(Box::new(Popups::new()));
         compositor.push(Box::new(SettingsPanel::new()));
+        compositor.push(Box::new(GraphView::new()));
 
         let mut editor = Editor::new(clipboard::open());
         editor.set_options(settings::options(&config));
@@ -514,6 +516,13 @@ impl App {
             "help.keys" => self.ui.open(Overlay::Keys),
             "goto.prompt" => self.ui.open(Overlay::GotoLine),
             "settings.open" => self.ui.open(Overlay::Settings),
+            "graph.toggle" => {
+                if self.ui.overlay == Some(Overlay::Graph) {
+                    self.ui.close();
+                } else {
+                    self.ui.open(Overlay::Graph);
+                }
+            }
             "explorer.focus" => {
                 if self.ui.has_explorer {
                     self.ui.explorer_open = true;
