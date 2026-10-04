@@ -10,6 +10,7 @@ use anyhow::{Result, anyhow};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
 use lsp_types::TextEdit;
+use mog_ai::CompletionRequest;
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{Config, save_setting};
 use mog_core::{
@@ -19,9 +20,9 @@ use mog_core::{
 use mog_flair::GraphView;
 use mog_lsp::{LspEvent, convert};
 use mog_tui::{
-    CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer, Focus,
-    Minimap, Overlay, Popups, PromptKind, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui,
-    UiEvent,
+    ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer,
+    Focus, Minimap, Overlay, Popups, PromptKind, SearchBar, SettingsPanel, StatusLine, Tabs, Theme,
+    Ui, UiEvent,
     completion::{self, CompletionState},
     input, search,
     settings::{SettingKey, change as settings_change, persisted},
@@ -33,7 +34,7 @@ use tokio::{
 };
 
 use crate::{
-    ai::Assistant,
+    ai::{AiReply, Assistant},
     cli::Args,
     clipboard, commands,
     git::{self, Git},
@@ -54,6 +55,16 @@ const GIT_REFRESH_TIME: Duration = Duration::from_secs(15);
 
 /// How long a snapshot waits for background work before drawing.
 const SNAPSHOT_SETTLE: Duration = Duration::from_millis(800);
+
+/// How many chars before the cursor a ghost suggestion gets to see.
+const GHOST_CONTEXT_BEFORE: usize = 4000;
+
+/// How many chars after the cursor a ghost suggestion gets to see.
+const GHOST_CONTEXT_AFTER: usize = 1000;
+
+/// What the chat says when no AI is set up.
+const NO_AI: &str = "no ai provider is enabled. add [ai.claude] enabled = true to the config \
+and put your key in ANTHROPIC_API_KEY, then restart mog.";
 
 /// How many rounds of layer requests are run after one event, so requests that queue more
 /// requests cannot freeze the editor.
@@ -142,6 +153,7 @@ impl App {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         compositor.push(Box::new(Tabs::new()));
+        compositor.push(Box::new(ChatPanel::new()));
         compositor.push(Box::new(Minimap::new()));
         compositor.push(Box::new(SearchBar::new()));
         if let Some(tree) = tree {
@@ -280,7 +292,7 @@ impl App {
                 },
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
                 Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
-                Some(reply) = self.assistant.reply() => self.editor.set_status(reply),
+                Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
                 () = changed(self.watcher.as_ref()) => self.files_changed = true,
                 _ = housekeeping.tick() => self.housekeeping(),
@@ -615,6 +627,76 @@ impl App {
         }
     }
 
+    /// Asks the AI for a ghost suggestion at the cursor once typing pauses.
+    fn suggest_ghost(&self) {
+        if !self.ui.config.ai.ghost_text || self.assistant.provider_name().is_none() {
+            return;
+        }
+        let document = self.editor.document();
+        let text = document.text();
+        let head = document.selection().head;
+        let prefix_start = head.saturating_sub(GHOST_CONTEXT_BEFORE);
+        let suffix_end = (head + GHOST_CONTEXT_AFTER).min(text.len_chars());
+        let request = CompletionRequest {
+            prefix: text.slice(prefix_start..head).to_string(),
+            suffix: text.slice(head..suffix_end).to_string(),
+            language: document
+                .path()
+                .and_then(|path| path.extension())
+                .map(|ext| ext.to_string_lossy().into_owned()),
+        };
+        self.assistant
+            .suggest(request, self.editor.active(), document.version(), head);
+    }
+
+    /// Sends what was typed in the chat panel.
+    fn send_chat(&mut self) {
+        let text = mem::take(&mut self.ui.chat.input);
+        if text.trim().is_empty() || self.ui.chat.waiting {
+            self.ui.chat.input = text;
+            return;
+        }
+        self.ui.chat.messages.push((true, text));
+        self.ui.chat.scroll = 0;
+        if self.assistant.chat(&self.ui.chat.messages) {
+            self.ui.chat.waiting = true;
+        } else {
+            self.ui.chat.messages.push((false, NO_AI.to_owned()));
+        }
+    }
+
+    /// Acts on a finished AI request.
+    fn handle_ai_reply(&mut self, reply: AiReply) {
+        match reply {
+            AiReply::Chat(text) => {
+                self.ui.chat.waiting = false;
+                self.ui.chat.messages.push((false, text));
+                self.ui.chat.scroll = 0;
+            }
+            AiReply::ChatFailed(reason) => {
+                self.ui.chat.waiting = false;
+                self.ui
+                    .chat
+                    .messages
+                    .push((false, format!("that failed: {reason}")));
+            }
+            AiReply::Ghost {
+                document,
+                version,
+                pos,
+                text,
+            } => {
+                let current = self.editor.document();
+                let fresh = document == self.editor.active()
+                    && version == current.version()
+                    && pos == current.selection().head;
+                if fresh {
+                    self.ui.ghost = Some((document, version, pos, text));
+                }
+            }
+        }
+    }
+
     /// Opens or closes the completion menu after `ch` was typed.
     fn auto_complete(&mut self, ch: char) {
         if !self.ui.config.editor.auto_complete {
@@ -855,8 +937,11 @@ impl App {
         }
         if changed {
             self.ui.hover = None;
+            self.ui.ghost = None;
+            self.assistant.cancel_suggestion();
             if let Some(UiEvent::Typed(ch)) = self.ui.events.last().cloned() {
                 self.auto_complete(ch);
+                self.suggest_ghost();
             }
         }
         match outcome {
@@ -877,14 +962,28 @@ impl App {
             "ai.explain" => {
                 let document = self.editor.document();
                 let selection = document.selection();
-                let message = if selection.is_empty() {
-                    "select some code to explain first".to_owned()
-                } else {
-                    let code = document.text().slice(selection.from()..selection.to());
-                    self.assistant.explain(code.to_string())
-                };
-                self.editor.set_status(message);
+                if selection.is_empty() {
+                    self.editor.set_status("select some code to explain first");
+                    return;
+                }
+                let code = document
+                    .text()
+                    .slice(selection.from()..selection.to())
+                    .to_string();
+                let name = document.name();
+                self.ui.chat.open = true;
+                self.ui.chat.input = format!("explain this code from {name}:\n\n{code}");
+                self.send_chat();
             }
+            "ai.chat" => {
+                self.ui.chat.open = !self.ui.chat.open || self.ui.focus != Focus::Chat;
+                self.ui.focus = if self.ui.chat.open {
+                    Focus::Chat
+                } else {
+                    Focus::Editor
+                };
+            }
+            "ai.send" => self.send_chat(),
             "explorer.toggle" => {
                 if !self.ui.has_explorer {
                     self.editor
