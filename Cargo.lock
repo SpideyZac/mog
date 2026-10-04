@@ -728,6 +728,8 @@ dependencies = [
  "anyhow",
  "crossterm",
  "futures",
+ "mog-core",
+ "mog-tui",
  "ratatui",
  "tokio",
 ]

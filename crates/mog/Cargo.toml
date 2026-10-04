@@ -13,5 +13,7 @@ workspace = true
 anyhow.workspace = true
 crossterm.workspace = true
 futures.workspace = true
+mog-core.workspace = true
+mog-tui.workspace = true
 ratatui.workspace = true
 tokio.workspace = true
