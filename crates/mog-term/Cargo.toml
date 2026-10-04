@@ -12,6 +12,7 @@ mog-tui.workspace = true
 portable-pty.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
+unicode-width.workspace = true
 vt100.workspace = true
 
 [lints]

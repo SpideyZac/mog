@@ -52,6 +52,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("annotate.clear", "Draw: Clear the drawing"),
     ("split.toggle", "View: Split editor"),
     ("terminal.toggle", "View: Toggle terminal"),
+    ("terminal.restart", "View: Restart terminal"),
     ("split.focus", "View: Focus other split"),
     ("explorer.toggle", "View: Toggle file explorer"),
     ("explorer.focus", "View: Focus file explorer"),

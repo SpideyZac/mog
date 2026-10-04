@@ -484,6 +484,7 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `theme.edit` | Make your own theme |
 | `flair.toggle` | Toggle all flair |
 | `annotate.clear` | Wipe the drawing |
+| `terminal.restart` | Start a fresh shell in the terminal |
 | `audio.toggle_music` | Toggle music |
 | `audio.toggle_effects` | Toggle sound effects |
 | `copilot.sign_in` | Sign in to Copilot |
@@ -609,6 +610,12 @@ The editor behind it shows the theme live as you change it.
 
 Every key goes to the shell except the ones bound to `terminal.toggle`, `command_palette` and
 `quit`.
+
+| keys | |
+| --- | --- |
+| wheel | Scroll back through the output, or scroll inside full screen programs like `less` |
+| `shift+pageup` `shift+pagedown` | Scroll back a page |
+| click `⟳ restart` | Start a fresh shell, same as `terminal.restart` |
 
 ### Mouse
 

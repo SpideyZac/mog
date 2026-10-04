@@ -303,6 +303,8 @@ pub struct Ui {
     pub terminal_open: bool,
     /// Bytes waiting to be sent to the terminal, like pasted text.
     pub terminal_input: Vec<u8>,
+    /// Set to have the terminal panel start a fresh shell.
+    pub terminal_restart: bool,
     /// A key binding change waiting for the app, as `(command, new chord)`.
     ///
     /// A missing chord removes every binding of the command.

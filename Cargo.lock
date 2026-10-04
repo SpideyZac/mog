@@ -1986,6 +1986,7 @@ dependencies = [
  "mog-tui",
  "portable-pty",
  "ratatui",
+ "unicode-width",
  "vt100",
 ]
 

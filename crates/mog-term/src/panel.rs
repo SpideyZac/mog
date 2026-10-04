@@ -3,13 +3,14 @@
 use std::{mem, time::Duration};
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::KeyChord;
+use mog_core::{Key, KeyChord, Modifiers};
 use mog_tui::{Context, EventResult, Focus, Layer, Layout, Theme, Ui};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
 };
+use unicode_width::UnicodeWidthStr;
 use vt100::{Cell, Color as TermColor};
 
 use crate::{keys, shell::Shell};
@@ -19,6 +20,9 @@ const PASSTHROUGH: &[&str] = &["terminal.toggle", "command_palette", "quit"];
 
 /// How many lines one wheel step scrolls.
 const WHEEL_LINES: usize = 3;
+
+/// The button in the panel title that starts a fresh shell.
+const RESTART: &str = " \u{27f3} restart ";
 
 /// Returns the theme color for one of the 16 basic terminal colors.
 fn basic_color(index: u8, theme: &Theme) -> Color {
@@ -77,6 +81,8 @@ pub struct TerminalPanel {
     scroll: usize,
     /// The screen part of the panel at the last render.
     screen: Rect,
+    /// Where the restart button was drawn at the last render.
+    restart_button: Rect,
     /// Whether the panel was drawn since the last tick, so a hidden shell does not animate.
     shown: bool,
 }
@@ -110,15 +116,46 @@ impl TerminalPanel {
         }
     }
 
+    /// Stops the shell so a fresh one starts on the next draw.
+    fn restart(&mut self) {
+        self.shell = None;
+        self.problem = None;
+        self.scroll = 0;
+    }
+
+    /// Sends a wheel step to a full screen program like `less` or `vim` as arrow keys.
+    ///
+    /// Returns `false` when the shell is on its normal screen, which mog scrolls itself.
+    fn wheel_to_app(&self, up: bool) -> bool {
+        let Some(shell) = &self.shell else {
+            return false;
+        };
+        let (alternate, application) = {
+            let parser = shell.parser();
+            let screen = parser.screen();
+            (screen.alternate_screen(), screen.application_cursor())
+        };
+        if !alternate {
+            return false;
+        }
+        let key = if up { Key::Up } else { Key::Down };
+        if let Some(bytes) =
+            keys::chord_bytes(KeyChord::new(key, Modifiers::default()), application)
+        {
+            for _ in 0..WHEEL_LINES {
+                shell.write(&bytes);
+            }
+        }
+        true
+    }
+
     /// Draws the shell screen into `area`.
     fn draw_screen(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
         let Some(shell) = &self.shell else {
             return;
         };
         let mut parser = shell.parser();
-        // scrolling back further than a screen trips an overflow in vt100
-        let (rows, _) = parser.screen().size();
-        self.scroll = self.scroll.min(usize::from(rows));
+        // vt100 clamps this to the lines it kept
         parser.screen_mut().set_scrollback(self.scroll);
         self.scroll = parser.screen().scrollback();
         let screen = parser.screen();
@@ -146,6 +183,9 @@ impl Layer for TerminalPanel {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
+        if mem::take(&mut cx.ui.terminal_restart) {
+            self.restart();
+        }
         if self.shell.as_ref().is_some_and(Shell::has_exited) {
             // typing exit closes the panel like it does in vs code
             self.shell = None;
@@ -183,6 +223,14 @@ impl Layer for TerminalPanel {
             None => " \u{276f} terminal ".to_owned(),
         };
         buf.set_stringn(area.x + 1, area.y, title, usize::from(area.width), border);
+        let width = u16::try_from(RESTART.width()).unwrap_or(0);
+        let restart_x = area.right().saturating_sub(width + 1);
+        self.restart_button = if restart_x > area.x + 20 {
+            buf.set_string(restart_x, area.y, RESTART, border);
+            Rect::new(restart_x, area.y, width, 1)
+        } else {
+            Rect::default()
+        };
         if let Some(problem) = &self.problem {
             buf.set_stringn(
                 self.screen.x + 1,
@@ -217,6 +265,18 @@ impl Layer for TerminalPanel {
         if passthrough {
             return EventResult::Ignored;
         }
+        let page = usize::from(self.screen.height.max(1));
+        match chord.key {
+            Key::PageUp if chord.mods.shift => {
+                self.scroll += page;
+                return EventResult::Consumed;
+            }
+            Key::PageDown if chord.mods.shift => {
+                self.scroll = self.scroll.saturating_sub(page);
+                return EventResult::Consumed;
+            }
+            _ => {}
+        }
         if let Some(shell) = &self.shell {
             let application = shell.parser().screen().application_cursor();
             if let Some(bytes) = keys::chord_bytes(chord, application) {
@@ -233,10 +293,23 @@ impl Layer for TerminalPanel {
         _area: Rect,
         cx: &mut Context<'_>,
     ) -> EventResult {
+        let point = Position::new(event.column, event.row);
         match event.kind {
+            MouseEventKind::Down(MouseButton::Left) if self.restart_button.contains(point) => {
+                self.restart();
+                cx.ui.focus = Focus::Terminal;
+            }
             MouseEventKind::Down(MouseButton::Left) => cx.ui.focus = Focus::Terminal,
-            MouseEventKind::ScrollUp => self.scroll += WHEEL_LINES,
-            MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_sub(WHEEL_LINES),
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let up = event.kind == MouseEventKind::ScrollUp;
+                if !self.wheel_to_app(up) {
+                    self.scroll = if up {
+                        self.scroll + WHEEL_LINES
+                    } else {
+                        self.scroll.saturating_sub(WHEEL_LINES)
+                    };
+                }
+            }
             _ => {}
         }
         EventResult::Consumed

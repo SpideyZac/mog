@@ -1864,6 +1864,11 @@ impl App {
                     Focus::Terminal
                 };
             }
+            "terminal.restart" => {
+                self.ui.terminal_restart = true;
+                self.ui.terminal_open = true;
+                self.ui.focus = Focus::Terminal;
+            }
             "explorer.focus" => {
                 if self.ui.has_explorer {
                     self.ui.explorer_open = true;
