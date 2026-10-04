@@ -77,6 +77,11 @@ pub trait Flair {
     /// Returns a unique name, used to turn the flair off in the config.
     fn id(&self) -> &str;
 
+    /// Returns a short sentence about what the flair does, for the settings menu.
+    fn description(&self) -> &str {
+        ""
+    }
+
     /// Returns where the flair is drawn.
     fn placement(&self) -> Placement;
 

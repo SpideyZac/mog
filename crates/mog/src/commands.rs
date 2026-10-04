@@ -32,6 +32,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("move_doc_end", "Go: End of file"),
     ("explorer.toggle", "View: Toggle file explorer"),
     ("explorer.focus", "View: Focus file explorer"),
+    ("settings.open", "Settings: Open settings"),
     ("command_palette", "Help: Command palette"),
     ("help.keys", "Help: Key bindings"),
     ("ai.explain", "AI: Explain the selection"),

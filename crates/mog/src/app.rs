@@ -8,12 +8,12 @@ use std::{
 use anyhow::{Result, anyhow};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
-use mog_config::Config;
+use mog_config::{Config, save_setting};
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome};
 use mog_lsp::LspEvent;
 use mog_tui::{
     Compositor, Context, EditorView, EventResult, Explorer, Focus, Overlay, Popups, SearchBar,
-    StatusLine, Tabs, Theme, Ui, input, search,
+    SettingsPanel, StatusLine, Tabs, Theme, Ui, input, search, settings::persisted,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -123,9 +123,12 @@ impl App {
             ui.explorer_open = config.ui.explorer;
             compositor.push(Box::new(Explorer::new(tree)));
         }
-        compositor.push(Box::new(settings::flair_layer(&config)));
+        let flair = settings::flair_layer(&config);
+        ui.flairs = flair.describe();
+        compositor.push(Box::new(flair));
         compositor.push(Box::new(StatusLine::new()));
         compositor.push(Box::new(Popups::new()));
+        compositor.push(Box::new(SettingsPanel::new()));
 
         let mut editor = Editor::new(clipboard::open());
         editor.set_options(settings::options(&config));
@@ -298,8 +301,30 @@ impl App {
         }
     }
 
+    /// Saves and applies settings changed in the settings menu.
+    fn apply_setting_changes(&mut self) {
+        let changes = mem::take(&mut self.ui.setting_changes);
+        if changes.is_empty() {
+            return;
+        }
+        for key in &changes {
+            let (path, value) = persisted(&self.ui.config, key);
+            if let Err(err) = save_setting(&path, &value) {
+                self.editor
+                    .set_status(format!("could not save setting: {err}"));
+            }
+        }
+        let (theme, problem) = settings::theme(&self.ui.config);
+        self.theme = theme;
+        if let Some(problem) = problem {
+            self.editor.set_status(problem);
+        }
+        self.editor.set_options(settings::options(&self.ui.config));
+    }
+
     /// Runs the commands layers asked for.
     fn run_requests(&mut self) {
+        self.apply_setting_changes();
         for _ in 0..MAX_REQUEST_ROUNDS {
             if self.ui.requests.is_empty() {
                 return;
@@ -433,6 +458,7 @@ impl App {
             }
             "help.keys" => self.ui.open(Overlay::Keys),
             "goto.prompt" => self.ui.open(Overlay::GotoLine),
+            "settings.open" => self.ui.open(Overlay::Settings),
             "explorer.focus" => {
                 if self.ui.has_explorer {
                     self.ui.explorer_open = true;

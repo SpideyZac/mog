@@ -55,6 +55,10 @@ impl Flair for Badge {
         "badge"
     }
 
+    fn description(&self) -> &str {
+        "A rainbow mog badge that slowly cycles colors."
+    }
+
     fn placement(&self) -> Placement {
         Placement::Corner {
             corner: Corner::TopRight,

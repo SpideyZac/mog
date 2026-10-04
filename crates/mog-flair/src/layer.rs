@@ -44,6 +44,14 @@ impl FlairLayer {
         self.flairs.iter().map(|flair| flair.id())
     }
 
+    /// Returns every registered flair as `(id, description)`.
+    pub fn describe(&self) -> Vec<(String, String)> {
+        self.flairs
+            .iter()
+            .map(|flair| (flair.id().to_owned(), flair.description().to_owned()))
+            .collect()
+    }
+
     /// Returns the flairs that should currently run.
     fn active(&self) -> impl Iterator<Item = &dyn Flair> {
         self.flairs
@@ -59,6 +67,9 @@ impl Layer for FlairLayer {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
+        // the settings menu changes the config so follow it every frame
+        self.hidden = !cx.ui.config.flair.enabled;
+        self.disabled = cx.ui.config.flair.disabled.iter().cloned().collect();
         let flair_cx = FlairContext {
             editor: cx.editor,
             theme: cx.theme,
