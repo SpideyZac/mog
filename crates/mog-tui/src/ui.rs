@@ -50,6 +50,17 @@ pub enum Overlay {
     Graph,
 }
 
+/// A command the palette can run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandInfo {
+    /// The command name, like `save`.
+    pub name: String,
+    /// What the palette shows, like `File: Save`.
+    pub title: String,
+    /// The chords bound to the command, like `ctrl+s`.
+    pub keys: Vec<String>,
+}
+
 /// Which end of the status line a [`Segment`] goes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -116,6 +127,14 @@ pub struct Ui {
     pub focus: Focus,
     /// The open popup, if any.
     pub overlay: Option<Overlay>,
+    /// Bumped every time a popup opens so it can reset itself.
+    pub overlay_generation: u64,
+    /// The project folder, or the folder mog was started in.
+    pub root: PathBuf,
+    /// Every command the palette offers.
+    pub commands: Vec<CommandInfo>,
+    /// Every key binding as `(chord, command name)`.
+    pub bindings: Vec<(String, String)>,
     /// Whether a folder is open, so there is something to explore.
     pub has_explorer: bool,
     /// Whether the file explorer is shown.
@@ -149,6 +168,25 @@ impl Ui {
             config,
             ..Self::default()
         }
+    }
+
+    /// Opens `overlay`, replacing any open one.
+    pub fn open(&mut self, overlay: Overlay) {
+        self.overlay = Some(overlay);
+        self.overlay_generation += 1;
+    }
+
+    /// Closes the open popup.
+    pub fn close(&mut self) {
+        self.overlay = None;
+    }
+
+    /// Returns the palette title for the command called `name`, or the name itself.
+    pub fn title_of<'a>(&'a self, name: &'a str) -> &'a str {
+        self.commands
+            .iter()
+            .find(|info| info.name == name)
+            .map_or(name, |info| info.title.as_str())
     }
 
     /// Asks the app to run `command` after the current event.
