@@ -5,6 +5,7 @@ pub mod aura;
 pub mod badge;
 pub mod combo;
 pub mod critters;
+pub mod fbi;
 pub mod leaked_ip;
 pub mod pet;
 pub mod quips;
@@ -20,6 +21,7 @@ pub use aura::Aura;
 pub use badge::Badge;
 pub use combo::Combo;
 pub use critters::Critters;
+pub use fbi::Fbi;
 pub use leaked_ip::LeakedIp;
 pub use pet::Pet;
 pub use quips::Quips;
@@ -43,6 +45,7 @@ pub fn all() -> Vec<Box<dyn Flair>> {
         Box::new(Ram::new()),
         Box::new(AiMeter::new()),
         Box::new(Aura::new()),
+        Box::new(Fbi::new()),
         Box::new(Session::new()),
         Box::new(Badge::new()),
         Box::new(Sparks::new()),

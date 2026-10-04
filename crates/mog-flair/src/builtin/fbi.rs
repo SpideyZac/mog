@@ -94,7 +94,10 @@ impl Flair for Fbi {
         };
         Some(Segment {
             parts: vec![
-                ("\u{25c9} ".into(), Style::new().fg(color).bg(bg).add_modifier(Modifier::BOLD)),
+                (
+                    "\u{25c9} ".into(),
+                    Style::new().fg(color).bg(bg).add_modifier(Modifier::BOLD),
+                ),
                 (text, Style::new().fg(color).bg(bg)),
             ],
             side: Side::Right,
