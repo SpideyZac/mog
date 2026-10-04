@@ -1,6 +1,6 @@
 //! The editor state and command execution.
 
-use std::{io, mem, path::PathBuf};
+use std::{fs, io, mem, path::PathBuf};
 
 use ropey::Rope;
 
@@ -128,6 +128,38 @@ impl Editor {
             self.views.push(view);
             self.active = self.documents.len() - 1;
         }
+        Ok(())
+    }
+
+    /// Opens a new empty document and focuses it.
+    pub fn new_document(&mut self) {
+        let view = View {
+            width: self.view().width,
+            height: self.view().height,
+            ..View::default()
+        };
+        self.documents.push(Document::new());
+        self.views.push(view);
+        self.active = self.documents.len() - 1;
+    }
+
+    /// Saves the focused document to `path` and keeps saving there from now on.
+    ///
+    /// Missing folders are created.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the folders or the file cannot be written.
+    pub fn save_as(&mut self, path: impl Into<PathBuf>) -> io::Result<()> {
+        let path = path.into();
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            fs::create_dir_all(dir)?;
+        }
+        let document = self.document_mut();
+        document.set_path(path);
+        document.save()?;
+        let name = document.name();
+        self.set_status(format!("saved {name}"));
         Ok(())
     }
 
@@ -730,7 +762,7 @@ impl Editor {
 #[cfg(test)]
 /// Tests for [`Editor`].
 mod tests {
-    use std::env;
+    use std::{env, fs, process};
 
     use super::{Editor, Outcome};
     use crate::{
@@ -914,6 +946,21 @@ mod tests {
         editor.close(0);
         assert_eq!(editor.documents().len(), 1);
         assert!(editor.document().path().is_none());
+    }
+
+    /// Save as writes to the new path and new documents start empty.
+    #[test]
+    fn save_as_and_new() {
+        let dir = env::temp_dir().join(format!("mog-save-as-{}", process::id()));
+        let mut editor = editor_with("hi", 0);
+        let path = dir.join("nested").join("out.txt");
+        editor.save_as(&path).expect("save");
+        assert_eq!(fs::read_to_string(&path).expect("read"), "hi");
+        assert!(!editor.document().is_modified());
+        editor.new_document();
+        assert_eq!(editor.documents().len(), 2);
+        assert_eq!(text(&editor), "");
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// Opening a file that is already open focuses it instead of adding a copy.
