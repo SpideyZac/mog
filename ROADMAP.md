@@ -17,6 +17,9 @@
 
 - [ ] Syntax highlighting (tree-sitter)
 - [x] File tree
+- [ ] Keyboard focus for the file explorer
+- [ ] Key to show and hide the file explorer
+- [ ] Refresh the file explorer when files change on disk
 - [ ] Fuzzy file finder
 - [ ] Command palette
 - [ ] Search and replace
@@ -46,4 +49,5 @@
 - [ ] Critters that wander around the screen
 - [ ] Typing combo counter
 - [ ] Startup splash
+- [ ] Keep flair from covering the file explorer
 - [ ] Other dumb stuff
