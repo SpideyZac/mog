@@ -3,12 +3,14 @@
 //! This crate knows nothing about terminals. It holds documents, selections and edits, and turns
 //! commands into changes.
 
+pub mod command;
 pub mod document;
 pub mod history;
 pub mod movement;
 pub mod range;
 pub mod transaction;
 
+pub use command::{Command, Motion};
 pub use document::{Document, LineEnding};
 pub use history::History;
 pub use range::Range;
