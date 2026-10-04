@@ -244,9 +244,9 @@ One table per server. Setting a built in server's name changes only what you set
 | `settings` | | Table sent as initialization options and on `workspace/configuration` |
 
 ```toml
-[lsp.zig]
-command = "zls"
-extensions = ["zig"]
+[lsp.nim]
+command = "nimlangserver"
+extensions = ["nim"]
 
 [lsp.go]
 enabled = false
