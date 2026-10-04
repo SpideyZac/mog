@@ -1644,6 +1644,7 @@ dependencies = [
  "mog-config",
  "mog-core",
  "mog-git",
+ "mog-syntax",
  "ratatui",
  "unicode-width",
 ]

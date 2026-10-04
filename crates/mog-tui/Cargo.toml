@@ -11,6 +11,7 @@ crossterm.workspace = true
 mog-config.workspace = true
 mog-core.workspace = true
 mog-git.workspace = true
+mog-syntax.workspace = true
 ratatui.workspace = true
 unicode-width.workspace = true
 

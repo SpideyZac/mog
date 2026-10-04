@@ -136,6 +136,10 @@ pub struct Ui {
     pub branch: Option<String>,
     /// Who last changed the cursor line, as `(file, line, description)`.
     pub blame: Option<(PathBuf, usize, String)>,
+    /// The char ranges of search matches in the focused document.
+    pub search_matches: Vec<(usize, usize)>,
+    /// The index of the match the cursor is on.
+    pub search_current: Option<usize>,
 }
 
 impl Ui {
