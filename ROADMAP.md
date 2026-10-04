@@ -12,7 +12,7 @@
 - [x] Flair layer and registry
 - [x] LSP client skeleton
 - [x] AI provider skeleton
-- [ ] Lua plugin host
+- [x] Lua plugin host
 
 ## Everyday editing
 
