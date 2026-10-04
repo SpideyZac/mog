@@ -1,12 +1,13 @@
 //! Turning the loaded config into editor state.
 
-use std::{env, sync::Arc};
+use std::{env, path::Path, sync::Arc};
 
-use mog_ai::{AiProvider, Claude, Copilot, claude};
+use mog_ai::{AiProvider, Claude, Copilot, CopilotEvent, claude};
 use mog_config::Config;
 use mog_core::{Command, KeyChord, Keymap, Options};
 use mog_flair::{FlairLayer, builtin};
 use mog_tui::Theme;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Builds the editing options from `config`.
 pub fn options(config: &Config) -> Options {
@@ -63,13 +64,18 @@ pub struct AiProviders {
     pub chat: Vec<Arc<dyn AiProvider>>,
     /// Providers that suggest ghost text, preferred first.
     pub ghost: Vec<Arc<dyn AiProvider>>,
+    /// Copilot again, for signing in and out.
+    pub copilot: Option<Arc<Copilot>>,
+    /// What the Copilot server reports, like sign in changes.
+    pub copilot_events: Option<UnboundedReceiver<CopilotEvent>>,
 }
 
-/// Builds the enabled AI providers, Claude first for chat and Copilot first for ghost text.
+/// Builds the enabled AI providers for the project at `root`, Claude first for chat and Copilot
+/// first for ghost text.
 ///
 /// Providers that are enabled but cannot work, like Claude without a key, are skipped and
 /// described in the returned list of problems.
-pub fn ai_providers(config: &Config) -> (AiProviders, Vec<String>) {
+pub fn ai_providers(config: &Config, root: &Path) -> (AiProviders, Vec<String>) {
     let mut providers = AiProviders::default();
     let mut problems = Vec::new();
     let claude_config = &config.ai.claude;
@@ -96,13 +102,28 @@ pub fn ai_providers(config: &Config) -> (AiProviders, Vec<String>) {
     }
     let copilot_config = &config.ai.copilot;
     if copilot_config.enabled {
-        let copilot: Arc<dyn AiProvider> = Arc::new(Copilot::new());
-        if copilot_config.chat {
-            providers.chat.push(Arc::clone(&copilot));
-        }
-        if copilot_config.ghost_text {
-            // copilot is built for inline suggestions so it goes ahead of claude
-            providers.ghost.insert(0, copilot);
+        match Copilot::start(&copilot_config.command, &copilot_config.args, root) {
+            Ok((copilot, events)) => {
+                let copilot = Arc::new(copilot);
+                if copilot_config.chat {
+                    providers
+                        .chat
+                        .push(Arc::clone(&copilot) as Arc<dyn AiProvider>);
+                }
+                if copilot_config.ghost_text {
+                    // copilot is built for inline suggestions so it goes ahead of claude
+                    providers
+                        .ghost
+                        .insert(0, Arc::clone(&copilot) as Arc<dyn AiProvider>);
+                }
+                providers.copilot = Some(copilot);
+                providers.copilot_events = Some(events);
+            }
+            Err(err) => problems.push(format!(
+                "copilot could not start `{}` ({err}), install it with npm i -g \
+                 @github/copilot-language-server",
+                copilot_config.command
+            )),
         }
     }
     (providers, problems)

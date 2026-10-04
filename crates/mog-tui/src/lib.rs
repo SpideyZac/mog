@@ -37,6 +37,6 @@ pub use status_line::StatusLine;
 pub use tabs::Tabs;
 pub use theme::Theme;
 pub use ui::{
-    CommandInfo, Focus, Layout, Overlay, Pane, Prompt, PromptKind, Segment, Side, SplitState, Ui,
-    UiEvent,
+    CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, Prompt, PromptKind, Segment, Side,
+    SplitState, Ui, UiEvent,
 };

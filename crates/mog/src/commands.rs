@@ -64,6 +64,9 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("help.keys", "Help: Key bindings"),
     ("ai.explain", "AI: Explain the selection"),
     ("ai.chat", "AI: Toggle chat"),
+    ("copilot.sign_in", "Copilot: Sign in"),
+    ("copilot.sign_out", "Copilot: Sign out"),
+    ("copilot.status", "Copilot: Status"),
 ];
 
 /// Builds the palette entries with the chords bound to each command in `keymap`.

@@ -96,6 +96,19 @@ pub enum Overlay {
     References,
 }
 
+/// Whether Copilot can be used, as shown in the status line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopilotState {
+    /// The server is starting.
+    Starting,
+    /// Signed in and working.
+    Ready,
+    /// Nobody is signed in.
+    SignedOut,
+    /// Something is wrong.
+    Problem,
+}
+
 /// What a [`Prompt`] is asking for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptKind {
@@ -111,6 +124,8 @@ pub enum PromptKind {
     DeleteFile(PathBuf),
     /// A new name for the symbol under the cursor.
     RenameSymbol,
+    /// Confirmation to open GitHub and finish signing in to Copilot.
+    CopilotSignIn,
 }
 
 /// A one line question, like where to save a file.
@@ -271,6 +286,8 @@ pub struct Ui {
     pub references: Vec<(PathBuf, usize, usize, String)>,
     /// An AI suggestion shown after the cursor.
     pub ghost: Option<Ghost>,
+    /// The state of Copilot, if it is turned on.
+    pub copilot: Option<CopilotState>,
     /// The split, if the editor is split.
     pub split: Option<SplitState>,
     /// Whether the terminal panel is shown.

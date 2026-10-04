@@ -15,7 +15,7 @@ use crossterm::{
 };
 use futures::{StreamExt, future};
 use lsp_types::Range as LspRange;
-use mog_ai::CompletionRequest;
+use mog_ai::{CompletionFile, CompletionRequest, CopilotEvent, CopilotStatus, DeviceCode};
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{Config, SettingValue, config_path, save_setting};
 use mog_core::{
@@ -29,9 +29,9 @@ use mog_lsp::{
 };
 use mog_term::TerminalPanel;
 use mog_tui::{
-    ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer,
-    Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar, SettingsPanel, SplitState,
-    StatusLine, Tabs, Theme, Ui, UiEvent,
+    ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState, EditorView,
+    EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar,
+    SettingsPanel, SplitState, StatusLine, Tabs, Theme, Ui, UiEvent,
     completion::{self, CompletionState},
     input,
     menu::{self, MenuAction, MenuItem},
@@ -127,6 +127,8 @@ pub struct App {
     code_actions: Vec<CodeAction>,
     /// The AI providers and their pending replies.
     assistant: Assistant,
+    /// A Copilot sign in waiting for the user to confirm the code popup.
+    copilot_code: Option<DeviceCode>,
     /// The git state of the project.
     git: Git,
     /// Watches the open folder for changes, if a folder is open.
@@ -165,8 +167,6 @@ impl App {
         });
         let (keymap, key_problems) = settings::keymap(&config);
         problems.extend(key_problems);
-        let (providers, ai_problems) = settings::ai_providers(&config);
-        problems.extend(ai_problems);
         let (theme, theme_problem) = settings::theme(&config);
         problems.extend(theme_problem);
 
@@ -184,6 +184,8 @@ impl App {
             || env::current_dir().unwrap_or_default(),
             |tree| tree.root().to_owned(),
         );
+        let (providers, ai_problems) = settings::ai_providers(&config, &root);
+        problems.extend(ai_problems);
 
         let mut ui = Ui::new(config.clone());
         ui.commands = commands::palette(&keymap);
@@ -242,6 +244,7 @@ impl App {
             completion_request: 0,
             code_actions: Vec::new(),
             assistant: Assistant::new(providers),
+            copilot_code: None,
             git,
             watcher,
             files_changed: false,
@@ -464,6 +467,7 @@ impl App {
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
                 Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
+                Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
                 () = &mut deadline => break,
             }
         }
@@ -671,12 +675,16 @@ impl App {
             }
         };
         let (keymap, mut problems) = settings::keymap(&config);
-        let (providers, ai_problems) = settings::ai_providers(&config);
-        problems.extend(ai_problems);
+        // restarting the ai drops the copilot server, so only do it when its settings changed
+        if config.ai != self.ui.config.ai {
+            let (providers, ai_problems) = settings::ai_providers(&config, &self.ui.root);
+            problems.extend(ai_problems);
+            self.assistant = Assistant::new(providers);
+            self.ui.copilot = None;
+        }
         self.keymap = keymap;
         self.ui.commands = commands::palette(&self.keymap);
         self.ui.bindings = commands::bindings(&self.keymap);
-        self.assistant = Assistant::new(providers);
         self.lsp.reconfigure(config.language_servers());
         self.ui.config = config;
         self.editor.set_status("config reloaded");
@@ -815,6 +823,14 @@ impl App {
         let Some(prompt) = self.ui.submitted.take() else {
             return;
         };
+        if prompt.kind == PromptKind::CopilotSignIn {
+            if let Some(code) = self.copilot_code.take() {
+                self.editor
+                    .set_status("finish signing in to copilot in your browser");
+                self.assistant.copilot_finish_sign_in(code);
+            }
+            return;
+        }
         let text = prompt.text.trim();
         if text.is_empty() {
             return;
@@ -891,6 +907,7 @@ impl App {
                 self.request_rename(text.to_owned());
                 Ok(())
             }
+            PromptKind::CopilotSignIn => Ok(()),
         };
         self.ui.refresh_explorer = true;
         if let Err(err) = result {
@@ -915,6 +932,13 @@ impl App {
                 .path()
                 .and_then(|path| path.extension())
                 .map(|ext| ext.to_string_lossy().into_owned()),
+            file: document.path().map(|path| CompletionFile {
+                path: path.to_owned(),
+                text: text.to_string(),
+                cursor: head,
+                tab_size: self.editor.options().tab_width,
+                insert_spaces: self.editor.options().insert_spaces,
+            }),
         };
         self.assistant
             .suggest(request, self.editor.active(), document.version(), head);
@@ -963,7 +987,63 @@ impl App {
                     self.ui.ghost = ghost;
                 }
             }
+            AiReply::Copilot(event) => self.handle_copilot_event(event),
+            AiReply::CopilotCode(code) => {
+                self.editor.copy_text(code.user_code.clone());
+                self.ui.ask(
+                    PromptKind::CopilotSignIn,
+                    "sign in to copilot",
+                    code.user_code.clone(),
+                    format!(
+                        "copied, enter opens {} to paste it",
+                        code.uri.trim_start_matches("https://")
+                    ),
+                );
+                self.copilot_code = Some(code);
+            }
+            AiReply::CopilotDone(message, status) => {
+                if let Some(status) = status {
+                    self.set_copilot_status(&status);
+                }
+                self.editor.set_status(message);
+            }
         }
+    }
+
+    /// Acts on something the Copilot server reported.
+    fn handle_copilot_event(&mut self, event: CopilotEvent) {
+        match event {
+            CopilotEvent::Status(status) => self.set_copilot_status(&status),
+            CopilotEvent::ShowDocument { uri, external } => self.show_document(&uri, external),
+            CopilotEvent::Message(text) => self.editor.set_status(format!("copilot: {text}")),
+            CopilotEvent::Exited(reason) => {
+                let reason = reason.unwrap_or_else(|| "no reason given".into());
+                self.editor.set_status(format!("copilot stopped: {reason}"));
+                self.ui.copilot = Some(CopilotState::Problem);
+            }
+        }
+    }
+
+    /// Shows the Copilot `status` in the status line, explaining it when it gets worse.
+    fn set_copilot_status(&mut self, status: &CopilotStatus) {
+        let state = match status {
+            CopilotStatus::Starting => CopilotState::Starting,
+            CopilotStatus::Ready => CopilotState::Ready,
+            CopilotStatus::SignedOut => CopilotState::SignedOut,
+            CopilotStatus::Problem(_) => CopilotState::Problem,
+        };
+        if self.ui.copilot != Some(state) {
+            match status {
+                CopilotStatus::SignedOut => self
+                    .editor
+                    .set_status("copilot is signed out, run Copilot: Sign in from the palette"),
+                CopilotStatus::Problem(problem) => {
+                    self.editor.set_status(format!("copilot: {problem}"));
+                }
+                CopilotStatus::Starting | CopilotStatus::Ready => {}
+            }
+        }
+        self.ui.copilot = Some(state);
     }
 
     /// Opens or closes the completion menu after `ch` was typed.
@@ -1328,6 +1408,9 @@ impl App {
                 };
             }
             "ai.send" => self.send_chat(),
+            "copilot.sign_in" => self.assistant.copilot_sign_in(),
+            "copilot.sign_out" => self.assistant.copilot_sign_out(),
+            "copilot.status" => self.assistant.copilot_check(),
             "explorer.toggle" => {
                 if !self.ui.has_explorer {
                     self.editor

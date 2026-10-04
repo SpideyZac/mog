@@ -1848,7 +1848,10 @@ dependencies = [
 name = "mog-ai"
 version = "0.1.0"
 dependencies = [
+ "lsp-types",
+ "mog-lsp",
  "reqwest",
+ "ropey",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

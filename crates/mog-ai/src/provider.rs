@@ -1,6 +1,6 @@
 //! The [`AiProvider`] trait every AI backend implements.
 
-use std::{future::Future, pin::Pin};
+use std::{future::Future, path::PathBuf, pin::Pin};
 
 use thiserror::Error;
 
@@ -54,6 +54,23 @@ pub struct CompletionRequest {
     pub suffix: String,
     /// The language of the file, if known.
     pub language: Option<String>,
+    /// The whole file, for providers that keep their own copy of it.
+    pub file: Option<CompletionFile>,
+}
+
+/// The whole file a [`CompletionRequest`] is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionFile {
+    /// Where the file is saved.
+    pub path: PathBuf,
+    /// The full text.
+    pub text: String,
+    /// The char offset of the cursor.
+    pub cursor: usize,
+    /// How many columns a tab takes.
+    pub tab_size: usize,
+    /// Whether indenting inserts spaces instead of tabs.
+    pub insert_spaces: bool,
 }
 
 /// An AI backend that can chat and complete code.
