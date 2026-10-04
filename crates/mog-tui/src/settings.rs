@@ -26,6 +26,9 @@ const HEIGHT: u16 = 30;
 /// The volume change per step.
 const VOLUME_STEP: i64 = 10;
 
+/// The opacity change per step.
+const OPACITY_STEP: i64 = 10;
+
 /// A setting that can be changed in the menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingKey {
@@ -33,6 +36,8 @@ pub enum SettingKey {
     Ui(&'static str),
     /// The color theme.
     Theme,
+    /// How solid backgrounds are.
+    Opacity,
     /// A toggle in the `[editor]` table, by field name.
     Editor(&'static str),
     /// The tab width.
@@ -223,6 +228,7 @@ pub fn get(config: &Config, key: &SettingKey) -> SettingValue {
             _ => false,
         }),
         SettingKey::Theme => SettingValue::Text(ui.theme.clone()),
+        SettingKey::Opacity => SettingValue::Int(i64::from(ui.opacity)),
         SettingKey::Editor(name) => SettingValue::Bool(match *name {
             "auto_close_brackets" => config.editor.auto_close_brackets,
             "auto_complete" => config.editor.auto_complete,
@@ -318,6 +324,10 @@ pub fn change(config: &mut Config, key: &SettingKey, delta: i64) {
             let volume = i64::from(config.audio.volume) + delta * VOLUME_STEP;
             config.audio.volume = u8::try_from(volume.clamp(0, 100)).unwrap_or(50);
         }
+        SettingKey::Opacity => {
+            let opacity = i64::from(config.ui.opacity) + delta * OPACITY_STEP;
+            config.ui.opacity = u8::try_from(opacity.clamp(0, 100)).unwrap_or(100);
+        }
         SettingKey::Flair(id) => {
             let disabled = &mut config.flair.disabled;
             if let Some(at) = disabled.iter().position(|other| other == id) {
@@ -335,6 +345,7 @@ pub fn persisted(config: &Config, key: &SettingKey) -> (Vec<&'static str>, Setti
     match key {
         SettingKey::Ui(name) => (vec!["ui", name], get(config, key)),
         SettingKey::Theme => (vec!["ui", "theme"], get(config, key)),
+        SettingKey::Opacity => (vec!["ui", "opacity"], get(config, key)),
         SettingKey::Editor(name) => (vec!["editor", name], get(config, key)),
         SettingKey::TabWidth => (vec!["editor", "tab_width"], get(config, key)),
         SettingKey::FlairEnabled => (vec!["flair", "enabled"], get(config, key)),
@@ -364,6 +375,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
         "Theme",
         "Pick a color palette. Changes right away.",
     )];
+    rows.push(row(
+        "look",
+        SettingKey::Opacity,
+        "Opacity",
+        "Below 100 a see through terminal shows through mog.",
+    ));
     // the toggles are listed look first, then code, then sound, then social
     for (category, key, label, help) in TOGGLES
         .iter()

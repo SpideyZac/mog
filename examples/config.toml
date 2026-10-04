@@ -25,6 +25,8 @@ git_gutter = true
 git_blame = true
 explorer = true
 icons = true
+# 0 to 100, below 100 a see through terminal shows through
+opacity = 100
 
 [keys]
 # chord = command name, or "" to remove a default binding

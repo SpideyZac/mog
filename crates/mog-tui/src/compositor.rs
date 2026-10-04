@@ -8,10 +8,11 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     layout::{Position, Rect},
+    style::Color,
 };
 
 use crate::{
-    theme::Theme,
+    theme::{Palette, Theme, mix},
     ui::{Layout, Ui},
 };
 
@@ -71,6 +72,25 @@ pub trait Layer {
     }
 }
 
+/// Lets the terminal show through backgrounds when `opacity` is below 100.
+///
+/// Terminals cannot blend a cell, so the main and panel backgrounds become the terminal default,
+/// which a see through terminal draws see through. Highlights fade toward the background so
+/// they stay visible, and at 0 every background goes.
+fn see_through(buf: &mut Buffer, palette: &Palette, opacity: u8) {
+    if opacity >= 100 {
+        return;
+    }
+    let solid = f32::from(opacity) / 100.0;
+    for cell in &mut buf.content {
+        cell.bg = match cell.bg {
+            bg if opacity == 0 || bg == palette.bg || bg == palette.panel => Color::Reset,
+            bg @ Color::Rgb(..) => mix(palette.bg, bg, solid),
+            bg => bg,
+        };
+    }
+}
+
 /// The ordered stack of [`Layer`]s, bottom first.
 #[derive(Default)]
 pub struct Compositor {
@@ -122,6 +142,11 @@ impl Compositor {
             }
             layer.render(area, frame.buffer_mut(), cx);
         }
+        see_through(
+            frame.buffer_mut(),
+            &cx.theme.palette,
+            cx.ui.config.ui.opacity,
+        );
         let cursor = self.layers.iter().rev().find_map(|layer| {
             let area = layer.area(&layout, cx.ui);
             (!area.is_empty()).then(|| layer.cursor(area, cx)).flatten()
@@ -174,5 +199,38 @@ impl Compositor {
             }
         }
         EventResult::Ignored
+    }
+}
+
+#[cfg(test)]
+/// Tests for the compositor.
+mod tests {
+    use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+
+    use super::see_through;
+    use crate::theme::Theme;
+
+    /// Below full opacity the background goes and highlights fade, at full nothing changes.
+    #[test]
+    fn opacity_clears_backgrounds() {
+        let p = Theme::default().palette;
+        let paint = || {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 3, 1));
+            buf[(0, 0)].set_bg(p.bg);
+            buf[(1, 0)].set_bg(p.select);
+            buf[(2, 0)].set_bg(Color::Indexed(4));
+            buf
+        };
+        let mut solid = paint();
+        see_through(&mut solid, &p, 100);
+        assert_eq!(solid, paint());
+        let mut half = paint();
+        see_through(&mut half, &p, 50);
+        assert_eq!(half[(0, 0)].bg, Color::Reset);
+        assert_ne!(half[(1, 0)].bg, p.select);
+        assert_eq!(half[(2, 0)].bg, Color::Indexed(4));
+        let mut clear = paint();
+        see_through(&mut clear, &p, 0);
+        assert!((0..3).all(|x| clear[(x, 0)].bg == Color::Reset));
     }
 }

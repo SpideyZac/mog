@@ -34,6 +34,9 @@ pub struct UiConfig {
     pub explorer: bool,
     /// Whether files get little colored icons.
     pub icons: bool,
+    /// How solid backgrounds are, from 0 to 100. Below 100 the terminal shows through, if it
+    /// is see through itself.
+    pub opacity: u8,
 }
 
 impl Default for UiConfig {
@@ -53,6 +56,7 @@ impl Default for UiConfig {
             git_blame: true,
             explorer: true,
             icons: true,
+            opacity: 100,
         }
     }
 }
