@@ -17,11 +17,13 @@ use toml::de::Error as TomlError;
 pub mod ai;
 pub mod audio;
 pub mod lsp;
+pub mod save;
 pub mod ui;
 
 pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
 pub use audio::AudioConfig;
 pub use lsp::ServerConfig;
+pub use save::{SettingValue, save_setting};
 pub use ui::UiConfig;
 
 /// The environment variable that overrides the config directory.
@@ -49,6 +51,25 @@ pub enum ConfigError {
         /// The underlying error.
         source: TomlError,
     },
+    /// The config file could not be edited.
+    #[error("could not edit {path}: {message}")]
+    Edit {
+        /// The file that failed.
+        path: PathBuf,
+        /// What went wrong.
+        message: String,
+    },
+    /// The config file could not be written.
+    #[error("could not write {path}: {source}")]
+    Write {
+        /// The file that failed.
+        path: PathBuf,
+        /// The underlying error.
+        source: io::Error,
+    },
+    /// There is no config directory to save to.
+    #[error("there is no config directory to save settings to")]
+    NoConfigDir,
 }
 
 /// The whole configuration.
