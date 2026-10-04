@@ -15,6 +15,7 @@ pub mod session;
 pub mod sparks;
 pub mod spectrum;
 pub mod splash;
+pub mod stonks;
 
 pub use ai_meter::AiMeter;
 pub use aura::Aura;
@@ -31,6 +32,7 @@ pub use session::Session;
 pub use sparks::Sparks;
 pub use spectrum::Spectrum;
 pub use splash::Splash;
+pub use stonks::Stonks;
 
 use crate::flair::Flair;
 
@@ -51,6 +53,7 @@ pub fn all() -> Vec<Box<dyn Flair>> {
         Box::new(Sparks::new()),
         Box::new(Combo::new()),
         Box::new(Spectrum::new()),
+        Box::new(Stonks::new()),
         Box::new(Screensaver::new()),
     ]
 }

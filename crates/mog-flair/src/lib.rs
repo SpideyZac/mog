@@ -8,6 +8,7 @@ pub mod flair;
 pub mod graph;
 pub mod layer;
 pub mod rng;
+pub mod spark;
 
 pub use flair::{Corner, Flair, FlairContext, Placement};
 pub use graph::GraphView;
