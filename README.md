@@ -16,7 +16,7 @@ It is early. See [ROADMAP.md](ROADMAP.md) for where things are at.
 
 You need a recent stable Rust toolchain.
 
-```
+```sh
 cargo build --release
 ./target/release/mog [file]
 ```
