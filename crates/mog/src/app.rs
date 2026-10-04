@@ -72,6 +72,8 @@ impl App {
         problems.extend(key_problems);
         let (providers, ai_problems) = settings::ai_providers(&config);
         problems.extend(ai_problems);
+        let (theme, theme_problem) = settings::theme(&config);
+        problems.extend(theme_problem);
 
         let (file, tree) = match args.path {
             Some(path) if path.is_dir() => match FileTree::new(&path) {
@@ -115,7 +117,7 @@ impl App {
             editor,
             keymap,
             compositor,
-            theme: Theme::default(),
+            theme,
             ui,
             lsp,
             lsp_events,

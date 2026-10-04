@@ -6,6 +6,7 @@ use mog_ai::{AiProvider, Claude, Copilot, claude};
 use mog_config::Config;
 use mog_core::{Command, KeyChord, Keymap, Options};
 use mog_flair::{FlairLayer, builtin};
+use mog_tui::Theme;
 
 /// Builds the editing options from `config`.
 pub fn options(config: &Config) -> Options {
@@ -81,4 +82,19 @@ pub fn ai_providers(config: &Config) -> (Vec<Arc<dyn AiProvider>>, Vec<String>) 
         providers.push(Arc::new(Copilot::new()));
     }
     (providers, problems)
+}
+
+/// Builds the theme named in `config`, falling back to the default with a problem message.
+pub fn theme(config: &Config) -> (Theme, Option<String>) {
+    match Theme::named(&config.ui.theme) {
+        Some(theme) => (theme, None),
+        None => (
+            Theme::default(),
+            Some(format!(
+                "unknown theme `{}`, try one of: {}",
+                config.ui.theme,
+                Theme::names().collect::<Vec<_>>().join(", ")
+            )),
+        ),
+    }
 }
