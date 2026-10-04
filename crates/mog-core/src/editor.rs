@@ -522,6 +522,35 @@ impl Editor {
         true
     }
 
+    /// Moves the cursor to the next diagnostic after it, or the previous one before it, wrapping.
+    ///
+    /// Returns the message of the diagnostic, or `None` if there are none.
+    pub fn goto_problem(&mut self, forward: bool) -> Option<String> {
+        let document = self.document();
+        let head = document.selection().head;
+        let mut starts: Vec<(usize, &str)> = document
+            .diagnostics()
+            .iter()
+            .map(|d| (d.from, d.message.as_str()))
+            .collect();
+        starts.sort_by_key(|(from, _)| *from);
+        let found = if forward {
+            starts
+                .iter()
+                .find(|(from, _)| *from > head)
+                .or_else(|| starts.first())
+        } else {
+            starts
+                .iter()
+                .rev()
+                .find(|(from, _)| *from < head)
+                .or_else(|| starts.last())
+        };
+        let (pos, message) = found.map(|(from, message)| (*from, (*message).to_owned()))?;
+        self.select(pos, pos);
+        Some(message)
+    }
+
     /// Selects `from..to` with the cursor at `to` and scrolls it into view.
     pub fn select(&mut self, from: usize, to: usize) {
         self.document_mut().set_selection(Range::new(from, to));
