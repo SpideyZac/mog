@@ -1,5 +1,7 @@
 //! The file explorer shown on the left when a folder is open.
 
+use std::path::PathBuf;
+
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use mog_core::{FileTree, Key, KeyChord};
 use ratatui::{buffer::Buffer, layout::Rect, style::Style};
@@ -7,7 +9,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use crate::{
     compositor::{Context, EventResult, Layer},
     icons,
-    ui::{Focus, Layout, Ui},
+    ui::{Focus, Layout, PromptKind, Ui},
 };
 
 /// Rows above the file list, taken by the folder name.
@@ -114,6 +116,65 @@ impl Explorer {
         }
     }
 
+    /// Returns the folder new files go in: the highlighted folder, or the folder of the
+    /// highlighted file.
+    fn target_folder(&self) -> PathBuf {
+        match self.tree.entries().get(self.selected) {
+            Some(entry) if entry.is_dir => entry.path.clone(),
+            Some(entry) => entry
+                .path
+                .parent()
+                .map_or_else(|| self.tree.root().to_owned(), ToOwned::to_owned),
+            None => self.tree.root().to_owned(),
+        }
+    }
+
+    /// Asks for the name of a new file in the target folder.
+    pub fn ask_new_file(&self, ui: &mut Ui) {
+        let folder = self.target_folder();
+        let shown = folder
+            .strip_prefix(self.tree.root())
+            .unwrap_or(&folder)
+            .display()
+            .to_string();
+        let place = if shown.is_empty() {
+            "the project folder".to_owned()
+        } else {
+            shown
+        };
+        let hint = format!("in {place}, end with / to make a folder");
+        ui.ask(PromptKind::NewFile(folder), "\u{271a} new file", "", hint);
+    }
+
+    /// Asks for a new name for the highlighted entry.
+    fn ask_rename(&self, ui: &mut Ui) {
+        if let Some(entry) = self.tree.entries().get(self.selected) {
+            ui.ask(
+                PromptKind::RenameFile(entry.path.clone()),
+                "\u{270e} rename",
+                entry.name.clone(),
+                "a new name, or a path relative to the parent folder",
+            );
+        }
+    }
+
+    /// Asks to confirm deleting the highlighted entry.
+    fn ask_delete(&self, ui: &mut Ui) {
+        if let Some(entry) = self.tree.entries().get(self.selected) {
+            let what = if entry.is_dir {
+                "folder and everything in it"
+            } else {
+                "file"
+            };
+            ui.ask(
+                PromptKind::DeleteFile(entry.path.clone()),
+                format!("\u{2716} delete {}", entry.name),
+                "",
+                format!("type yes to delete this {what}"),
+            );
+        }
+    }
+
     /// Jumps to the next entry whose name starts with `ch`.
     fn jump_to(&mut self, ch: char) {
         let entries = self.tree.entries();
@@ -210,8 +271,24 @@ impl Layer for Explorer {
     }
 
     fn handle_key(&mut self, chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
-        if cx.ui.focus != Focus::Explorer || cx.ui.overlay.is_some() || chord.mods.ctrl {
+        if cx.ui.focus != Focus::Explorer || cx.ui.overlay.is_some() {
             return EventResult::Ignored;
+        }
+        match (chord.key, chord.mods.ctrl) {
+            (Key::Insert, _) | (Key::Char('n'), true) => {
+                self.ask_new_file(cx.ui);
+                return EventResult::Consumed;
+            }
+            (Key::F(2), _) => {
+                self.ask_rename(cx.ui);
+                return EventResult::Consumed;
+            }
+            (Key::Delete, _) => {
+                self.ask_delete(cx.ui);
+                return EventResult::Consumed;
+            }
+            (_, true) => return EventResult::Ignored,
+            _ => {}
         }
         let page = isize::try_from(self.rows.max(1)).unwrap_or(isize::MAX);
         match chord.key {
