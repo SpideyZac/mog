@@ -243,6 +243,11 @@ impl Editor {
         self.options = options;
     }
 
+    /// Puts `text` on the clipboard.
+    pub fn copy_text(&mut self, text: String) {
+        self.clipboard.set(text);
+    }
+
     /// Returns the status message, if any.
     pub fn status(&self) -> Option<&str> {
         self.status.as_deref()
