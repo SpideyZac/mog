@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arboard.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 futures.workspace = true

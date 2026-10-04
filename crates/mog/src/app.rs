@@ -3,10 +3,11 @@
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
-use mog_core::{Command, Editor, Keymap, MemoryClipboard, Outcome};
+use mog_core::{Command, Editor, Keymap, Outcome};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 
 use crate::cli::Args;
+use crate::clipboard;
 use crate::terminal::Tui;
 
 /// The running editor.
@@ -29,7 +30,7 @@ impl App {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         compositor.push(Box::new(StatusLine::new()));
-        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        let mut editor = Editor::new(clipboard::open());
         if let Some(path) = args.file
             && let Err(err) = editor.open(&path)
         {

@@ -2,6 +2,7 @@
 
 mod app;
 mod cli;
+mod clipboard;
 mod terminal;
 
 use anyhow::Result;
