@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
 use mog_config::Config;
@@ -14,7 +14,7 @@ use mog_lsp::LspEvent;
 use mog_tui::{
     Compositor, Context, EditorView, EventResult, Explorer, Focus, StatusLine, Theme, Ui, input,
 };
-use ratatui::layout::Rect;
+use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
     time::{self, MissedTickBehavior},
@@ -39,6 +39,9 @@ const HOUSEKEEPING_TIME: Duration = Duration::from_secs(1);
 
 /// How often git status is refreshed even when no files changed, to catch commits made elsewhere.
 const GIT_REFRESH_TIME: Duration = Duration::from_secs(15);
+
+/// How long a snapshot waits for background work before drawing.
+const SNAPSHOT_SETTLE: Duration = Duration::from_millis(800);
 
 /// How many rounds of layer requests are run after one event, so requests that queue more
 /// requests cannot freeze the editor.
@@ -186,6 +189,46 @@ impl App {
             self.run_requests();
         }
         Ok(())
+    }
+
+    /// Renders one frame of `size`, like `120x40`, to text after letting background work settle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the size cannot be parsed or drawing fails.
+    pub async fn snapshot(&mut self, size: &str) -> Result<String> {
+        let (width, height) = size
+            .split_once('x')
+            .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+            .ok_or_else(|| anyhow!("snapshot size should look like 120x40"))?;
+        let deadline = time::sleep(SNAPSHOT_SETTLE);
+        tokio::pin!(deadline);
+        loop {
+            self.sync_git();
+            tokio::select! {
+                Some(update) = self.git.update() => git::apply(&mut self.ui, update),
+                () = &mut deadline => break,
+            }
+        }
+        self.compositor.tick(SNAPSHOT_SETTLE);
+        let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+        terminal.draw(|frame| {
+            self.screen = frame.area();
+            let mut cx = Context {
+                editor: &mut self.editor,
+                theme: &self.theme,
+                ui: &mut self.ui,
+            };
+            self.compositor.render(frame, &mut cx);
+        })?;
+        let buffer = terminal.backend().buffer();
+        let rows: Vec<String> = (0..height)
+            .map(|y| {
+                let row: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+                row.trim_end().to_owned()
+            })
+            .collect();
+        Ok(rows.join("\n"))
     }
 
     /// Draws one frame.

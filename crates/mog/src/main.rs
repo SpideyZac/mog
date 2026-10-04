@@ -23,6 +23,11 @@ use cli::Args;
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(size) = args.snapshot.clone() {
+        let text = App::new(args).snapshot(&size).await?;
+        println!("{text}");
+        return Ok(());
+    }
     let mut tui = terminal::init()?;
     let result = App::new(args).run(&mut tui).await;
     terminal::restore()?;
