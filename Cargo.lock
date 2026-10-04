@@ -1820,6 +1820,7 @@ dependencies = [
  "mog-tui",
  "notify",
  "ratatui",
+ "serde_json",
  "tokio",
 ]
 

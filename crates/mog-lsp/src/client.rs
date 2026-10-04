@@ -213,6 +213,11 @@ impl Client {
         &self.name
     }
 
+    /// Returns `true` while the connection to the server is open.
+    pub fn is_running(&self) -> bool {
+        !self.outgoing.is_closed()
+    }
+
     /// Sends a request and waits for the result.
     ///
     /// # Errors

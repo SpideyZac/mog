@@ -246,13 +246,48 @@ impl LanguageServers {
     }
 
     /// Forgets a server that exited so its documents are opened again if it is restarted.
-    pub fn exited(&mut self, name: &str) {
+    ///
+    /// Returns `false` when the exit was from an old instance that was already replaced.
+    pub fn exited(&mut self, name: &str) -> bool {
+        if self.clients.get(name).is_some_and(Client::is_running) {
+            return false;
+        }
         self.clients.remove(name);
         self.failed.insert(name.to_owned());
-        let configs = &self.configs;
+        if let Some(config) = self.configs.get(name).cloned() {
+            self.forget_documents(&config);
+        }
+        true
+    }
+
+    /// Switches to `configs`, stopping servers whose settings changed so they start again with
+    /// the new ones when a matching file is next synced.
+    pub fn reconfigure(&mut self, configs: BTreeMap<String, ServerConfig>) {
+        let names: HashSet<String> = self.configs.keys().chain(configs.keys()).cloned().collect();
+        for name in names {
+            let (old, new) = (self.configs.get(&name), configs.get(&name));
+            if old == new {
+                continue;
+            }
+            self.clients.remove(&name);
+            self.failed.remove(&name);
+            for config in [old, new]
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                self.forget_documents(&config);
+            }
+        }
+        self.configs = configs;
+    }
+
+    /// Forgets which documents a server with `config` was told about.
+    fn forget_documents(&mut self, config: &ServerConfig) {
         self.synced.retain(|path, _| {
             let extension = path.extension().and_then(|ext| ext.to_str());
-            !configs[name]
+            !config
                 .extensions
                 .iter()
                 .any(|ext| Some(ext.as_str()) == extension)
@@ -362,7 +397,40 @@ pub fn exit_message(server: &str, reason: Option<&str>) -> String {
 #[cfg(test)]
 /// Tests for language server helpers.
 mod tests {
-    use super::exit_message;
+    use std::path::PathBuf;
+
+    use mog_config::{Config, ServerConfig};
+    use serde_json::json;
+    use tokio::sync::mpsc;
+
+    use super::{LanguageServers, exit_message};
+
+    /// Changing a server's settings makes it start over, other servers are left alone.
+    #[test]
+    fn reconfigure_restarts_changed_servers() {
+        let (events, _events) = mpsc::unbounded_channel();
+        let config = Config::default();
+        let mut servers = LanguageServers::new(config.language_servers(), PathBuf::new(), events);
+        servers.synced.insert(PathBuf::from("main.rs"), 1);
+        servers.synced.insert(PathBuf::from("app.py"), 1);
+        servers.failed.insert("rust".into());
+        let mut changed = Config::default();
+        changed.lsp.insert(
+            "rust".into(),
+            ServerConfig {
+                settings: json!({ "check": { "command": "clippy" } }),
+                ..Default::default()
+            },
+        );
+        servers.reconfigure(changed.language_servers());
+        assert!(!servers.synced.contains_key(&PathBuf::from("main.rs")));
+        assert!(servers.synced.contains_key(&PathBuf::from("app.py")));
+        assert!(!servers.failed.contains("rust"));
+        assert_eq!(
+            servers.configs["rust"].settings["check"]["command"],
+            "clippy"
+        );
+    }
 
     /// A missing rustup component gets a hint on how to install it.
     #[test]
