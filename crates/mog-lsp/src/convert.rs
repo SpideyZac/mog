@@ -55,7 +55,7 @@ pub fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
         }
     }
     let decoded = String::from_utf8(bytes).ok()?;
-    // windows uris look like /C:/dir so the leading slash has to go
+    // windows uris look like /c:/dir so the leading slash has to go
     let is_drive = decoded.as_bytes().get(2) == Some(&b':');
     let path = if cfg!(windows) && is_drive {
         &decoded[1..]
