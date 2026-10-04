@@ -52,6 +52,7 @@ use crate::{
     ai::{AiReply, Assistant},
     cli::Args,
     clipboard, commands,
+    discord::{Presence, Status},
     git::{self, Git},
     lsp::{self, LanguageServers, LspReply},
     settings,
@@ -127,6 +128,10 @@ pub struct App {
     audio: Option<Audio>,
     /// The error count the sounds last reacted to.
     sound_errors: usize,
+    /// The Discord status connection, while it is turned on.
+    discord: Option<Presence>,
+    /// The status last sent to Discord.
+    discord_status: Option<Status>,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
     /// When the last key or mouse event came in, to know when the screensaver is up.
@@ -230,6 +235,8 @@ impl App {
             last_problems: (0, 0),
             audio: None,
             sound_errors: 0,
+            discord: None,
+            discord_status: None,
             screen: Rect::default(),
             last_input: Instant::now(),
             quit: false,
@@ -242,6 +249,7 @@ impl App {
         }
         app.run_requests();
         app.apply_audio_settings();
+        app.apply_discord_settings();
         app
     }
 
@@ -255,6 +263,60 @@ impl App {
         if let Some(audio) = &self.audio {
             audio.set_volume(settings.volume);
             audio.set_music(settings.music);
+        }
+    }
+
+    /// Connects to or leaves Discord to match the settings.
+    fn apply_discord_settings(&mut self) {
+        let settings = &self.ui.config.discord;
+        if !settings.enabled {
+            self.discord = None;
+            return;
+        }
+        if settings.client_id.is_empty() {
+            self.editor
+                .set_status("discord needs [discord] client_id in the config, see the example");
+            self.discord = None;
+            return;
+        }
+        if self
+            .discord
+            .as_ref()
+            .is_none_or(|presence| presence.client_id() != settings.client_id)
+        {
+            self.discord = Some(Presence::start(&settings.client_id, &settings.large_image));
+            self.discord_status = None;
+        }
+        self.update_presence();
+    }
+
+    /// Tells Discord about the focused file if it changed.
+    fn update_presence(&mut self) {
+        let Some(presence) = &self.discord else {
+            return;
+        };
+        let document = self.editor.document();
+        let details = if !self.ui.config.discord.show_file {
+            "editing something secret".to_owned()
+        } else if document.path().is_some() {
+            format!("editing {}", document.name())
+        } else {
+            "staring at a blank file".to_owned()
+        };
+        let project = self
+            .ui
+            .root
+            .file_name()
+            .map_or_else(|| "mog".into(), |name| name.to_string_lossy());
+        let state = match self.last_problems.0 {
+            0 => format!("in {project}"),
+            1 => format!("in {project}, 1 error"),
+            errors => format!("in {project}, {errors} errors"),
+        };
+        let status = Status { details, state };
+        if self.discord_status.as_ref() != Some(&status) {
+            presence.update(status.clone());
+            self.discord_status = Some(status);
         }
     }
 
@@ -508,6 +570,7 @@ impl App {
         }
         self.editor.set_options(settings::options(&self.ui.config));
         self.apply_audio_settings();
+        self.apply_discord_settings();
     }
 
     /// Runs the commands layers asked for.
@@ -546,6 +609,7 @@ impl App {
                 warnings: problems.1,
             });
         }
+        self.update_presence();
     }
 
     /// Asks git about open files and the cursor line.
