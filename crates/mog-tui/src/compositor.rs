@@ -103,11 +103,14 @@ impl Compositor {
         self.layers.iter().any(|layer| layer.is_animating())
     }
 
-    /// Draws every layer and places the cursor.
+    /// Draws every layer and returns where the cursor should be shown, if anywhere.
+    ///
+    /// The cursor is returned instead of set on `frame` so the caller can show it only after
+    /// the whole frame is written, which keeps it from flickering over animated cells.
     ///
     /// Status line segments are cleared before drawing and events after, so every event is seen
     /// by exactly one frame.
-    pub fn render(&mut self, frame: &mut Frame<'_>, cx: &mut Context<'_>) {
+    pub fn render(&mut self, frame: &mut Frame<'_>, cx: &mut Context<'_>) -> Option<Position> {
         let screen = frame.area();
         frame.buffer_mut().set_style(screen, cx.theme.background);
         cx.ui.segments.clear();
@@ -123,10 +126,8 @@ impl Compositor {
             let area = layer.area(&layout, cx.ui);
             (!area.is_empty()).then(|| layer.cursor(area, cx)).flatten()
         });
-        if let Some(cursor) = cursor {
-            frame.set_cursor_position(cursor);
-        }
         cx.ui.events.clear();
+        cursor
     }
 
     /// Offers a key press to the layers, top first.

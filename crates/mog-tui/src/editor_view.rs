@@ -657,7 +657,7 @@ mod tests {
                     theme: &theme,
                     ui: &mut ui,
                 };
-                compositor.render(frame, &mut cx);
+                let _ = compositor.render(frame, &mut cx);
             })
             .expect("draw");
         terminal.backend().buffer().clone()
@@ -695,6 +695,7 @@ mod tests {
         ui.config.ui.git_gutter = false;
         ui.config.ui.indent_guides = false;
         let mut terminal = Terminal::new(TestBackend::new(12, 3)).expect("test terminal");
+        let mut cursor = None;
         terminal
             .draw(|frame| {
                 let mut cx = Context {
@@ -702,7 +703,7 @@ mod tests {
                     theme: &theme,
                     ui: &mut ui,
                 };
-                compositor.render(frame, &mut cx);
+                cursor = compositor.render(frame, &mut cx);
             })
             .expect("draw");
         let buffer = terminal.backend().buffer();
@@ -710,8 +711,6 @@ mod tests {
             .map(|y| (0..12).map(|x| buffer[(x, y)].symbol()).collect())
             .collect();
         assert_eq!(rows, ["1 hi        ", "2     yo    "]);
-        terminal
-            .backend_mut()
-            .assert_cursor_position(Position::new(8, 1));
+        assert_eq!(cursor, Some(Position::new(8, 1)));
     }
 }

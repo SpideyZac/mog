@@ -7,7 +7,12 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use crossterm::event::{Event, EventStream, KeyEventKind};
+use crossterm::{
+    cursor::{Hide, MoveTo, Show},
+    event::{Event, EventStream, KeyEventKind},
+    execute, queue,
+    terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
+};
 use futures::{StreamExt, future};
 use lsp_types::Range as LspRange;
 use mog_ai::CompletionRequest;
@@ -354,7 +359,7 @@ impl App {
                 theme: &self.theme,
                 ui: &mut self.ui,
             };
-            self.compositor.render(frame, &mut cx);
+            let _ = self.compositor.render(frame, &mut cx);
         })?;
         let buffer = terminal.backend().buffer();
         let rows: Vec<String> = (0..height)
@@ -384,7 +389,12 @@ impl App {
     }
 
     /// Draws one frame.
+    ///
+    /// The cursor stays hidden while cells are written and is only shown once it is in place,
+    /// otherwise it visibly jumps to whatever was drawn last.
     fn draw(&mut self, terminal: &mut Tui) -> Result<()> {
+        queue!(terminal.backend_mut(), BeginSynchronizedUpdate, Hide)?;
+        let mut cursor = None;
         terminal.draw(|frame| {
             self.screen = frame.area();
             let mut cx = Context {
@@ -392,8 +402,13 @@ impl App {
                 theme: &self.theme,
                 ui: &mut self.ui,
             };
-            self.compositor.render(frame, &mut cx);
+            cursor = self.compositor.render(frame, &mut cx);
         })?;
+        let backend = terminal.backend_mut();
+        if let Some(cursor) = cursor {
+            queue!(backend, MoveTo(cursor.x, cursor.y), Show)?;
+        }
+        execute!(backend, EndSynchronizedUpdate)?;
         Ok(())
     }
 
