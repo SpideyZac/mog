@@ -277,7 +277,7 @@ pub fn change(config: &mut Config, key: &SettingKey, delta: i64) {
     }
     match key {
         SettingKey::Theme => {
-            let names: Vec<&str> = Theme::names().collect();
+            let names = Theme::all_names(config);
             let current = names
                 .iter()
                 .position(|name| name.eq_ignore_ascii_case(&config.ui.theme))

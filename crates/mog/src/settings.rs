@@ -6,7 +6,7 @@ use mog_ai::{AiProvider, Claude, Copilot, CopilotEvent, claude};
 use mog_config::Config;
 use mog_core::{Command, KeyChord, Keymap, Options};
 use mog_flair::{FlairLayer, builtin};
-use mog_tui::Theme;
+use mog_tui::{Theme, theme::Palette};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// Builds the editing options from `config`.
@@ -130,15 +130,27 @@ pub fn ai_providers(config: &Config, root: &Path) -> (AiProviders, Vec<String>) 
 }
 
 /// Builds the theme named in `config`, falling back to the default with a problem message.
+///
+/// Custom themes from `[themes]` win over built in ones with the same name.
 pub fn theme(config: &Config) -> (Theme, Option<String>) {
-    match Theme::named(&config.ui.theme) {
+    let name = &config.ui.theme;
+    let custom = config
+        .themes
+        .iter()
+        .find(|(other, _)| other.eq_ignore_ascii_case(name));
+    if let Some((name, custom)) = custom {
+        return match Palette::custom(custom) {
+            Ok(palette) => (Theme::from_palette(name, palette), None),
+            Err(err) => (Theme::default(), Some(format!("theme `{name}`: {err}"))),
+        };
+    }
+    match Theme::named(name) {
         Some(theme) => (theme, None),
         None => (
             Theme::default(),
             Some(format!(
-                "unknown theme `{}`, try one of: {}",
-                config.ui.theme,
-                Theme::names().collect::<Vec<_>>().join(", ")
+                "unknown theme `{name}`, try one of: {}",
+                Theme::all_names(config).join(", ")
             )),
         ),
     }

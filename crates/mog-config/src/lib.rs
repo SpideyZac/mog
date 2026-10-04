@@ -20,6 +20,7 @@ pub mod discord;
 pub mod lsp;
 pub mod save;
 pub mod terminal;
+pub mod theme;
 pub mod ui;
 
 pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
@@ -28,6 +29,7 @@ pub use discord::DiscordConfig;
 pub use lsp::ServerConfig;
 pub use save::{SettingValue, config_path, save_setting};
 pub use terminal::TerminalConfig;
+pub use theme::ThemeConfig;
 pub use ui::UiConfig;
 
 /// The environment variable that overrides the config directory.
@@ -100,6 +102,8 @@ pub struct Config {
     pub terminal: TerminalConfig,
     /// Discord Rich Presence.
     pub discord: DiscordConfig,
+    /// Custom color themes by name, picked with `ui.theme`.
+    pub themes: BTreeMap<String, ThemeConfig>,
 }
 
 /// Settings for editing behavior.

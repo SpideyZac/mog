@@ -175,7 +175,7 @@ API keys are never read from or written to the config file.
 
 | key | default | |
 | --- | --- | --- |
-| `theme` | `"mog"` | `mog`, `synthwave`, `matrix`, `sunset`, `ocean`, `forest` or `paper` |
+| `theme` | `"mog"` | `mog`, `synthwave`, `matrix`, `sunset`, `ocean`, `forest`, `paper` or one of your [`[themes]`](#themes) |
 | `tabs` | `true` | Open files as tabs along the top |
 | `line_numbers` | `true` | Line numbers |
 | `relative_line_numbers` | `false` | Count line numbers from the cursor |
@@ -189,6 +189,24 @@ API keys are never read from or written to the config file.
 | `git_blame` | `true` | Show who last changed the cursor line |
 | `explorer` | `true` | Open the file explorer when opening a folder |
 | `icons` | `true` | File icons |
+
+### `[themes]`
+
+Make your own theme from a built in one. Every color is optional and missing ones come from
+`base`. Pick it with `ui.theme` like any other.
+
+```toml
+[ui]
+theme = "midnight"
+
+[themes.midnight]
+base = "ocean"
+accent = "#ff5ccd"
+bg = "#070b14"
+```
+
+The colors are `bg`, `panel`, `raised`, `select`, `fg`, `dim`, `accent`, `accent2`, `red`,
+`orange`, `yellow`, `green`, `cyan`, `blue`, `purple` and `pink`.
 
 ### `[keys]`
 

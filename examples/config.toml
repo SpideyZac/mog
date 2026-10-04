@@ -82,3 +82,11 @@ enabled = false
 client_id = "1556366148948459571"
 large_image = "mog"
 show_file = true
+
+# custom themes start from a built in one and change any of its colors. pick them with
+# ui.theme.
+# colors: bg panel raised select fg dim accent accent2 red orange yellow green cyan blue purple pink
+[themes.midnight]
+base = "ocean"
+accent = "#ff5ccd"
+bg = "#070b14"

@@ -1,5 +1,6 @@
 //! Colors and styles.
 
+use mog_config::{Config, ThemeConfig, theme::COLOR_NAMES};
 use mog_git::FileStatus;
 use ratatui::style::{Color, Modifier, Style};
 
@@ -41,6 +42,176 @@ pub struct Palette {
     pub purple: Color,
     /// Highlights and special things.
     pub pink: Color,
+}
+
+impl Palette {
+    /// Returns the color in slot `index`, in the order of [`COLOR_NAMES`].
+    pub fn get(&self, index: usize) -> Color {
+        self.slots()[index % COLOR_NAMES.len()]
+    }
+
+    /// Sets the color in slot `index`, in the order of [`COLOR_NAMES`].
+    pub fn set(&mut self, index: usize, color: Color) {
+        let mut slots = self.slots();
+        slots[index % COLOR_NAMES.len()] = color;
+        *self = Self::from_slots(slots);
+    }
+
+    /// Returns every color in the order of [`COLOR_NAMES`].
+    fn slots(&self) -> [Color; 16] {
+        [
+            self.bg,
+            self.panel,
+            self.raised,
+            self.select,
+            self.fg,
+            self.dim,
+            self.accent,
+            self.accent2,
+            self.red,
+            self.orange,
+            self.yellow,
+            self.green,
+            self.cyan,
+            self.blue,
+            self.purple,
+            self.pink,
+        ]
+    }
+
+    /// Builds a palette from colors in the order of [`COLOR_NAMES`].
+    fn from_slots(slots: [Color; 16]) -> Self {
+        let [
+            bg,
+            panel,
+            raised,
+            select,
+            fg,
+            dim,
+            accent,
+            accent2,
+            red,
+            orange,
+            yellow,
+            green,
+            cyan,
+            blue,
+            purple,
+            pink,
+        ] = slots;
+        Self {
+            bg,
+            panel,
+            raised,
+            select,
+            fg,
+            dim,
+            accent,
+            accent2,
+            red,
+            orange,
+            yellow,
+            green,
+            cyan,
+            blue,
+            purple,
+            pink,
+        }
+    }
+
+    /// Returns the built in palette called `name`, ignoring case.
+    pub fn named(name: &str) -> Option<Self> {
+        PALETTES
+            .iter()
+            .find(|(other, _)| other.eq_ignore_ascii_case(name))
+            .map(|(_, palette)| *palette)
+    }
+
+    /// Builds the palette of the custom theme `custom`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the first unknown base theme or broken color.
+    pub fn custom(custom: &ThemeConfig) -> Result<Self, String> {
+        let base = custom.base.as_deref().unwrap_or("mog");
+        let mut palette =
+            Self::named(base).ok_or_else(|| format!("unknown base theme `{base}`"))?;
+        for (index, name) in COLOR_NAMES.iter().enumerate() {
+            if let Some(text) = custom.color(name) {
+                let color = parse_hex(text)
+                    .ok_or_else(|| format!("`{name} = \"{text}\"` is not a color"))?;
+                palette.set(index, color);
+            }
+        }
+        Ok(palette)
+    }
+}
+
+/// Parses a color written like `#ff5ccd` or `ff5ccd`.
+pub fn parse_hex(text: &str) -> Option<Color> {
+    let hex = text.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.is_ascii() {
+        return None;
+    }
+    let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+    Some(Color::Rgb(channel(0)?, channel(2)?, channel(4)?))
+}
+
+/// Writes `color` like `#ff5ccd`. Non RGB colors come out black.
+pub fn to_hex(color: Color) -> String {
+    let (r, g, b) = rgb(color);
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// Returns the channels of `color`, or black for non RGB colors.
+fn rgb(color: Color) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        _ => (0, 0, 0),
+    }
+}
+
+/// Returns `color` as hue in degrees, saturation and lightness from 0 to 1.
+pub fn to_hsl(color: Color) -> (f32, f32, f32) {
+    let (r, g, b) = rgb(color);
+    let [r, g, b] = [r, g, b].map(|c| f32::from(c) / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d < f32::EPSILON {
+        return (0.0, 0.0, l);
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if (max - r).abs() < f32::EPSILON {
+        60.0 * ((g - b) / d).rem_euclid(6.0)
+    } else if (max - g).abs() < f32::EPSILON {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    (h, s.clamp(0.0, 1.0), l)
+}
+
+/// Builds a color from hue in degrees, saturation and lightness from 0 to 1.
+pub fn from_hsl(h: f32, s: f32, l: f32) -> Color {
+    let (s, l) = (s.clamp(0.0, 1.0), l.clamp(0.0, 1.0));
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h = h.rem_euclid(360.0) / 60.0;
+    let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+    // the hue is below 6 here so the cast is lossless
+    let (r, g, b) = match h as u8 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    // the clamp keeps every channel inside u8 so the casts are lossless
+    let channel = |v: f32| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color::Rgb(channel(r), channel(g), channel(b))
 }
 
 /// The built in palettes by name.
@@ -324,6 +495,17 @@ impl Theme {
         PALETTES.iter().map(|(name, _)| *name)
     }
 
+    /// Returns the names of the built in themes followed by the custom ones in `config`.
+    pub fn all_names(config: &Config) -> Vec<String> {
+        let mut names: Vec<String> = Self::names().map(str::to_owned).collect();
+        for name in config.themes.keys() {
+            if !names.iter().any(|other| other.eq_ignore_ascii_case(name)) {
+                names.push(name.clone());
+            }
+        }
+        names
+    }
+
     /// Returns the built in theme called `name`.
     pub fn named(name: &str) -> Option<Self> {
         PALETTES
@@ -423,9 +605,62 @@ pub fn mix(a: Color, b: Color, amount: f32) -> Color {
 #[cfg(test)]
 /// Tests for themes.
 mod tests {
+    use mog_config::ThemeConfig;
     use ratatui::style::Color;
 
-    use super::{Theme, mix};
+    use super::{Palette, Theme, from_hsl, mix, parse_hex, to_hex, to_hsl};
+
+    /// Hex colors read and write the same way.
+    #[test]
+    fn hex_round_trips() {
+        assert_eq!(parse_hex("#ff5ccd"), Some(Color::Rgb(255, 92, 205)));
+        assert_eq!(parse_hex("FF5CCD"), Some(Color::Rgb(255, 92, 205)));
+        assert_eq!(parse_hex("#ff5cc"), None);
+        assert_eq!(parse_hex("#gg0000"), None);
+        assert_eq!(to_hex(Color::Rgb(255, 92, 205)), "#ff5ccd");
+    }
+
+    /// Converting to HSL and back lands on the same color.
+    #[test]
+    fn hsl_round_trips() {
+        for color in [
+            Color::Rgb(255, 92, 205),
+            Color::Rgb(22, 18, 32),
+            Color::Rgb(128, 128, 128),
+            Color::Rgb(0, 255, 0),
+        ] {
+            let (h, s, l) = to_hsl(color);
+            assert_eq!(from_hsl(h, s, l), color);
+        }
+    }
+
+    /// Custom themes start from their base and replace the colors they set.
+    #[test]
+    fn custom_theme_overrides_base() {
+        let custom = ThemeConfig {
+            base: Some("paper".into()),
+            accent: Some("#000000".into()),
+            ..ThemeConfig::default()
+        };
+        let palette = Palette::custom(&custom).expect("valid theme");
+        let paper = Palette::named("paper").expect("built in");
+        assert_eq!(palette.accent, Color::Rgb(0, 0, 0));
+        assert_eq!(palette.bg, paper.bg);
+        let broken = ThemeConfig {
+            red: Some("nope".into()),
+            ..ThemeConfig::default()
+        };
+        assert!(Palette::custom(&broken).is_err());
+    }
+
+    /// Slots read and write the same fields.
+    #[test]
+    fn slots_match_fields() {
+        let mut palette = Palette::named("mog").expect("built in");
+        palette.set(6, Color::Rgb(1, 2, 3));
+        assert_eq!(palette.accent, Color::Rgb(1, 2, 3));
+        assert_eq!(palette.get(15), palette.pink);
+    }
 
     /// Every built in theme can be looked up by name, ignoring case.
     #[test]
