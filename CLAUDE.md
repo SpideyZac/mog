@@ -11,7 +11,7 @@ See `ROADMAP.md` for what is done and what is next. Update it whenever a roadmap
 - Build: `cargo build`
 - Run: `cargo run -- [file]`
 - Check everything (must pass before every commit):
-  - `cargo fmt --all --check`
+  - `cargo +nightly fmt --all --check`
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test --workspace`
 
