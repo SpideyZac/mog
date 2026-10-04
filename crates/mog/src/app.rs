@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{Event, EventStream, KeyEventKind},
+    event::{Event, EventStream, KeyEventKind, MouseEventKind},
     execute, queue,
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
@@ -22,7 +22,7 @@ use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
     movement,
 };
-use mog_flair::GraphView;
+use mog_flair::{GraphView, builtin::screensaver};
 use mog_lsp::{
     LspEvent, convert,
     features::{CodeAction, FileEdits},
@@ -128,6 +128,8 @@ pub struct App {
     sound_errors: usize,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
+    /// When the last key or mouse event came in, to know when the screensaver is up.
+    last_input: Instant,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -227,6 +229,7 @@ impl App {
             audio: None,
             sound_errors: 0,
             screen: Rect::default(),
+            last_input: Instant::now(),
             quit: false,
         };
         for name in startup {
@@ -412,8 +415,30 @@ impl App {
         Ok(())
     }
 
+    /// Returns `true` while the matrix screensaver covers the screen.
+    fn screensaver_showing(&self) -> bool {
+        let flair = &self.ui.config.flair;
+        flair.enabled
+            && !flair.disabled.iter().any(|id| id == "screensaver")
+            && self.last_input.elapsed() >= screensaver::IDLE_TIME
+    }
+
     /// Reacts to a single terminal event.
     fn handle_event(&mut self, event: Event) {
+        if matches!(event, Event::Key(_) | Event::Mouse(_) | Event::Paste(_)) {
+            let waking = self.screensaver_showing();
+            self.last_input = Instant::now();
+            self.ui.events.push(UiEvent::Activity);
+            // the key that wakes the screensaver should not also type into the file
+            let pressed = match &event {
+                Event::Key(key) => key.kind != KeyEventKind::Release,
+                Event::Mouse(mouse) => !matches!(mouse.kind, MouseEventKind::Moved),
+                _ => true,
+            };
+            if waking && pressed {
+                return;
+            }
+        }
         match event {
             // windows reports releases too and we only care about presses
             Event::Key(key) if key.kind != KeyEventKind::Release => {

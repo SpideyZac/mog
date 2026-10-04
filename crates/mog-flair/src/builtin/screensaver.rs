@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// How long without input before the rain starts.
-const IDLE_TIME: Duration = Duration::from_secs(180);
+pub const IDLE_TIME: Duration = Duration::from_secs(180);
 
 /// What the rain is made of.
 const GLYPHS: &[char] = &[
