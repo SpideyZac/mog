@@ -51,6 +51,7 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl+q", "quit"),
     ("ctrl+p", "command_palette"),
     ("ctrl+shift+p", "command_palette"),
+    ("alt+e", "ai.explain"),
 ];
 
 /// A key on the keyboard, independent of any terminal library.
