@@ -14,6 +14,12 @@ use crate::{
     convert,
 };
 
+/// Edits for each file that changes, as `(file, edits)`.
+pub type FileEdits = Vec<(PathBuf, Vec<TextEdit>)>;
+
+/// A code action as its title and the edits it makes.
+pub type CodeAction = (String, FileEdits);
+
 /// Builds the `textDocument` and `position` arguments most requests take.
 fn at(path: &Path, position: Position) -> Option<Value> {
     let uri = convert::path_to_uri(path)?;
@@ -38,7 +44,7 @@ fn hover_text(contents: HoverContents) -> String {
 }
 
 /// Flattens a workspace edit into the edits for each file.
-fn workspace_edits(edit: WorkspaceEdit) -> Vec<(PathBuf, Vec<TextEdit>)> {
+fn workspace_edits(edit: WorkspaceEdit) -> FileEdits {
     let mut files = Vec::new();
     for (uri, edits) in edit.changes.unwrap_or_default() {
         files.extend(convert::uri_to_path(&uri).map(|path| (path, edits)));
@@ -156,7 +162,7 @@ impl Client {
         path: &Path,
         position: Position,
         new_name: &str,
-    ) -> Result<Vec<(PathBuf, Vec<TextEdit>)>, LspError> {
+    ) -> Result<FileEdits, LspError> {
         let Some(mut params) = at(path, position) else {
             return Ok(Vec::new());
         };
@@ -208,7 +214,7 @@ impl Client {
         path: &Path,
         range: Range,
         diagnostics: Vec<Diagnostic>,
-    ) -> Result<Vec<(String, Vec<(PathBuf, Vec<TextEdit>)>)>, LspError> {
+    ) -> Result<Vec<CodeAction>, LspError> {
         let Some(uri) = convert::path_to_uri(path) else {
             return Ok(Vec::new());
         };

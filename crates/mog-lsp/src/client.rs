@@ -9,7 +9,8 @@ use std::{
 };
 
 use lsp_types::{
-    ClientCapabilities, ClientInfo, CompletionClientCapabilities, CompletionItemCapability,
+    ClientCapabilities, ClientInfo, CodeActionClientCapabilities, CodeActionKindLiteralSupport,
+    CodeActionLiteralSupport, CompletionClientCapabilities, CompletionItemCapability,
     GotoCapability, HoverClientCapabilities, InitializeParams, MarkupKind,
     PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, TextDocumentClientCapabilities,
     TextDocumentSyncClientCapabilities, WorkspaceFolder,
@@ -275,7 +276,25 @@ fn initialize_params(root: &Path) -> Value {
                 formatting: Some(Default::default()),
                 rename: Some(Default::default()),
                 references: Some(Default::default()),
-                code_action: Some(Default::default()),
+                code_action: Some(CodeActionClientCapabilities {
+                    // without literal support servers may only send bare commands
+                    code_action_literal_support: Some(CodeActionLiteralSupport {
+                        code_action_kind: CodeActionKindLiteralSupport {
+                            value_set: [
+                                "",
+                                "quickfix",
+                                "refactor",
+                                "refactor.extract",
+                                "refactor.inline",
+                                "refactor.rewrite",
+                                "source",
+                            ]
+                            .map(String::from)
+                            .to_vec(),
+                        },
+                    }),
+                    ..CodeActionClientCapabilities::default()
+                }),
                 ..TextDocumentClientCapabilities::default()
             }),
             ..ClientCapabilities::default()
