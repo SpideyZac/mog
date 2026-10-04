@@ -7,7 +7,7 @@ use mog_core::Command;
 use mog_git::FileStatus;
 use ratatui::{layout::Rect, style::Style};
 
-use crate::{search::SearchState, status_line::STATUS_HEIGHT};
+use crate::{search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT};
 
 /// The widest the file explorer gets, in cells.
 const EXPLORER_MAX_WIDTH: u16 = 30;
@@ -157,6 +157,10 @@ pub struct Ui {
     pub blame: Option<(PathBuf, usize, String)>,
     /// The find and replace state.
     pub search: SearchState,
+    /// Every flair as `(id, description)`, for the settings menu.
+    pub flairs: Vec<(String, String)>,
+    /// Settings changed in the menu that the app still has to apply and save.
+    pub setting_changes: Vec<SettingKey>,
 }
 
 impl Ui {
