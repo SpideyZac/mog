@@ -5,6 +5,7 @@
 
 pub mod clipboard;
 pub mod command;
+pub mod cursors;
 pub mod diagnostic;
 pub mod document;
 pub mod editor;
