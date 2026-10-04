@@ -141,7 +141,8 @@ impl App {
         {
             editor.set_status(format!("could not open {}: {err}", path.display()));
         }
-        Self {
+        let startup = args.run;
+        let mut app = Self {
             editor,
             keymap,
             compositor,
@@ -156,7 +157,15 @@ impl App {
             git_refreshed: Instant::now(),
             screen: Rect::default(),
             quit: false,
+        };
+        for name in startup {
+            match name.parse() {
+                Ok(command) => app.execute_command(command),
+                Err(err) => app.editor.set_status(format!("--run: {err}")),
+            }
         }
+        app.run_requests();
+        app
     }
 
     /// Runs the event loop until the user quits.
