@@ -17,6 +17,7 @@ use mog_lsp::{
     features::{self, CodeAction, FileEdits},
 };
 use mog_tui::completion::{CompletionItem, ItemKind};
+use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// An answer to a feature request.
@@ -217,12 +218,13 @@ impl LanguageServers {
             return Err(None);
         }
         let config = &self.configs[name];
+        let settings = server_settings(name, &config.settings, &self.root);
         match Client::start(
             name,
             &config.command,
             &config.args,
             &self.root,
-            &config.settings,
+            &settings,
             self.events.clone(),
         ) {
             Ok(client) => {
@@ -394,16 +396,54 @@ pub fn exit_message(server: &str, reason: Option<&str>) -> String {
     format!("{server} language server stopped: {reason}")
 }
 
+/// Returns the settings to start the server `name` with, filling in what it cannot run without.
+///
+/// The Vue server needs to know where TypeScript is, so the project's copy is used unless the
+/// config already says.
+fn server_settings(name: &str, settings: &Value, root: &Path) -> Value {
+    if name != "vue" || !settings["typescript"]["tsdk"].is_null() {
+        return settings.clone();
+    }
+    let tsdk = root.join("node_modules").join("typescript").join("lib");
+    if !tsdk.is_dir() {
+        return settings.clone();
+    }
+    let mut settings = if settings.is_object() {
+        settings.clone()
+    } else {
+        json!({})
+    };
+    settings["typescript"] = json!({ "tsdk": tsdk.to_string_lossy() });
+    settings
+}
+
 #[cfg(test)]
 /// Tests for language server helpers.
 mod tests {
-    use std::path::PathBuf;
+    use std::{env, fs, path::PathBuf, process};
 
     use mog_config::{Config, ServerConfig};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use tokio::sync::mpsc;
 
-    use super::{LanguageServers, exit_message};
+    use super::{LanguageServers, exit_message, server_settings};
+
+    /// The Vue server is pointed at the project's TypeScript, other servers are left alone.
+    #[test]
+    fn vue_gets_typescript() {
+        let root = env::temp_dir().join(format!("mog-vue-{}", process::id()));
+        let tsdk = root.join("node_modules").join("typescript").join("lib");
+        fs::create_dir_all(&tsdk).expect("temp dir");
+        let settings = server_settings("vue", &Value::Null, &root);
+        assert_eq!(
+            settings["typescript"]["tsdk"],
+            json!(tsdk.to_string_lossy())
+        );
+        let given = json!({ "typescript": { "tsdk": "/mine" } });
+        assert_eq!(server_settings("vue", &given, &root), given);
+        assert_eq!(server_settings("rust", &Value::Null, &root), Value::Null);
+        let _ = fs::remove_dir_all(&root);
+    }
 
     /// Changing a server's settings makes it start over, other servers are left alone.
     #[test]

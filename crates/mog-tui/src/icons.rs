@@ -43,6 +43,7 @@ const BY_EXTENSION: &[(&str, Color)] = &[
     ("xml", Color::Rgb(230, 140, 60)),
     ("svg", Color::Rgb(255, 180, 50)),
     ("dart", Color::Rgb(60, 180, 230)),
+    ("vue", Color::Rgb(65, 184, 131)),
 ];
 
 /// The marker drawn before file names.

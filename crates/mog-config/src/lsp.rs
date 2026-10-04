@@ -67,6 +67,7 @@ const BUILTIN_SERVERS: &[(&str, &str, &[&str], &[&str])] = &[
     ),
     ("toml", "taplo", &["lsp", "stdio"], &["toml"]),
     ("markdown", "marksman", &[], &["md"]),
+    ("vue", "vue-language-server", &["--stdio"], &["vue"]),
 ];
 
 /// Built in servers whose language id differs from their name.

@@ -126,6 +126,7 @@ mog starts a server when you open a file it handles, if the program is on your `
 | `yaml` | `yaml-language-server --stdio` | `yml` `yaml` |
 | `toml` | `taplo lsp stdio` | `toml` |
 | `markdown` | `marksman` | `md` |
+| `vue` | `vue-language-server --stdio` | `vue` |
 
 Add more or change these under [`[lsp]`](#lsp) in the config.
 

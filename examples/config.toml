@@ -36,7 +36,7 @@ enabled = true
 disabled = []
 
 # built in servers: rust, python, typescript, go, c, lua, zig, java, csharp, kotlin, swift,
-# ruby, php, scala, haskell, ocaml, elixir, dart, bash, html, css, json, yaml, toml, markdown
+# ruby, php, scala, haskell, ocaml, elixir, dart, bash, html, css, json, yaml, toml, markdown, vue
 # settings go to the server itself, for example
 # [lsp.rust.settings]
 # check.command = "clippy"
