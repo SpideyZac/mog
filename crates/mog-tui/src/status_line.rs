@@ -7,6 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Widget,
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, Layer},
@@ -47,22 +48,6 @@ impl Layer for StatusLine {
             Span::raw(format!(" {}{modified} ", document.name())),
         ];
         let mut right = Vec::new();
-        for segment in &cx.ui.segments {
-            let side = match segment.side {
-                Side::Left => &mut left,
-                Side::Right => &mut right,
-            };
-            for (text, style) in &segment.parts {
-                side.push(Span::styled(text.clone(), *style));
-            }
-            side.push(Span::raw(" "));
-        }
-        left.push(Span::styled(
-            cx.editor.status().unwrap_or_default().to_owned(),
-            theme.status_message,
-        ));
-        Line::from(left).render(area, buf);
-
         let count = |severity| {
             document
                 .diagnostics()
@@ -86,6 +71,41 @@ impl Layer for StatusLine {
             ));
         }
         right.push(Span::raw(format!("Ln {line}, Col {col} ")));
+
+        // flair only gets the room left after the essentials and the status message
+        let width = |spans: &[Span<'_>]| spans.iter().map(Span::width).sum::<usize>();
+        let message = cx.editor.status().unwrap_or_default();
+        let essentials = width(&left) + width(&right);
+        let total = usize::from(area.width);
+        let mut room = total
+            .saturating_sub(essentials)
+            .saturating_sub(message.width().min(total / 2) + 1);
+        let mut flair_left = Vec::new();
+        let mut flair_right = Vec::new();
+        for segment in &cx.ui.segments {
+            let spans: Vec<Span<'_>> = segment
+                .parts
+                .iter()
+                .map(|(text, style)| Span::styled(text.clone(), *style))
+                .chain([Span::raw(" ")])
+                .collect();
+            let needed = width(&spans);
+            if needed > room {
+                continue;
+            }
+            room -= needed;
+            match segment.side {
+                Side::Left => flair_left.extend(spans),
+                Side::Right => flair_right.extend(spans),
+            }
+        }
+        left.extend(flair_left);
+        flair_right.extend(right);
+        let right = flair_right;
+        let message_room = total.saturating_sub(width(&left) + width(&right) + 1);
+        let message: String = message.chars().take(message_room).collect();
+        left.push(Span::styled(message, theme.status_message));
+        Line::from(left).render(area, buf);
         Line::from(right).right_aligned().render(area, buf);
     }
 }
