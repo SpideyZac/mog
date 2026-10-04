@@ -955,10 +955,10 @@ impl App {
             LspEvent::Message { server, text } => {
                 self.editor.set_status(format!("{server}: {text}"));
             }
-            LspEvent::Exited { server } => {
+            LspEvent::Exited { server, reason } => {
                 self.lsp.exited(&server);
                 self.editor
-                    .set_status(format!("{server} language server stopped"));
+                    .set_status(lsp::exit_message(&server, reason.as_deref()));
             }
         }
     }

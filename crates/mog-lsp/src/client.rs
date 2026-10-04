@@ -18,7 +18,7 @@ use lsp_types::{
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::{
-    io::{AsyncRead, AsyncWrite, BufReader, BufWriter},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader, BufWriter},
     process::Command,
     sync::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -38,6 +38,9 @@ const INITIALIZE_ID: u64 = 0;
 
 /// How long a server gets to exit after shutdown before it is killed.
 const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How many of the last stderr lines are kept to explain why a server stopped.
+const STDERR_LINES: usize = 3;
 
 /// Something a language server did that the editor may care about.
 #[derive(Debug, Clone)]
@@ -65,6 +68,8 @@ pub enum LspEvent {
     Exited {
         /// The name of the server.
         server: String,
+        /// The last lines the server wrote to stderr, which usually say why.
+        reason: Option<String>,
     },
 }
 
@@ -134,13 +139,34 @@ impl Client {
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+        let (Some(stdin), Some(stdout), Some(stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
             return Err(io::Error::other("language server has no stdio"));
         };
-        let (client, connection) = Self::connect(name, stdout, stdin, root, events);
+        let stderr = tokio::spawn(last_lines(stderr));
+        let (inner, mut forwarded) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut stderr = Some(stderr);
+            while let Some(mut event) = forwarded.recv().await {
+                if let (LspEvent::Exited { reason, .. }, Some(lines)) = (&mut event, stderr.take())
+                {
+                    // the pipe closes when the process dies so this is quick
+                    *reason = time::timeout(EXIT_TIMEOUT, lines)
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .filter(|text| !text.is_empty());
+                }
+                if events.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+        let (client, connection) = Self::connect(name, stdout, stdin, root, inner);
         tokio::spawn(async move {
             let _ = connection.await;
             // a server that ignores shutdown gets killed when the child is dropped
@@ -236,6 +262,23 @@ impl Client {
             }),
         );
     }
+}
+
+/// Reads `stderr` to the end and returns its last few non empty lines joined with spaces.
+async fn last_lines(stderr: impl AsyncRead + Unpin) -> String {
+    let mut lines = BufReader::new(stderr).lines();
+    let mut kept = Vec::new();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if kept.len() == STDERR_LINES {
+            kept.remove(0);
+        }
+        kept.push(line.to_owned());
+    }
+    kept.join(" ")
 }
 
 /// Builds the initialize request arguments for a project at `root`.
@@ -362,6 +405,7 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
         }
         let _ = self.events.send(LspEvent::Exited {
             server: self.name.clone(),
+            reason: None,
         });
     }
 

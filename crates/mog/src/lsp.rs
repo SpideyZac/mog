@@ -324,3 +324,33 @@ pub fn line_preview(editor: &Editor, path: &Path, line: usize) -> String {
         .and_then(|text| text.lines().nth(line).map(str::to_owned))
         .unwrap_or_default()
 }
+
+/// Returns the status message for a server called `server` that stopped, saying why if it can.
+pub fn exit_message(server: &str, reason: Option<&str>) -> String {
+    let Some(reason) = reason else {
+        return format!("{server} language server stopped");
+    };
+    // rustup installs a proxy for rust-analyzer even when the component is missing
+    if reason.contains("Unknown binary") && reason.contains("rust-analyzer") {
+        return "rust-analyzer is not installed, run: rustup component add rust-analyzer".into();
+    }
+    format!("{server} language server stopped: {reason}")
+}
+
+#[cfg(test)]
+/// Tests for language server helpers.
+mod tests {
+    use super::exit_message;
+
+    /// A missing rustup component gets a hint on how to install it.
+    #[test]
+    fn exit_message_hints_at_rustup() {
+        assert_eq!(exit_message("rust", None), "rust language server stopped");
+        let reason = "error: Unknown binary 'rust-analyzer.exe' in official toolchain";
+        assert!(exit_message("rust", Some(reason)).ends_with("rustup component add rust-analyzer"));
+        assert_eq!(
+            exit_message("go", Some("boom")),
+            "go language server stopped: boom"
+        );
+    }
+}
