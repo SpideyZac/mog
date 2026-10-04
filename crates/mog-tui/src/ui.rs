@@ -12,8 +12,8 @@ use ratatui::{
 
 use crate::{
     annotate::AnnotateState, chat::ChatState, completion::CompletionState, ghost::Ghost,
-    menu::MenuState, search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
-    theme_editor::ThemeDraft,
+    menu::MenuState, release_notes::ReleaseNotes, search::SearchState, settings::SettingKey,
+    status_line::STATUS_HEIGHT, theme_editor::ThemeDraft,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -97,6 +97,8 @@ pub enum Overlay {
     References,
     /// The theme editor.
     ThemeEditor,
+    /// The notes of a mog release.
+    ReleaseNotes,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -313,6 +315,8 @@ pub struct Ui {
     pub explorer_footer: u16,
     /// The column just past the last tab, where the free part of the tab bar starts.
     pub tabs_end: u16,
+    /// The release notes the release notes popup shows.
+    pub release_notes: Option<ReleaseNotes>,
 }
 
 impl Ui {
