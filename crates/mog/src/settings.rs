@@ -2,6 +2,7 @@
 
 use mog_config::Config;
 use mog_core::{Command, KeyChord, Keymap, Options};
+use mog_flair::{FlairLayer, builtin};
 
 /// Builds the editing options from `config`.
 pub fn options(config: &Config) -> Options {
@@ -35,4 +36,17 @@ pub fn keymap(config: &Config) -> (Keymap, Vec<String>) {
         }
     }
     (keymap, problems)
+}
+
+/// Builds the flair layer with every built in flair, minus the ones `config` turns off.
+pub fn flair_layer(config: &Config) -> FlairLayer {
+    let mut layer = FlairLayer::new();
+    for flair in builtin::all() {
+        layer.register(flair);
+    }
+    layer.set_hidden(!config.flair.enabled);
+    for id in &config.flair.disabled {
+        layer.disable(id.clone());
+    }
+    layer
 }

@@ -7,7 +7,6 @@ use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
 use mog_config::Config;
 use mog_core::{Command, Editor, Keymap, Outcome};
-use mog_flair::{FlairLayer, builtin};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 use ratatui::layout::Rect;
 use tokio::time::{self, MissedTickBehavior};
@@ -39,14 +38,6 @@ pub struct App {
 impl App {
     /// Creates a new app, opening the file named in `args` if there is one.
     pub fn new(args: Args) -> Self {
-        let mut compositor = Compositor::new();
-        compositor.push(Box::new(EditorView::new()));
-        let mut flair = FlairLayer::new();
-        for item in builtin::all() {
-            flair.register(item);
-        }
-        compositor.push(Box::new(flair));
-        compositor.push(Box::new(StatusLine::new()));
         let mut problems = Vec::new();
         let config = Config::load().unwrap_or_else(|err| {
             problems.push(err.to_string());
@@ -54,6 +45,11 @@ impl App {
         });
         let (keymap, key_problems) = settings::keymap(&config);
         problems.extend(key_problems);
+
+        let mut compositor = Compositor::new();
+        compositor.push(Box::new(EditorView::new()));
+        compositor.push(Box::new(settings::flair_layer(&config)));
+        compositor.push(Box::new(StatusLine::new()));
 
         let mut editor = Editor::new(clipboard::open());
         editor.set_options(settings::options(&config));
