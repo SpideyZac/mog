@@ -1,14 +1,23 @@
 //! The layer that shows the focused document.
 
-use mog_core::{movement, view};
+use std::time::{Duration, Instant};
+
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use mog_core::{Command, movement, view};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 
-use crate::compositor::{Context, Layer};
+use crate::compositor::{Context, EventResult, Layer};
 use crate::status_line::STATUS_HEIGHT;
 
 /// Blank cells between the line numbers and the text.
 const GUTTER_PADDING: usize = 2;
+
+/// The longest gap between clicks that still counts as a double or triple click.
+const MULTI_CLICK_TIME: Duration = Duration::from_millis(400);
+
+/// How many lines one wheel notch scrolls.
+const WHEEL_LINES: isize = 3;
 
 /// Converts a cell count to a terminal coordinate, saturating on overflow.
 fn cells(n: usize) -> u16 {
@@ -20,12 +29,25 @@ fn cells(n: usize) -> u16 {
 pub struct EditorView {
     /// The gutter width used in the last render, needed to map mouse clicks to text.
     gutter_width: u16,
+    /// The time, cell and count of the last left click, used to detect multi clicks.
+    last_click: Option<(Instant, Position, u8)>,
 }
 
 impl EditorView {
     /// Creates the editor view.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Records a left click at `at` and returns whether it is a single, double or triple click.
+    fn click_count(&mut self, at: Position) -> u8 {
+        let now = Instant::now();
+        let count = match self.last_click {
+            Some((time, pos, count)) if pos == at && now - time < MULTI_CLICK_TIME => count % 3 + 1,
+            _ => 1,
+        };
+        self.last_click = Some((now, at, count));
+        count
     }
 
     /// Returns the width of the line number gutter for a document with `lines` lines.
@@ -130,6 +152,48 @@ impl Layer for EditorView {
                 buf.set_style(Rect::new(x, y, 1, 1), theme.selection);
             }
         }
+    }
+
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect, cx: &mut Context<'_>) -> EventResult {
+        let text_x = area.x + self.gutter_width;
+        let in_gutter = event.column < text_x;
+        let col = usize::from(event.column.saturating_sub(text_x));
+        let row = usize::from(event.row.saturating_sub(area.y));
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let count = self.click_count(Position::new(event.column, event.row));
+                if in_gutter || count == 3 {
+                    cx.editor.select_line_at(row);
+                } else if count == 2 {
+                    cx.editor.select_word_at(row, col);
+                } else {
+                    let extend = event.modifiers.contains(KeyModifiers::SHIFT);
+                    cx.editor.click(row, col, extend);
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                // dragging past the edges scrolls so long selections are possible
+                let row = if event.row < area.y {
+                    cx.editor.execute(Command::Scroll(-1));
+                    0
+                } else if event.row >= area.bottom() {
+                    cx.editor.execute(Command::Scroll(1));
+                    usize::from(area.height.saturating_sub(1))
+                } else {
+                    row
+                };
+                cx.editor.click(row, col, true);
+            }
+            MouseEventKind::ScrollUp => {
+                cx.editor.execute(Command::Scroll(-WHEEL_LINES));
+            }
+            MouseEventKind::ScrollDown => {
+                cx.editor.execute(Command::Scroll(WHEEL_LINES));
+            }
+            MouseEventKind::Up(MouseButton::Left) => {}
+            _ => return EventResult::Ignored,
+        }
+        EventResult::Consumed
     }
 
     fn cursor(&self, area: Rect, cx: &Context<'_>) -> Option<Position> {
