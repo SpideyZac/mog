@@ -3,6 +3,7 @@
 mod app;
 mod cli;
 mod clipboard;
+mod settings;
 mod terminal;
 
 use anyhow::Result;

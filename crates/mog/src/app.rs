@@ -3,12 +3,14 @@
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
+use mog_config::Config;
 use mog_core::{Command, Editor, Keymap, Outcome};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 use ratatui::layout::Rect;
 
 use crate::cli::Args;
 use crate::clipboard;
+use crate::settings;
 use crate::terminal::Tui;
 
 /// The running editor.
@@ -33,7 +35,19 @@ impl App {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         compositor.push(Box::new(StatusLine::new()));
+        let mut problems = Vec::new();
+        let config = Config::load().unwrap_or_else(|err| {
+            problems.push(err.to_string());
+            Config::default()
+        });
+        let (keymap, key_problems) = settings::keymap(&config);
+        problems.extend(key_problems);
+
         let mut editor = Editor::new(clipboard::open());
+        editor.set_options(settings::options(&config));
+        if !problems.is_empty() {
+            editor.set_status(problems.join("; "));
+        }
         if let Some(path) = args.file
             && let Err(err) = editor.open(&path)
         {
@@ -41,7 +55,7 @@ impl App {
         }
         Self {
             editor,
-            keymap: Keymap::default(),
+            keymap,
             compositor,
             theme: Theme::default(),
             screen: Rect::default(),
