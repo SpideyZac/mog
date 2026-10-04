@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 crossterm.workspace = true
+mog-audio.workspace = true
 mog-core.workspace = true
 mog-tui.workspace = true
 ratatui.workspace = true

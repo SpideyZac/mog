@@ -10,6 +10,7 @@ pub mod quips;
 pub mod screensaver;
 pub mod session;
 pub mod sparks;
+pub mod spectrum;
 pub mod splash;
 
 pub use ai_meter::AiMeter;
@@ -22,6 +23,7 @@ pub use quips::Quips;
 pub use screensaver::Screensaver;
 pub use session::Session;
 pub use sparks::Sparks;
+pub use spectrum::Spectrum;
 pub use splash::Splash;
 
 use crate::flair::Flair;
@@ -39,6 +41,7 @@ pub fn all() -> Vec<Box<dyn Flair>> {
         Box::new(Badge::new()),
         Box::new(Sparks::new()),
         Box::new(Combo::new()),
+        Box::new(Spectrum::new()),
         Box::new(Screensaver::new()),
     ]
 }
