@@ -14,6 +14,7 @@ pub mod history;
 pub mod keymap;
 pub mod movement;
 pub mod range;
+pub mod search;
 pub mod transaction;
 pub mod view;
 

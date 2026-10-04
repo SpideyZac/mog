@@ -10,7 +10,7 @@ use crate::{
     document::Document,
     movement,
     range::Range,
-    transaction::Transaction,
+    transaction::{Change, Transaction},
     view::{self, View},
 };
 
@@ -295,6 +295,36 @@ impl Editor {
             }
         }
         Outcome::Done
+    }
+
+    /// Selects `from..to` with the cursor at `to` and scrolls it into view.
+    pub fn select(&mut self, from: usize, to: usize) {
+        self.document_mut().set_selection(Range::new(from, to));
+        self.views[self.active].preferred_col = None;
+        self.typing_at = None;
+        self.reveal_cursor();
+    }
+
+    /// Replaces every range in `ranges` with `text` as one undo step.
+    ///
+    /// Ranges must not overlap. The cursor ends after the first replacement.
+    pub fn replace_ranges(&mut self, ranges: &[(usize, usize)], text: &str) {
+        let Some(&(first, _)) = ranges.first() else {
+            return;
+        };
+        let changes = ranges
+            .iter()
+            .map(|&(start, end)| Change {
+                start,
+                end,
+                text: text.to_owned(),
+            })
+            .collect();
+        let after = Range::point(first + text.chars().count());
+        self.document_mut()
+            .apply(Transaction::new(changes), after, false);
+        self.typing_at = None;
+        self.reveal_cursor();
     }
 
     /// Places the cursor at a cell of the view, extending the selection if `extend` is set.
@@ -583,6 +613,16 @@ mod tests {
         editor.execute(Command::InsertChar('x'));
         assert_eq!(editor.execute(Command::Quit), Outcome::Done);
         assert_eq!(editor.execute(Command::Quit), Outcome::Quit);
+    }
+
+    /// Replacing several ranges is one undo step.
+    #[test]
+    fn replace_ranges_is_one_step() {
+        let mut editor = editor_with("a b a", 0);
+        editor.replace_ranges(&[(0, 1), (4, 5)], "xy");
+        assert_eq!(text(&editor), "xy b xy");
+        editor.execute(Command::Undo);
+        assert_eq!(text(&editor), "a b a");
     }
 
     /// Mouse helpers select words and lines.
