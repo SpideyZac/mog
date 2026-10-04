@@ -16,6 +16,7 @@ use crate::{
     icons,
     picker::{Picker, PickerAction, PickerItem},
     popup,
+    theme::Theme,
     ui::{Focus, Layout, Overlay, PromptKind, Ui},
 };
 
@@ -30,6 +31,9 @@ const PICKER_HEIGHT: u16 = 22;
 
 /// The width of text prompts.
 const PROMPT_WIDTH: u16 = 64;
+
+/// What the rebind popup says under the title.
+const REBIND_HINT: &str = "esc cancels, backspace removes the binding";
 
 /// Returns `path` relative to `root` with `/` separators, or the whole path if it is outside.
 fn display_path(path: &Path, root: &Path) -> String {
@@ -58,6 +62,10 @@ pub struct Popups {
     area: Rect,
     /// Where the text cursor goes.
     cursor: Option<Position>,
+    /// The command whose new chord is being recorded, as `(name, title)`.
+    capturing: Option<(String, String)>,
+    /// Why the last recorded chord was refused.
+    capture_problem: Option<String>,
 }
 
 impl Popups {
@@ -97,11 +105,28 @@ impl Popups {
                     .collect()
             }
             Some(Overlay::Keys) => {
-                self.commands = ui.bindings.iter().map(|(_, name)| name.clone()).collect();
-                ui.bindings
+                // every palette command plus anything else that has a key, like moving around
+                let mut rows: Vec<(String, String, Vec<String>)> = ui
+                    .commands
                     .iter()
-                    .map(|(chord, name)| {
-                        PickerItem::new(ui.title_of(name)).detail(name).hint(chord)
+                    .map(|info| (info.name.clone(), info.title.clone(), info.keys.clone()))
+                    .collect();
+                for (chord, name) in &ui.bindings {
+                    match rows.iter_mut().find(|(other, _, _)| other == name) {
+                        Some((_, _, keys)) if !keys.contains(chord) => keys.push(chord.clone()),
+                        Some(_) => {}
+                        None => rows.push((name.clone(), name.clone(), vec![chord.clone()])),
+                    }
+                }
+                self.commands = rows.iter().map(|(name, _, _)| name.clone()).collect();
+                rows.into_iter()
+                    .map(|(name, title, keys)| {
+                        let hint = if keys.is_empty() {
+                            "unbound".to_owned()
+                        } else {
+                            keys.join("  ")
+                        };
+                        PickerItem::new(title).detail(name).hint(hint)
                     })
                     .collect()
             }
@@ -202,9 +227,17 @@ impl Popups {
     /// Acts on the picked row `index` of the open popup.
     fn accept(&mut self, index: usize, cx: &mut Context<'_>) {
         let overlay = cx.ui.overlay;
+        if overlay == Some(Overlay::Keys) {
+            if let Some(name) = self.commands.get(index) {
+                let title = cx.ui.title_of(name).to_owned();
+                self.capturing = Some((name.clone(), title));
+                self.capture_problem = None;
+            }
+            return;
+        }
         cx.ui.close();
         match overlay {
-            Some(Overlay::Palette | Overlay::Keys) => {
+            Some(Overlay::Palette) => {
                 let Some(name) = self.commands.get(index) else {
                     return;
                 };
@@ -250,6 +283,51 @@ impl Popups {
         }
     }
 
+    /// Records `chord` as the new binding for the command being rebound.
+    fn capture_key(&mut self, chord: KeyChord, cx: &mut Context<'_>) {
+        let Some((name, _)) = self.capturing.clone() else {
+            return;
+        };
+        let no_mods = !chord.mods.ctrl && !chord.mods.alt && !chord.mods.shift;
+        let new = match chord.key {
+            Key::Esc if no_mods => None,
+            Key::Backspace if no_mods => Some(None),
+            // a plain letter would stop that letter from typing
+            _ if chord.typed_char().is_some() => {
+                self.capture_problem = Some(format!("{chord} types text, add ctrl or alt"));
+                return;
+            }
+            _ => Some(Some(chord.to_string())),
+        };
+        self.capturing = None;
+        if let Some(chord) = new {
+            cx.ui.rebind = Some((name, chord));
+            cx.ui.request(Command::Custom("keys.rebind".into()));
+        }
+    }
+
+    /// Draws the box asking for a new chord over the key list.
+    fn render_capture(&self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+        let Some((_, title)) = &self.capturing else {
+            return;
+        };
+        let rect = popup::centered(area, PROMPT_WIDTH, 5);
+        let inner = popup::frame(rect, buf, theme, &format!("\u{2328} rebind {title}"));
+        let width = usize::from(inner.width.saturating_sub(2));
+        buf.set_stringn(
+            inner.x + 1,
+            inner.y,
+            "press the new keys now",
+            width,
+            theme.popup_title,
+        );
+        let (text, style) = match &self.capture_problem {
+            Some(problem) => (problem.as_str(), theme.warning),
+            None => (REBIND_HINT, theme.popup_dim),
+        };
+        buf.set_stringn(inner.x + 1, inner.y + 2, text, width, style);
+    }
+
     /// Handles a key in a text prompt.
     fn prompt_key(chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
         let Some(prompt) = cx.ui.prompt.as_mut() else {
@@ -291,13 +369,17 @@ impl Layer for Popups {
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
         if self.generation != cx.ui.overlay_generation {
             self.generation = cx.ui.overlay_generation;
+            self.capturing = None;
             self.fill(cx);
         }
         let theme = cx.theme;
         let (title, placeholder) = match cx.ui.overlay {
             Some(Overlay::Palette) => ("\u{2318} command palette", "type a command..."),
             Some(Overlay::Finder) => ("\u{2315} find a file", "type part of a file name..."),
-            Some(Overlay::Keys) => ("\u{2328} key bindings", "search keys or commands..."),
+            Some(Overlay::Keys) => (
+                "\u{2328} key bindings, enter to change",
+                "search keys or commands...",
+            ),
             Some(Overlay::Problems) => ("\u{26a0} problems", "search problems..."),
             Some(Overlay::References) => ("\u{21c4} references", "search references..."),
             _ => ("", ""),
@@ -338,6 +420,10 @@ impl Layer for Popups {
         };
         self.picker.render(padded, buf, theme, placeholder);
         self.cursor = self.picker.cursor();
+        if self.capturing.is_some() {
+            self.render_capture(area, buf, theme);
+            self.cursor = None;
+        }
     }
 
     fn handle_key(&mut self, chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
@@ -346,6 +432,10 @@ impl Layer for Popups {
         }
         if cx.ui.overlay == Some(Overlay::Prompt) {
             return Self::prompt_key(chord, cx);
+        }
+        if self.capturing.is_some() {
+            self.capture_key(chord, cx);
+            return EventResult::Consumed;
         }
         match self.picker.handle_key(chord) {
             PickerAction::Accept(index) => self.accept(index, cx),
@@ -362,6 +452,12 @@ impl Layer for Popups {
         _area: Rect,
         cx: &mut Context<'_>,
     ) -> EventResult {
+        if self.capturing.is_some() {
+            if matches!(event.kind, MouseEventKind::Down(_)) {
+                self.capturing = None;
+            }
+            return EventResult::Consumed;
+        }
         let inside = self.area.contains(Position::new(event.column, event.row));
         if !inside {
             if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -437,5 +533,54 @@ mod tests {
         }
         assert_eq!(ui.requests, [Command::Undo]);
         assert_eq!(ui.overlay, None);
+    }
+
+    /// Enter in the key list records the next chord as the new binding.
+    #[test]
+    fn key_list_rebinds() {
+        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        let theme = Theme::default();
+        let mut ui = Ui {
+            commands: vec![CommandInfo {
+                name: "save".into(),
+                title: "File: Save".into(),
+                keys: vec!["ctrl+s".into()],
+            }],
+            ..Ui::default()
+        };
+        ui.open(Overlay::Keys);
+        let mut compositor = Compositor::new();
+        compositor.push(Box::new(Popups::new()));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                let mut cx = Context {
+                    editor: &mut editor,
+                    theme: &theme,
+                    ui: &mut ui,
+                };
+                compositor.render(frame, &mut cx);
+            })
+            .expect("draw");
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::default()
+        };
+        let presses = [
+            KeyChord::new(Key::Enter, Modifiers::default()),
+            KeyChord::new(Key::Char('x'), Modifiers::default()),
+            KeyChord::new(Key::Char('w'), alt),
+        ];
+        for chord in presses {
+            let mut cx = Context {
+                editor: &mut editor,
+                theme: &theme,
+                ui: &mut ui,
+            };
+            compositor.handle_key(chord, &mut cx);
+        }
+        // the plain x is refused since it types text
+        assert_eq!(ui.rebind, Some(("save".into(), Some("alt+w".into()))));
+        assert_eq!(ui.requests, [Command::Custom("keys.rebind".into())]);
     }
 }

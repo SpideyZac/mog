@@ -17,7 +17,7 @@ use futures::{StreamExt, future};
 use lsp_types::Range as LspRange;
 use mog_ai::CompletionRequest;
 use mog_audio::{Audio, Mood, Sfx};
-use mog_config::{Config, save_setting};
+use mog_config::{Config, SettingValue, save_setting};
 use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
     movement,
@@ -548,6 +548,71 @@ impl App {
         settings_change(&mut self.ui.config, &key, 1);
         self.ui.setting_changes.push(key);
         self.apply_setting_changes();
+    }
+
+    /// Applies the key binding change the key list asked for and saves it to the config.
+    ///
+    /// The new chord replaces every chord the command had, and takes the chord away from
+    /// whatever used it before.
+    fn apply_rebind(&mut self) {
+        let Some((name, chord)) = self.ui.rebind.take() else {
+            return;
+        };
+        let Ok(command) = name.parse::<Command>() else {
+            return;
+        };
+        let chord = match chord.map(|chord| chord.parse::<KeyChord>()).transpose() {
+            Ok(chord) => chord,
+            Err(err) => {
+                self.editor.set_status(err.to_string());
+                return;
+            }
+        };
+        let mut changes: Vec<(String, String)> = self
+            .keymap
+            .chords_for(&command)
+            .into_iter()
+            .filter(|old| Some(*old) != chord)
+            .map(|old| (old.to_string(), String::new()))
+            .collect();
+        let title = self.ui.title_of(&name).to_owned();
+        let message = match chord {
+            Some(chord) => {
+                changes.push((chord.to_string(), name.clone()));
+                let taken = self
+                    .keymap
+                    .resolve(&chord)
+                    .filter(|other| *other != command && chord.typed_char().is_none());
+                match taken {
+                    Some(other) => format!(
+                        "{chord} now runs {title}, it was {}",
+                        self.ui.title_of(&other.to_string())
+                    ),
+                    None => format!("{chord} now runs {title}"),
+                }
+            }
+            None => format!("{title} has no keys now"),
+        };
+        for (chord, command) in changes {
+            if let Err(err) = save_setting(&["keys", &chord], &SettingValue::Text(command.clone()))
+            {
+                self.editor
+                    .set_status(format!("could not save the binding: {err}"));
+                return;
+            }
+            self.ui.config.keys.insert(chord, command);
+        }
+        let (keymap, problems) = settings::keymap(&self.ui.config);
+        self.keymap = keymap;
+        self.ui.commands = commands::palette(&self.keymap);
+        self.ui.bindings = commands::bindings(&self.keymap);
+        // reopening refills the list with the new keys
+        self.ui.open(Overlay::Keys);
+        self.editor.set_status(if problems.is_empty() {
+            message
+        } else {
+            problems.join("; ")
+        });
     }
 
     /// Saves and applies settings changed in the settings menu.
@@ -1192,6 +1257,7 @@ impl App {
                 }
             }
             "help.keys" => self.ui.open(Overlay::Keys),
+            "keys.rebind" => self.apply_rebind(),
             "goto.prompt" => {
                 let lines = self.editor.document().text().len_lines();
                 self.ui.ask(
