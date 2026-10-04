@@ -10,6 +10,9 @@ use clap::Parser;
 pub struct Args {
     /// The file or folder to open. A folder is shown in the file explorer.
     pub path: Option<PathBuf>,
+    /// Prints every key binding and exits.
+    #[arg(long)]
+    pub keys: bool,
     /// Renders one frame of the given size, like `120x40`, as text and exits. For debugging.
     #[arg(long, hide = true, value_name = "WxH")]
     pub snapshot: Option<String>,

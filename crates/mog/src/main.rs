@@ -4,6 +4,7 @@ mod ai;
 mod app;
 mod cli;
 mod clipboard;
+mod commands;
 mod git;
 mod lsp;
 mod settings;
@@ -14,6 +15,7 @@ use anyhow::Result;
 use app::App;
 use clap::Parser;
 use cli::Args;
+use mog_config::Config;
 
 /// Runs the editor.
 ///
@@ -23,6 +25,12 @@ use cli::Args;
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if args.keys {
+        let config = Config::load().unwrap_or_default();
+        let (keymap, _) = settings::keymap(&config);
+        println!("{}", commands::key_table(&keymap));
+        return Ok(());
+    }
     if let Some(size) = args.snapshot.clone() {
         let text = App::new(args).snapshot(&size).await?;
         println!("{text}");

@@ -51,8 +51,12 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl+v", "paste"),
     ("ctrl+s", "save"),
     ("ctrl+q", "quit"),
-    ("ctrl+p", "command_palette"),
+    ("ctrl+p", "finder.files"),
     ("ctrl+shift+p", "command_palette"),
+    ("alt+p", "command_palette"),
+    ("f1", "command_palette"),
+    ("ctrl+k", "help.keys"),
+    ("ctrl+g", "goto.prompt"),
     ("ctrl+pagedown", "next_tab"),
     ("ctrl+pageup", "prev_tab"),
     ("alt+right", "next_tab"),
@@ -369,7 +373,7 @@ mod tests {
         let keymap = Keymap::default();
         let plain = KeyChord::new(Key::Char('m'), Modifiers::default());
         assert_eq!(keymap.resolve(&plain), Some(Command::InsertChar('m')));
-        let ctrl = "ctrl+k".parse().expect("valid chord");
+        let ctrl = "ctrl+alt+f12".parse().expect("valid chord");
         assert_eq!(keymap.resolve(&ctrl), None);
         let save = "ctrl+s".parse().expect("valid chord");
         assert_eq!(keymap.resolve(&save), Some(Command::Save));

@@ -1,0 +1,126 @@
+//! The commands the palette offers and their titles.
+
+use mog_core::{Command, Keymap};
+use mog_tui::CommandInfo;
+
+/// Every command in the palette as `(name, title)`, grouped by what they act on.
+pub const CATALOG: &[(&str, &str)] = &[
+    ("save", "File: Save"),
+    ("finder.files", "File: Find a file"),
+    ("close_tab", "File: Close tab"),
+    ("next_tab", "File: Next tab"),
+    ("prev_tab", "File: Previous tab"),
+    ("quit", "File: Quit mog"),
+    ("undo", "Edit: Undo"),
+    ("redo", "Edit: Redo"),
+    ("copy", "Edit: Copy"),
+    ("cut", "Edit: Cut"),
+    ("paste", "Edit: Paste"),
+    ("select_all", "Edit: Select all"),
+    ("goto.prompt", "Go: Go to line"),
+    ("move_doc_start", "Go: Start of file"),
+    ("move_doc_end", "Go: End of file"),
+    ("explorer.toggle", "View: Toggle file explorer"),
+    ("explorer.focus", "View: Focus file explorer"),
+    ("command_palette", "Help: Command palette"),
+    ("help.keys", "Help: Key bindings"),
+    ("ai.explain", "AI: Explain the selection"),
+];
+
+/// Builds the palette entries with the chords bound to each command in `keymap`.
+pub fn palette(keymap: &Keymap) -> Vec<CommandInfo> {
+    CATALOG
+        .iter()
+        .map(|(name, title)| {
+            let keys = name
+                .parse::<Command>()
+                .map(|command| keymap.chords_for(&command))
+                .unwrap_or_default();
+            CommandInfo {
+                name: (*name).to_owned(),
+                title: (*title).to_owned(),
+                keys: keys.iter().map(ToString::to_string).collect(),
+            }
+        })
+        .collect()
+}
+
+/// Returns every binding in `keymap` as `(chord, command name)`, hiding plain cursor keys.
+pub fn bindings(keymap: &Keymap) -> Vec<(String, String)> {
+    keymap
+        .bindings()
+        .into_iter()
+        .map(|(chord, command)| (chord.to_string(), command.to_string()))
+        .collect()
+}
+
+/// Formats every binding as an aligned table for `mog --keys`.
+pub fn key_table(keymap: &Keymap) -> String {
+    let palette = palette(keymap);
+    let rows: Vec<(String, String, &str)> = bindings(keymap)
+        .into_iter()
+        .map(|(chord, name)| {
+            let title = palette
+                .iter()
+                .find(|info| info.name == name)
+                .map_or("", |info| info.title.as_str());
+            (chord, name, title)
+        })
+        .collect();
+    let chord_width = rows
+        .iter()
+        .map(|(chord, _, _)| chord.len())
+        .max()
+        .unwrap_or(0);
+    let name_width = rows
+        .iter()
+        .map(|(_, name, _)| name.len())
+        .max()
+        .unwrap_or(0);
+    rows.iter()
+        .map(|(chord, name, title)| {
+            format!("{chord:<chord_width$}  {name:<name_width$}  {title}")
+                .trim_end()
+                .to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+/// Tests for the command catalog.
+mod tests {
+    use mog_core::{Command, Keymap};
+
+    use super::{CATALOG, key_table, palette};
+
+    /// Every catalog entry is a valid command name.
+    #[test]
+    fn catalog_parses() {
+        for (name, _) in CATALOG {
+            assert!(name.parse::<Command>().is_ok(), "{name}");
+        }
+    }
+
+    /// Palette entries carry their key bindings.
+    #[test]
+    fn palette_has_keys() {
+        let entries = palette(&Keymap::default());
+        let save = entries
+            .iter()
+            .find(|info| info.name == "save")
+            .expect("save");
+        assert_eq!(save.keys, ["ctrl+s"]);
+    }
+
+    /// The key table has a row per binding with the command title.
+    #[test]
+    fn key_table_rows() {
+        let table = key_table(&Keymap::default());
+        assert!(
+            table
+                .lines()
+                .any(|line| line.starts_with("ctrl+s") && line.ends_with("File: Save"))
+        );
+    }
+}

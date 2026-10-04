@@ -12,8 +12,8 @@ use mog_config::Config;
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome};
 use mog_lsp::LspEvent;
 use mog_tui::{
-    Compositor, Context, EditorView, EventResult, Explorer, Focus, StatusLine, Tabs, Theme, Ui,
-    input,
+    Compositor, Context, EditorView, EventResult, Explorer, Focus, Overlay, Popups, StatusLine,
+    Tabs, Theme, Ui, input,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -24,7 +24,7 @@ use tokio::{
 use crate::{
     ai::Assistant,
     cli::Args,
-    clipboard,
+    clipboard, commands,
     git::{self, Git},
     lsp::{self, LanguageServers},
     settings,
@@ -111,6 +111,9 @@ impl App {
         );
 
         let mut ui = Ui::new(config.clone());
+        ui.commands = commands::palette(&keymap);
+        ui.bindings = commands::bindings(&keymap);
+        ui.root.clone_from(&root);
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         compositor.push(Box::new(Tabs::new()));
@@ -121,6 +124,7 @@ impl App {
         }
         compositor.push(Box::new(settings::flair_layer(&config)));
         compositor.push(Box::new(StatusLine::new()));
+        compositor.push(Box::new(Popups::new()));
 
         let mut editor = Editor::new(clipboard::open());
         editor.set_options(settings::options(&config));
@@ -359,6 +363,7 @@ impl App {
             Outcome::Done => {}
             Outcome::Quit => self.quit = true,
             Outcome::Unhandled(Command::Custom(name)) => self.execute_custom(&name),
+            Outcome::Unhandled(Command::CommandPalette) => self.ui.open(Overlay::Palette),
             Outcome::Unhandled(command) => {
                 self.editor
                     .set_status(format!("{command} is not available yet"));
@@ -393,6 +398,9 @@ impl App {
                     Focus::Editor
                 };
             }
+            "finder.files" => self.ui.open(Overlay::Finder),
+            "help.keys" => self.ui.open(Overlay::Keys),
+            "goto.prompt" => self.ui.open(Overlay::GotoLine),
             "explorer.focus" => {
                 if self.ui.has_explorer {
                     self.ui.explorer_open = true;
