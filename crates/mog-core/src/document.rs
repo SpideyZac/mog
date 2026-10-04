@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use ropey::Rope;
 
+use crate::diagnostic::Diagnostic;
 use crate::history::{History, Step};
 use crate::range::Range;
 use crate::transaction::Transaction;
@@ -66,6 +67,8 @@ pub struct Document {
     version: u64,
     /// The value of `version` when the document was last saved or loaded.
     saved_version: u64,
+    /// Problems reported about the text.
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Document {
@@ -162,6 +165,22 @@ impl Document {
     /// Returns `true` if there are changes that have not been saved.
     pub fn is_modified(&self) -> bool {
         self.version != self.saved_version
+    }
+
+    /// Returns a counter that changes whenever the text does.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Returns the current diagnostics, sorted by position.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    /// Replaces the diagnostics.
+    pub fn set_diagnostics(&mut self, mut diagnostics: Vec<Diagnostic>) {
+        diagnostics.sort_by_key(|diagnostic| (diagnostic.from, diagnostic.to));
+        self.diagnostics = diagnostics;
     }
 
     /// Applies `tx`, records it for undo and moves the selection to `after`.
