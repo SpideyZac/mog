@@ -67,8 +67,10 @@ pub fn fuzzy_match(query: &str, candidate: &str) -> Option<Match> {
         indexes.push(start);
         from = start + 1;
     }
-    // shorter candidates win ties
-    score -= i32::try_from(chars.len() / 8).unwrap_or(0);
+    // shorter candidates win ties, but an empty query keeps the given order
+    if !indexes.is_empty() {
+        score -= i32::try_from(chars.len() / 8).unwrap_or(0);
+    }
     Some(Match { score, indexes })
 }
 

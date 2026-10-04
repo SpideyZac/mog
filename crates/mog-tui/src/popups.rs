@@ -239,7 +239,12 @@ impl Layer for Popups {
         self.area = popup::centered(area, PICKER_WIDTH, PICKER_HEIGHT);
         popup::dim_around(area, self.area, buf, theme);
         let inner = popup::frame(self.area, buf, theme, title);
-        self.picker.render(inner, buf, theme, placeholder);
+        let padded = Rect {
+            x: inner.x + 1,
+            width: inner.width.saturating_sub(2),
+            ..inner
+        };
+        self.picker.render(padded, buf, theme, placeholder);
         self.cursor = self.picker.cursor();
     }
 
