@@ -98,6 +98,18 @@ pub enum Command {
     DeleteWordBackward,
     /// Selects the whole document.
     SelectAll,
+    /// Comments or uncomments the selected lines.
+    ToggleComment,
+    /// Copies the selected lines below themselves.
+    DuplicateLine,
+    /// Deletes the selected lines.
+    DeleteLine,
+    /// Swaps the selected lines with the line above.
+    MoveLineUp,
+    /// Swaps the selected lines with the line below.
+    MoveLineDown,
+    /// Removes one level of indentation from the selected lines.
+    Outdent,
     /// Reverts the last edit.
     Undo,
     /// Reapplies the last undone edit.
@@ -129,13 +141,19 @@ pub enum Command {
 }
 
 /// Commands without arguments paired with their names.
-const SIMPLE: [(Command, &str); 17] = [
+const SIMPLE: [(Command, &str); 23] = [
     (Command::InsertNewline, "insert_newline"),
     (Command::InsertTab, "insert_tab"),
     (Command::DeleteBackward, "delete_backward"),
     (Command::DeleteForward, "delete_forward"),
     (Command::DeleteWordBackward, "delete_word_backward"),
     (Command::SelectAll, "select_all"),
+    (Command::ToggleComment, "toggle_comment"),
+    (Command::DuplicateLine, "duplicate_line"),
+    (Command::DeleteLine, "delete_line"),
+    (Command::MoveLineUp, "move_line_up"),
+    (Command::MoveLineDown, "move_line_down"),
+    (Command::Outdent, "outdent"),
     (Command::Undo, "undo"),
     (Command::Redo, "redo"),
     (Command::Copy, "copy"),

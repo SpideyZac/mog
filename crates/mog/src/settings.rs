@@ -13,6 +13,7 @@ pub fn options(config: &Config) -> Options {
     Options {
         tab_width: config.editor.tab_width.max(1),
         insert_spaces: config.editor.insert_spaces,
+        auto_close: config.editor.auto_close_brackets,
     }
 }
 

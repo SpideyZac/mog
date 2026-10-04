@@ -8,11 +8,22 @@ use crate::{
     clipboard::Clipboard,
     command::{Command, Motion},
     document::Document,
+    lines::{self, LineEdit},
     movement,
     range::Range,
     transaction::{Change, Transaction},
     view::{self, View},
 };
+
+/// Chars that auto close, as `(open, close)`. Brackets come first.
+const PAIRS: [(char, char); 6] = [
+    ('(', ')'),
+    ('[', ']'),
+    ('{', '}'),
+    ('"', '"'),
+    ('\'', '\''),
+    ('`', '`'),
+];
 
 /// Settings that change how editing commands behave.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +32,8 @@ pub struct Options {
     pub tab_width: usize,
     /// Whether the tab key inserts spaces instead of a tab char.
     pub insert_spaces: bool,
+    /// Whether typing an opening bracket or quote also types the closing one.
+    pub auto_close: bool,
 }
 
 impl Default for Options {
@@ -28,6 +41,7 @@ impl Default for Options {
         Self {
             tab_width: 4,
             insert_spaces: true,
+            auto_close: true,
         }
     }
 }
@@ -217,12 +231,68 @@ impl Editor {
             Command::InsertChar(ch) => {
                 let head = self.document().selection().head;
                 let merge = typing_at == Some(head) && !ch.is_whitespace();
-                self.replace_selection(&ch.to_string(), merge);
+                if !(self.options.auto_close && self.auto_pair(ch)) {
+                    self.replace_selection(&ch.to_string(), merge);
+                }
                 self.typing_at = Some(self.document().selection().head);
             }
             Command::InsertText(text) => self.insert_text(&text),
             Command::InsertNewline => self.insert_newline(),
-            Command::InsertTab => self.insert_tab(),
+            Command::InsertTab => {
+                let document = self.document();
+                let (first, last) = lines::selected_lines(document.text(), document.selection());
+                if first == last {
+                    self.insert_tab();
+                } else {
+                    let unit = self.indent_unit();
+                    let edit = lines::indent_lines(document.text(), document.selection(), &unit);
+                    self.apply_edit(edit);
+                }
+            }
+            Command::Outdent => {
+                let document = self.document();
+                let edit = lines::outdent_lines(
+                    document.text(),
+                    document.selection(),
+                    self.options.tab_width,
+                );
+                self.apply_edit(edit);
+            }
+            Command::ToggleComment => {
+                let token = self
+                    .document()
+                    .path()
+                    .and_then(|path| path.extension())
+                    .and_then(|ext| lines::comment_token(&ext.to_string_lossy().to_lowercase()));
+                match token {
+                    Some(token) => {
+                        let document = self.document();
+                        let edit =
+                            lines::toggle_comment(document.text(), document.selection(), token);
+                        self.apply_edit(edit);
+                    }
+                    None => self.set_status("mog does not know how to comment this file"),
+                }
+            }
+            Command::DuplicateLine => {
+                let document = self.document();
+                let ending = document.line_ending().as_str();
+                let edit = lines::duplicate_lines(document.text(), document.selection(), ending);
+                self.apply_edit(edit);
+            }
+            Command::DeleteLine => {
+                let document = self.document();
+                let edit = lines::delete_lines(document.text(), document.selection());
+                self.apply_edit(edit);
+            }
+            Command::MoveLineUp | Command::MoveLineDown => {
+                let document = self.document();
+                let up = command == Command::MoveLineUp;
+                if let Some(edit) = lines::move_lines(document.text(), document.selection(), up) {
+                    self.apply_edit(edit);
+                }
+            }
+            Command::DeleteBackward if self.delete_pair() => {}
             Command::DeleteBackward => self.delete_with(movement::left),
             Command::DeleteForward => self.delete_with(movement::right),
             Command::DeleteWordBackward => self.delete_with(movement::word_left),
@@ -295,6 +365,108 @@ impl Editor {
             }
         }
         Outcome::Done
+    }
+
+    /// Applies a planned line edit as one undo step.
+    fn apply_edit(&mut self, edit: LineEdit) {
+        if edit.tx.is_empty() {
+            return;
+        }
+        self.document_mut().apply(edit.tx, edit.selection, false);
+        self.views[self.active].preferred_col = None;
+        self.reveal_cursor();
+    }
+
+    /// Returns one level of indentation as text.
+    fn indent_unit(&self) -> String {
+        if self.options.insert_spaces {
+            " ".repeat(self.options.tab_width.max(1))
+        } else {
+            "\t".into()
+        }
+    }
+
+    /// Handles typing `ch` when it opens or closes a pair. Returns `false` to type it normally.
+    fn auto_pair(&mut self, ch: char) -> bool {
+        let document = self.document();
+        let text = document.text();
+        let selection = document.selection();
+        let next = text.get_char(selection.head);
+        let prev = selection
+            .head
+            .checked_sub(1)
+            .and_then(|at| text.get_char(at));
+        let is_quote = matches!(ch, '"' | '\'' | '`');
+        if selection.is_empty()
+            && next == Some(ch)
+            && (is_quote || PAIRS.iter().any(|(_, close)| *close == ch))
+        {
+            let pos = selection.head + 1;
+            self.document_mut().set_selection(Range::point(pos));
+            self.reveal_cursor();
+            return true;
+        }
+        let Some(close) = PAIRS
+            .iter()
+            .find(|(open, _)| *open == ch)
+            .map(|(_, close)| *close)
+        else {
+            return false;
+        };
+        if !selection.is_empty() {
+            let (from, to) = (selection.from(), selection.to());
+            let inner = text.slice(from..to).to_string();
+            let tx = Transaction::replace(from, to, format!("{ch}{inner}{close}"));
+            let after = Range::new(from + 1, to + 1);
+            self.document_mut().apply(tx, after, false);
+            return true;
+        }
+        let word_around = prev.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            || next.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        if is_quote && word_around {
+            return false;
+        }
+        let free_after = next.is_none_or(|c| {
+            c.is_whitespace()
+                || PAIRS.iter().any(|(_, close)| *close == c)
+                || matches!(c, ',' | ';' | ':')
+        });
+        if !free_after {
+            return false;
+        }
+        let pos = selection.head;
+        let tx = Transaction::insert(pos, format!("{ch}{close}"));
+        self.document_mut().apply(tx, Range::point(pos + 1), false);
+        self.reveal_cursor();
+        true
+    }
+
+    /// Deletes an empty pair like `()` around the cursor. Returns whether it did.
+    fn delete_pair(&mut self) -> bool {
+        if !self.options.auto_close {
+            return false;
+        }
+        let document = self.document();
+        let selection = document.selection();
+        let text = document.text();
+        let Some(prev_at) = selection
+            .head
+            .checked_sub(1)
+            .filter(|_| selection.is_empty())
+        else {
+            return false;
+        };
+        let (prev, next) = (text.get_char(prev_at), text.get_char(selection.head));
+        let is_pair = PAIRS
+            .iter()
+            .any(|(open, close)| Some(*open) == prev && Some(*close) == next);
+        if !is_pair {
+            return false;
+        }
+        let tx = Transaction::delete(prev_at, selection.head + 1);
+        self.document_mut().apply(tx, Range::point(prev_at), false);
+        self.reveal_cursor();
+        true
     }
 
     /// Selects `from..to` with the cursor at `to` and scrolls it into view.
@@ -446,7 +618,25 @@ impl Editor {
             .chars()
             .take_while(|ch| *ch == ' ' || *ch == '\t')
             .collect();
-        let insert = format!("{}{indent}", document.line_ending().as_str());
+        let ending = document.line_ending().as_str();
+        let prev = from.checked_sub(1).and_then(|at| text.get_char(at));
+        let next = text.get_char(document.selection().to());
+        let between = PAIRS
+            .iter()
+            .take(3)
+            .any(|(open, close)| Some(*open) == prev && Some(*close) == next);
+        if between && document.selection().is_empty() {
+            let unit = self.indent_unit();
+            let inner = format!("{ending}{indent}{unit}");
+            let insert = format!("{inner}{ending}{indent}");
+            let after = Range::point(from + inner.chars().count());
+            self.document_mut()
+                .apply(Transaction::insert(from, insert), after, false);
+            self.views[self.active].preferred_col = None;
+            self.reveal_cursor();
+            return;
+        }
+        let insert = format!("{ending}{indent}");
         self.replace_selection(&insert, false);
     }
 
@@ -623,6 +813,34 @@ mod tests {
         assert_eq!(text(&editor), "xy b xy");
         editor.execute(Command::Undo);
         assert_eq!(text(&editor), "a b a");
+    }
+
+    /// Brackets close themselves, typing the closer steps over it and backspace removes both.
+    #[test]
+    fn auto_closes_pairs() {
+        let mut editor = editor_with("", 0);
+        editor.execute(Command::InsertChar('('));
+        assert_eq!(text(&editor), "()");
+        editor.execute(Command::InsertChar('x'));
+        editor.execute(Command::InsertChar(')'));
+        assert_eq!(text(&editor), "(x)");
+        assert_eq!(editor.document().selection().head, 3);
+        let mut editor = editor_with("", 0);
+        editor.execute(Command::InsertChar('['));
+        editor.execute(Command::DeleteBackward);
+        assert_eq!(text(&editor), "");
+        let mut editor = editor_with("don", 3);
+        editor.execute(Command::InsertChar('\''));
+        assert_eq!(text(&editor), "don'");
+    }
+
+    /// Enter between braces opens an indented block.
+    #[test]
+    fn enter_between_braces() {
+        let mut editor = editor_with("{}", 1);
+        editor.execute(Command::InsertNewline);
+        assert_eq!(text(&editor), "{\n    \n}");
+        assert_eq!(editor.document().selection().head, 6);
     }
 
     /// Mouse helpers select words and lines.
