@@ -6,7 +6,7 @@
 use std::{
     collections::HashMap,
     io,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Mutex, PoisonError},
 };
 
@@ -78,8 +78,8 @@ pub struct DeviceCode {
 pub struct Copilot {
     /// The connection to the language server.
     client: Client,
-    /// The last version sent to the server for each file.
-    files: Mutex<HashMap<PathBuf, i32>>,
+    /// The last version sent to the server for each file, by uri.
+    files: Mutex<HashMap<String, i32>>,
 }
 
 impl Copilot {
@@ -198,17 +198,28 @@ impl Copilot {
             })
     }
 
-    /// Sends the text of `file` to the server and returns the version it now has.
-    fn sync(&self, file: &CompletionFile) -> i32 {
+    /// Sends the text of `file` at `uri` to the server and returns the version it now has.
+    fn sync(&self, file: &CompletionFile, uri: &str) -> i32 {
         let mut files = self.files.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(version) = files.get_mut(&file.path) {
+        if let Some(version) = files.get_mut(uri) {
             *version += 1;
-            self.client.did_change(&file.path, *version, &file.text);
+            self.client.notify(
+                "textDocument/didChange",
+                json!({
+                    "textDocument": { "uri": uri, "version": *version },
+                    "contentChanges": [{ "text": file.text }],
+                }),
+            );
             return *version;
         }
-        self.client
-            .did_open(&file.path, language_id(&file.path), 1, &file.text);
-        files.insert(file.path.clone(), 1);
+        let language = file.path.as_deref().map_or("plaintext", language_id);
+        self.client.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": {
+                "uri": uri, "languageId": language, "version": 1, "text": file.text
+            }}),
+        );
+        files.insert(uri.to_owned(), 1);
         1
     }
 }
@@ -230,10 +241,15 @@ impl AiProvider for Copilot {
             let Some(file) = &request.file else {
                 return Ok(Vec::new());
             };
-            let Some(uri) = convert::path_to_uri(&file.path) else {
-                return Ok(Vec::new());
+            // files that were never saved get the untitled names vs code gives them
+            let uri = match &file.path {
+                Some(path) => match convert::path_to_uri(path) {
+                    Some(uri) => uri.to_string(),
+                    None => return Ok(Vec::new()),
+                },
+                None => format!("untitled:Untitled-{}", file.index + 1),
             };
-            let version = self.sync(file);
+            let version = self.sync(file, &uri);
             let text = Rope::from_str(&file.text);
             let params = json!({
                 "textDocument": { "uri": uri, "version": version },

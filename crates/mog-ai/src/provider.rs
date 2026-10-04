@@ -63,8 +63,10 @@ pub struct CompletionRequest {
 /// The whole file a [`CompletionRequest`] is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionFile {
-    /// Where the file is saved.
-    pub path: PathBuf,
+    /// Where the file is saved, or `None` if it never was.
+    pub path: Option<PathBuf>,
+    /// The tab index, which names files that were never saved.
+    pub index: usize,
     /// The full text.
     pub text: String,
     /// The char offset of the cursor.

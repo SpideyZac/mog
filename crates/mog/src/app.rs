@@ -933,8 +933,9 @@ impl App {
                 .path()
                 .and_then(|path| path.extension())
                 .map(|ext| ext.to_string_lossy().into_owned()),
-            file: document.path().map(|path| CompletionFile {
-                path: path.to_owned(),
+            file: Some(CompletionFile {
+                path: document.path().map(ToOwned::to_owned),
+                index: self.editor.active(),
                 text: text.to_string(),
                 cursor: head,
                 tab_size: self.editor.options().tab_width,
