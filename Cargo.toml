@@ -31,6 +31,7 @@ mog-ai = { path = "crates/mog-ai" }
 mog-config = { path = "crates/mog-config" }
 mog-core = { path = "crates/mog-core" }
 mog-flair = { path = "crates/mog-flair" }
+mog-git = { path = "crates/mog-git" }
 mog-lsp = { path = "crates/mog-lsp" }
 mog-tui = { path = "crates/mog-tui" }
 ratatui = "0.30"
@@ -38,6 +39,7 @@ reqwest = { version = "0.13", features = ["json"] }
 ropey = "1.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+similar = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "1"
