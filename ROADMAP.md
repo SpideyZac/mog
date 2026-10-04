@@ -10,7 +10,7 @@
 - [x] Mouse: click, drag select, shift click, double and triple click, wheel, gutter
 - [x] Config file
 - [x] Flair layer and registry
-- [ ] LSP client skeleton
+- [x] LSP client skeleton
 - [ ] AI provider skeleton
 - [ ] Lua plugin host
 
