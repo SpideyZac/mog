@@ -49,17 +49,49 @@ const CAPTURES: &[(&str, Kind)] = &[
 /// The languages mog can highlight, by name, with the file extensions they claim.
 const LANGUAGES: &[(&str, &[&str])] = &[
     ("rust", &["rs"]),
-    ("python", &["py", "pyi"]),
+    ("python", &["py", "pyi", "pyw"]),
     ("javascript", &["js", "mjs", "cjs"]),
     ("jsx", &["jsx"]),
     ("typescript", &["ts", "mts", "cts"]),
     ("tsx", &["tsx"]),
-    ("json", &["json", "jsonc"]),
+    ("json", &["json", "jsonc", "json5"]),
     ("toml", &["toml"]),
     ("go", &["go"]),
-    ("c", &["c", "h", "cpp", "hpp", "cc", "cxx"]),
+    ("c", &["c", "h"]),
+    ("cpp", &["cpp", "hpp", "cc", "cxx", "hh", "hxx", "ino"]),
+    ("csharp", &["cs", "csx"]),
+    ("java", &["java"]),
     ("bash", &["sh", "bash", "zsh"]),
+    ("powershell", &["ps1", "psm1", "psd1"]),
     ("markdown", &["md", "markdown"]),
+    ("html", &["html", "htm", "xhtml"]),
+    ("css", &["css"]),
+    ("xml", &["xml", "svg", "xaml", "csproj", "plist", "xsd"]),
+    ("yaml", &["yml", "yaml"]),
+    ("lua", &["lua"]),
+    ("ruby", &["rb", "rake", "gemspec"]),
+    ("php", &["php", "phtml"]),
+    ("swift", &["swift"]),
+    ("scala", &["scala", "sc", "sbt"]),
+    ("haskell", &["hs"]),
+    ("ocaml", &["ml"]),
+    ("ocaml_interface", &["mli"]),
+    ("elixir", &["ex", "exs"]),
+    ("zig", &["zig", "zon"]),
+    ("sql", &["sql"]),
+    ("make", &["mk", "mak"]),
+];
+
+/// Languages for files known by their whole name instead of an extension.
+const FILE_NAMES: &[(&str, &str)] = &[
+    ("makefile", "make"),
+    ("gnumakefile", "make"),
+    ("gemfile", "ruby"),
+    ("rakefile", "ruby"),
+    ("pkgbuild", "bash"),
+    (".bashrc", "bash"),
+    (".zshrc", "bash"),
+    (".profile", "bash"),
 ];
 
 /// What a piece of code is, as far as coloring goes.
@@ -104,8 +136,12 @@ pub struct Span {
     pub kind: Kind,
 }
 
-/// Returns the language name for `path` based on its extension.
+/// Returns the language name for `path` based on its file name or extension.
 pub fn language_for(path: &Path) -> Option<&'static str> {
+    let name = path.file_name()?.to_str()?.to_lowercase();
+    if let Some((_, language)) = FILE_NAMES.iter().find(|(file, _)| *file == name) {
+        return Some(language);
+    }
     let extension = path.extension()?.to_str()?.to_lowercase();
     LANGUAGES
         .iter()
@@ -179,15 +215,139 @@ fn config_for(language: &str) -> Option<HighlightConfiguration> {
             "",
             "",
         ),
+        "cpp" => (
+            tree_sitter_cpp::LANGUAGE.into(),
+            format!(
+                "{}\n{}",
+                tree_sitter_cpp::HIGHLIGHT_QUERY,
+                tree_sitter_c::HIGHLIGHT_QUERY
+            ),
+            "",
+            "",
+        ),
+        "csharp" => (
+            tree_sitter_c_sharp::LANGUAGE.into(),
+            tree_sitter_c_sharp::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "java" => (
+            tree_sitter_java::LANGUAGE.into(),
+            tree_sitter_java::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
         "bash" => (
             tree_sitter_bash::LANGUAGE.into(),
             tree_sitter_bash::HIGHLIGHT_QUERY.to_owned(),
             "",
             "",
         ),
+        "powershell" => (
+            tree_sitter_powershell::LANGUAGE.into(),
+            tree_sitter_powershell::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
         "markdown" => (
             tree_sitter_md::LANGUAGE.into(),
             tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.to_owned(),
+            "",
+            "",
+        ),
+        "html" => (
+            tree_sitter_html::LANGUAGE.into(),
+            tree_sitter_html::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "css" => (
+            tree_sitter_css::LANGUAGE.into(),
+            tree_sitter_css::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "xml" => (
+            tree_sitter_xml::LANGUAGE_XML.into(),
+            tree_sitter_xml::XML_HIGHLIGHT_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "yaml" => (
+            tree_sitter_yaml::LANGUAGE.into(),
+            tree_sitter_yaml::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "lua" => (
+            tree_sitter_lua::LANGUAGE.into(),
+            tree_sitter_lua::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            tree_sitter_lua::LOCALS_QUERY,
+        ),
+        "ruby" => (
+            tree_sitter_ruby::LANGUAGE.into(),
+            tree_sitter_ruby::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            tree_sitter_ruby::LOCALS_QUERY,
+        ),
+        "php" => (
+            tree_sitter_php::LANGUAGE_PHP.into(),
+            tree_sitter_php::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "swift" => (
+            tree_sitter_swift::LANGUAGE.into(),
+            tree_sitter_swift::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            tree_sitter_swift::LOCALS_QUERY,
+        ),
+        "scala" => (
+            tree_sitter_scala::LANGUAGE.into(),
+            tree_sitter_scala::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            tree_sitter_scala::LOCALS_QUERY,
+        ),
+        "haskell" => (
+            tree_sitter_haskell::LANGUAGE.into(),
+            tree_sitter_haskell::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            tree_sitter_haskell::LOCALS_QUERY,
+        ),
+        "ocaml" => (
+            tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+            tree_sitter_ocaml::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            tree_sitter_ocaml::LOCALS_QUERY,
+        ),
+        "ocaml_interface" => (
+            tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+            tree_sitter_ocaml::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            tree_sitter_ocaml::LOCALS_QUERY,
+        ),
+        "elixir" => (
+            tree_sitter_elixir::LANGUAGE.into(),
+            tree_sitter_elixir::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "zig" => (
+            tree_sitter_zig::LANGUAGE.into(),
+            tree_sitter_zig::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "sql" => (
+            tree_sitter_sequel::LANGUAGE.into(),
+            tree_sitter_sequel::HIGHLIGHTS_QUERY.to_owned(),
+            "",
+            "",
+        ),
+        "make" => (
+            tree_sitter_make::LANGUAGE.into(),
+            tree_sitter_make::HIGHLIGHTS_QUERY.to_owned(),
             "",
             "",
         ),
@@ -284,6 +444,8 @@ mod tests {
         assert_eq!(language_for(Path::new("src/main.rs")), Some("rust"));
         assert_eq!(language_for(Path::new("App.TSX")), Some("tsx"));
         assert_eq!(language_for(Path::new("README")), None);
+        assert_eq!(language_for(Path::new("lib/foo.hpp")), Some("cpp"));
+        assert_eq!(language_for(Path::new("dir/Makefile")), Some("make"));
     }
 
     /// Rust keywords, functions and strings are found at the right char offsets.
@@ -303,6 +465,39 @@ mod tests {
         assert_eq!(kind_at(5), Some(Kind::Keyword));
         assert_eq!(kind_at(8), Some(Kind::Function));
         assert_eq!(kind_at(26), Some(Kind::String));
+    }
+
+    /// Every grammar colors something in a small sample of its language.
+    #[test]
+    fn every_language_highlights() {
+        let samples = [
+            ("cpp", "class A { int x = 1; };"),
+            ("csharp", "class A { int x = 1; }"),
+            ("java", "class A { int x = 1; }"),
+            ("powershell", "$x = \"hi\""),
+            ("html", "<p class=\"a\">hi</p>"),
+            ("css", "a { color: red; }"),
+            ("xml", "<a b=\"c\"/>"),
+            ("yaml", "a: \"b\""),
+            ("lua", "local x = \"hi\""),
+            ("ruby", "def a; \"hi\"; end"),
+            ("php", "<?php function a() { return 1; }"),
+            ("swift", "func a() { let x = 1 }"),
+            ("scala", "def a = \"hi\""),
+            ("haskell", "main = putStrLn \"hi\""),
+            ("ocaml", "let x = \"hi\""),
+            ("elixir", "def a, do: \"hi\""),
+            ("zig", "const x = \"hi\";"),
+            ("sql", "SELECT a FROM b;"),
+            ("make", "all:\n\techo hi"),
+        ];
+        let mut highlighter = Highlighter::new();
+        for (name, text) in samples {
+            assert!(
+                !highlighter.highlight(name, text).is_empty(),
+                "{name} highlighted nothing"
+            );
+        }
     }
 
     /// Every bundled grammar loads with its queries.

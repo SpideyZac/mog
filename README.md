@@ -22,7 +22,7 @@ mog .
   (drag select, double and triple click, right click menus)
 - Tabs, splits, multiple cursors, find and replace, a built in terminal
 - File explorer, fuzzy finder, command palette and a key list you can rebind from
-- Tree-sitter highlighting for twelve languages
+- Tree-sitter highlighting for over thirty languages
 - LSP: diagnostics with error lens, completion, hover, go to definition, references, rename,
   formatting, code actions
 - Git gutter, branch in the status line, file colors and inline blame

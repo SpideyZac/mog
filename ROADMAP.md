@@ -15,7 +15,7 @@
 
 ## Everyday editing
 
-- [x] Syntax highlighting (tree-sitter, twelve languages)
+- [x] Syntax highlighting (tree-sitter, thirty two languages)
 - [x] File tree
 - [x] Keyboard focus for the file explorer
 - [x] Key to show and hide the file explorer
