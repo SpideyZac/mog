@@ -9,9 +9,9 @@ use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
 use mog_config::Config;
-use mog_core::{Command, Editor, Keymap, Outcome};
+use mog_core::{Command, Editor, FileTree, Keymap, Outcome};
 use mog_lsp::LspEvent;
-use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
+use mog_tui::{Compositor, Context, EditorView, Explorer, StatusLine, Theme, input};
 use ratatui::layout::Rect;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
@@ -53,7 +53,7 @@ pub struct App {
 }
 
 impl App {
-    /// Creates a new app, opening the file named in `args` if there is one.
+    /// Creates a new app, opening the file or folder named in `args` if there is one.
     pub fn new(args: Args) -> Self {
         let mut problems = Vec::new();
         let config = Config::load().unwrap_or_else(|err| {
@@ -65,8 +65,28 @@ impl App {
         let (providers, ai_problems) = settings::ai_providers(&config);
         problems.extend(ai_problems);
 
+        let (file, tree) = match args.path {
+            Some(path) if path.is_dir() => match FileTree::new(&path) {
+                Ok(tree) => (None, Some(tree)),
+                Err(err) => {
+                    problems.push(format!("could not open {}: {err}", path.display()));
+                    (None, None)
+                }
+            },
+            path => (path, None),
+        };
+        let root = tree.as_ref().map_or_else(
+            || env::current_dir().unwrap_or_default(),
+            |tree| tree.root().to_owned(),
+        );
+
         let mut compositor = Compositor::new();
-        compositor.push(Box::new(EditorView::new()));
+        if let Some(tree) = tree {
+            compositor.push(Box::new(EditorView::new().beside_explorer()));
+            compositor.push(Box::new(Explorer::new(tree)));
+        } else {
+            compositor.push(Box::new(EditorView::new()));
+        }
         compositor.push(Box::new(settings::flair_layer(&config)));
         compositor.push(Box::new(StatusLine::new()));
 
@@ -76,9 +96,8 @@ impl App {
             editor.set_status(problems.join("; "));
         }
         let (lsp_sender, lsp_events) = mpsc::unbounded_channel();
-        let root = env::current_dir().unwrap_or_default();
         let lsp = LanguageServers::new(config.language_servers(), root, lsp_sender);
-        if let Some(path) = args.file
+        if let Some(path) = file
             && let Err(err) = editor.open(&path)
         {
             editor.set_status(format!("could not open {}: {err}", path.display()));

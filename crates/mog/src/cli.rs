@@ -8,6 +8,6 @@ use clap::Parser;
 #[derive(Debug, Parser)]
 #[command(version, about)]
 pub struct Args {
-    /// The file to open.
-    pub file: Option<PathBuf>,
+    /// The file or folder to open. A folder is shown in the file explorer.
+    pub path: Option<PathBuf>,
 }
