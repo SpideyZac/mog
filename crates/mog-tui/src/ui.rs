@@ -56,6 +56,8 @@ pub enum Overlay {
     Graph,
     /// A right click menu.
     Menu,
+    /// Every diagnostic in open files.
+    Problems,
 }
 
 /// What a [`Prompt`] is asking for.

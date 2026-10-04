@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Key, KeyChord, walk_files};
+use mog_core::{Command, Key, KeyChord, Severity, walk_files};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -52,6 +52,8 @@ pub struct Popups {
     files: Vec<PathBuf>,
     /// The command names behind the palette or key list rows.
     commands: Vec<String>,
+    /// The documents and offsets behind the problem rows.
+    problems: Vec<(usize, usize)>,
     /// The box drawn in the last frame.
     area: Rect,
     /// Where the text cursor goes.
@@ -68,7 +70,13 @@ impl Popups {
     fn owns(overlay: Option<Overlay>) -> bool {
         matches!(
             overlay,
-            Some(Overlay::Palette | Overlay::Finder | Overlay::Keys | Overlay::Prompt)
+            Some(
+                Overlay::Palette
+                    | Overlay::Finder
+                    | Overlay::Keys
+                    | Overlay::Prompt
+                    | Overlay::Problems
+            )
         )
     }
 
@@ -131,6 +139,49 @@ impl Popups {
                     })
                     .collect()
             }
+            Some(Overlay::Problems) => {
+                let theme_marks = [
+                    (Severity::Error, "error"),
+                    (Severity::Warning, "warning"),
+                    (Severity::Info, "info"),
+                    (Severity::Hint, "hint"),
+                ];
+                let mut rows = Vec::new();
+                self.problems.clear();
+                for (index, document) in cx.editor.documents().iter().enumerate() {
+                    let text = document.text();
+                    for diagnostic in document.diagnostics() {
+                        let line = text.char_to_line(diagnostic.from.min(text.len_chars())) + 1;
+                        let label = diagnostic
+                            .message
+                            .lines()
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned();
+                        let kind = theme_marks
+                            .iter()
+                            .find(|(severity, _)| *severity == diagnostic.severity)
+                            .map_or("", |(_, name)| name);
+                        let style = match diagnostic.severity {
+                            Severity::Error => cx.theme.error,
+                            Severity::Warning => cx.theme.warning,
+                            _ => cx.theme.info,
+                        };
+                        rows.push((
+                            diagnostic.severity,
+                            PickerItem::new(label)
+                                .detail(format!("{}:{line}", document.name()))
+                                .hint(kind)
+                                .marker(style),
+                            (index, diagnostic.from),
+                        ));
+                    }
+                }
+                // worst first, keeping file order within a severity
+                rows.sort_by_key(|(severity, _, _)| *severity);
+                self.problems = rows.iter().map(|(_, _, at)| *at).collect();
+                rows.into_iter().map(|(_, item, _)| item).collect()
+            }
             _ => Vec::new(),
         };
         self.picker.reset(items);
@@ -148,6 +199,13 @@ impl Popups {
                 match name.parse::<Command>() {
                     Ok(command) => cx.ui.request(command),
                     Err(err) => cx.editor.set_status(err.to_string()),
+                }
+            }
+            Some(Overlay::Problems) => {
+                if let Some(&(document, pos)) = self.problems.get(index) {
+                    cx.ui.focus = Focus::Editor;
+                    cx.editor.focus(document);
+                    cx.editor.select(pos, pos);
                 }
             }
             Some(Overlay::Finder) => {
@@ -212,6 +270,7 @@ impl Layer for Popups {
             Some(Overlay::Palette) => ("\u{2318} command palette", "type a command..."),
             Some(Overlay::Finder) => ("\u{2315} find a file", "type part of a file name..."),
             Some(Overlay::Keys) => ("\u{2328} key bindings", "search keys or commands..."),
+            Some(Overlay::Problems) => ("\u{26a0} problems", "search problems..."),
             _ => ("", ""),
         };
         if let Some(prompt) = cx

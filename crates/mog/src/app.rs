@@ -932,6 +932,15 @@ impl App {
                 );
             }
             "prompt.submit" => self.submit_prompt(),
+            "problems.list" => self.ui.open(Overlay::Problems),
+            "problems.next" | "problems.prev" => {
+                let message = self.editor.goto_problem(name == "problems.next");
+                let message = message.map_or_else(
+                    || "no problems, mog is proud of you".to_owned(),
+                    |message| message.lines().next().unwrap_or_default().to_owned(),
+                );
+                self.editor.set_status(message);
+            }
             "file.save_as" => self.ask_save_as(),
             "file.new" => self.editor.new_document(),
             "file.create" => {
