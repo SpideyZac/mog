@@ -7,6 +7,8 @@ use serde::Deserialize;
 #[serde(default, deny_unknown_fields)]
 pub struct AiConfig {
     /// Whether the AI suggests code in gray after the cursor when typing pauses.
+    ///
+    /// This is the master switch, each provider can also opt out on its own.
     pub ghost_text: bool,
     /// Claude settings.
     pub claude: ClaudeConfig,
@@ -30,6 +32,10 @@ impl Default for AiConfig {
 pub struct ClaudeConfig {
     /// Whether Claude is used at all.
     pub enabled: bool,
+    /// Whether Claude answers in the chat panel.
+    pub chat: bool,
+    /// Whether Claude suggests ghost text.
+    pub ghost_text: bool,
     /// The model id, or the provider default when unset.
     pub model: Option<String>,
     /// The environment variable holding the API key. Keys are never stored in the config.
@@ -40,6 +46,8 @@ impl Default for ClaudeConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            chat: true,
+            ghost_text: true,
             model: None,
             api_key_env: "ANTHROPIC_API_KEY".into(),
         }
@@ -47,9 +55,23 @@ impl Default for ClaudeConfig {
 }
 
 /// Settings for GitHub Copilot.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CopilotConfig {
     /// Whether Copilot is used at all.
     pub enabled: bool,
+    /// Whether Copilot answers in the chat panel.
+    pub chat: bool,
+    /// Whether Copilot suggests ghost text.
+    pub ghost_text: bool,
+}
+
+impl Default for CopilotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            chat: true,
+            ghost_text: true,
+        }
+    }
 }
