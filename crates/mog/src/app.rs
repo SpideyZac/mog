@@ -1,7 +1,7 @@
 //! The application state and event loop.
 
 use std::{
-    env,
+    env, mem,
     time::{Duration, Instant},
 };
 
@@ -9,9 +9,11 @@ use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
 use mog_config::Config;
-use mog_core::{Command, Editor, FileTree, Keymap, Outcome};
+use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome};
 use mog_lsp::LspEvent;
-use mog_tui::{Compositor, Context, EditorView, Explorer, StatusLine, Theme, input};
+use mog_tui::{
+    Compositor, Context, EditorView, EventResult, Explorer, Focus, StatusLine, Theme, Ui, input,
+};
 use ratatui::layout::Rect;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver},
@@ -30,6 +32,10 @@ use crate::{
 /// The time between animation frames, about 30 per second.
 const FRAME_TIME: Duration = Duration::from_millis(33);
 
+/// How many rounds of layer requests are run after one event, so requests that queue more
+/// requests cannot freeze the editor.
+const MAX_REQUEST_ROUNDS: usize = 8;
+
 /// The running editor.
 pub struct App {
     /// The editing state.
@@ -40,6 +46,8 @@ pub struct App {
     compositor: Compositor,
     /// The active theme.
     theme: Theme,
+    /// The state shared with the layers.
+    ui: Ui,
     /// The language servers for the project.
     lsp: LanguageServers,
     /// Events coming back from language servers.
@@ -80,12 +88,13 @@ impl App {
             |tree| tree.root().to_owned(),
         );
 
+        let mut ui = Ui::new(config.clone());
         let mut compositor = Compositor::new();
+        compositor.push(Box::new(EditorView::new()));
         if let Some(tree) = tree {
-            compositor.push(Box::new(EditorView::new().beside_explorer()));
+            ui.has_explorer = true;
+            ui.explorer_open = config.ui.explorer;
             compositor.push(Box::new(Explorer::new(tree)));
-        } else {
-            compositor.push(Box::new(EditorView::new()));
         }
         compositor.push(Box::new(settings::flair_layer(&config)));
         compositor.push(Box::new(StatusLine::new()));
@@ -107,6 +116,7 @@ impl App {
             keymap,
             compositor,
             theme: Theme::default(),
+            ui,
             lsp,
             lsp_events,
             assistant: Assistant::new(providers),
@@ -142,6 +152,7 @@ impl App {
                     last_tick = now;
                 }
             }
+            self.run_requests();
         }
         Ok(())
     }
@@ -153,6 +164,7 @@ impl App {
             let mut cx = Context {
                 editor: &mut self.editor,
                 theme: &self.theme,
+                ui: &mut self.ui,
             };
             self.compositor.render(frame, &mut cx);
         })?;
@@ -164,20 +176,47 @@ impl App {
         match event {
             // windows reports releases too and we only care about presses
             Event::Key(key) if key.kind != KeyEventKind::Release => {
-                let command = input::key_chord(key).and_then(|chord| self.keymap.resolve(&chord));
-                if let Some(command) = command {
-                    self.execute_command(command);
+                if let Some(chord) = input::key_chord(key) {
+                    self.handle_key(chord);
                 }
             }
             Event::Mouse(mouse) => {
                 let mut cx = Context {
                     editor: &mut self.editor,
                     theme: &self.theme,
+                    ui: &mut self.ui,
                 };
                 self.compositor.handle_mouse(mouse, self.screen, &mut cx);
             }
             Event::Paste(text) => self.execute_command(Command::InsertText(text)),
             _ => {}
+        }
+    }
+
+    /// Offers a key to the layers, then runs its bound command if none of them took it.
+    fn handle_key(&mut self, chord: KeyChord) {
+        let mut cx = Context {
+            editor: &mut self.editor,
+            theme: &self.theme,
+            ui: &mut self.ui,
+        };
+        if self.compositor.handle_key(chord, &mut cx) == EventResult::Consumed {
+            return;
+        }
+        if let Some(command) = self.keymap.resolve(&chord) {
+            self.execute_command(command);
+        }
+    }
+
+    /// Runs the commands layers asked for.
+    fn run_requests(&mut self) {
+        for _ in 0..MAX_REQUEST_ROUNDS {
+            if self.ui.requests.is_empty() {
+                return;
+            }
+            for command in mem::take(&mut self.ui.requests) {
+                self.execute_command(command);
+            }
         }
     }
 
@@ -212,7 +251,18 @@ impl App {
         match self.editor.execute(command) {
             Outcome::Done => {}
             Outcome::Quit => self.quit = true,
-            Outcome::Unhandled(Command::Custom(name)) if name == "ai.explain" => {
+            Outcome::Unhandled(Command::Custom(name)) => self.execute_custom(&name),
+            Outcome::Unhandled(command) => {
+                self.editor
+                    .set_status(format!("{command} is not available yet"));
+            }
+        }
+    }
+
+    /// Runs an app level command like `explorer.toggle`.
+    fn execute_custom(&mut self, name: &str) {
+        match name {
+            "ai.explain" => {
                 let document = self.editor.document();
                 let selection = document.selection();
                 let message = if selection.is_empty() {
@@ -223,10 +273,28 @@ impl App {
                 };
                 self.editor.set_status(message);
             }
-            Outcome::Unhandled(command) => {
-                self.editor
-                    .set_status(format!("{command} is not available yet"));
+            "explorer.toggle" => {
+                if !self.ui.has_explorer {
+                    self.editor
+                        .set_status("open a folder to get a file explorer: mog <folder>");
+                    return;
+                }
+                self.ui.explorer_open = !self.ui.explorer_open;
+                self.ui.focus = if self.ui.explorer_open {
+                    Focus::Explorer
+                } else {
+                    Focus::Editor
+                };
             }
+            "explorer.focus" => {
+                if self.ui.has_explorer {
+                    self.ui.explorer_open = true;
+                    self.ui.focus = Focus::Explorer;
+                }
+            }
+            _ => self
+                .editor
+                .set_status(format!("{name} is not available yet")),
         }
     }
 }

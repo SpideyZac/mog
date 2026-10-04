@@ -1,5 +1,6 @@
 //! Colors and styles.
 
+use mog_git::FileStatus;
 use ratatui::style::{Color, Modifier, Style};
 
 /// The styles used to draw the editor.
@@ -37,6 +38,12 @@ pub struct Theme {
     pub directory: Style,
     /// The line between the file explorer and the editor.
     pub border: Style,
+    /// Lines and files added since the last commit.
+    pub git_added: Style,
+    /// Lines and files changed since the last commit.
+    pub git_modified: Style,
+    /// Places where lines were removed since the last commit.
+    pub git_removed: Style,
 }
 
 impl Default for Theme {
@@ -63,6 +70,21 @@ impl Default for Theme {
             sidebar_active: Style::new().fg(accent).bg(Color::Rgb(40, 32, 60)),
             directory: Style::new().fg(Color::Rgb(150, 140, 255)),
             border: Style::new().fg(Color::Rgb(48, 40, 68)),
+            git_added: Style::new().fg(Color::Rgb(110, 230, 140)),
+            git_modified: Style::new().fg(Color::Rgb(255, 196, 87)),
+            git_removed: Style::new().fg(Color::Rgb(255, 85, 110)),
+        }
+    }
+}
+
+impl Theme {
+    /// Returns the style for a file with git `status`.
+    pub fn git_status(&self, status: FileStatus) -> Style {
+        match status {
+            FileStatus::Added | FileStatus::Untracked => self.git_added,
+            FileStatus::Modified | FileStatus::Renamed => self.git_modified,
+            FileStatus::Deleted => self.git_removed,
+            FileStatus::Conflicted => self.error,
         }
     }
 }

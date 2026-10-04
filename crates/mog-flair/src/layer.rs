@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, time::Duration};
 
-use mog_tui::{Context, Layer, status_line::STATUS_HEIGHT};
+use mog_tui::{Context, Layer, Layout, Ui};
 use ratatui::{buffer::Buffer, layout::Rect};
 
 use crate::flair::{Flair, FlairContext};
@@ -54,11 +54,8 @@ impl FlairLayer {
 }
 
 impl Layer for FlairLayer {
-    fn area(&self, screen: Rect) -> Rect {
-        Rect {
-            height: screen.height.saturating_sub(STATUS_HEIGHT),
-            ..screen
-        }
+    fn area(&self, layout: &Layout, _ui: &Ui) -> Rect {
+        layout.editor
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {

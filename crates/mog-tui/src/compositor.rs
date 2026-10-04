@@ -3,14 +3,17 @@
 use std::time::Duration;
 
 use crossterm::event::{MouseEvent, MouseEventKind};
-use mog_core::Editor;
+use mog_core::{Editor, KeyChord};
 use ratatui::{
     Frame,
     buffer::Buffer,
     layout::{Position, Rect},
 };
 
-use crate::theme::Theme;
+use crate::{
+    theme::Theme,
+    ui::{Layout, Ui},
+};
 
 /// Everything a layer may read or change while drawing or handling input.
 pub struct Context<'a> {
@@ -18,6 +21,8 @@ pub struct Context<'a> {
     pub editor: &'a mut Editor,
     /// The active theme.
     pub theme: &'a Theme,
+    /// The state shared between layers.
+    pub ui: &'a mut Ui,
 }
 
 /// Whether a layer used an event.
@@ -31,8 +36,8 @@ pub enum EventResult {
 
 /// One piece of the screen, like the editor view, the status line or a flair widget.
 pub trait Layer {
-    /// Returns the part of `screen` this layer covers.
-    fn area(&self, screen: Rect) -> Rect;
+    /// Returns the part of the screen this layer covers, or an empty area when hidden.
+    fn area(&self, layout: &Layout, ui: &Ui) -> Rect;
 
     /// Draws the layer into `buf` within `area`.
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>);
@@ -44,6 +49,11 @@ pub trait Layer {
         _area: Rect,
         _cx: &mut Context<'_>,
     ) -> EventResult {
+        EventResult::Ignored
+    }
+
+    /// Handles a key press. Layers are asked top first until one consumes it.
+    fn handle_key(&mut self, _chord: KeyChord, _cx: &mut Context<'_>) -> EventResult {
         EventResult::Ignored
     }
 
@@ -94,21 +104,39 @@ impl Compositor {
     }
 
     /// Draws every layer and places the cursor.
+    ///
+    /// Status line segments are cleared before drawing and events after, so every event is seen
+    /// by exactly one frame.
     pub fn render(&mut self, frame: &mut Frame<'_>, cx: &mut Context<'_>) {
         let screen = frame.area();
         frame.buffer_mut().set_style(screen, cx.theme.background);
+        cx.ui.segments.clear();
+        let layout = cx.ui.layout(screen);
         for layer in &mut self.layers {
-            let area = layer.area(screen).intersection(screen);
+            let area = layer.area(&layout, cx.ui).intersection(screen);
+            if area.is_empty() {
+                continue;
+            }
             layer.render(area, frame.buffer_mut(), cx);
         }
-        let cursor = self
-            .layers
-            .iter()
-            .rev()
-            .find_map(|layer| layer.cursor(layer.area(screen), cx));
+        let cursor = self.layers.iter().rev().find_map(|layer| {
+            let area = layer.area(&layout, cx.ui);
+            (!area.is_empty()).then(|| layer.cursor(area, cx)).flatten()
+        });
         if let Some(cursor) = cursor {
             frame.set_cursor_position(cursor);
         }
+        cx.ui.events.clear();
+    }
+
+    /// Offers a key press to the layers, top first.
+    pub fn handle_key(&mut self, chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
+        for layer in self.layers.iter_mut().rev() {
+            if layer.handle_key(chord, cx) == EventResult::Consumed {
+                return EventResult::Consumed;
+            }
+        }
+        EventResult::Ignored
     }
 
     /// Routes a mouse event to the layer under it, or to the layer holding the mouse.
@@ -125,14 +153,15 @@ impl Compositor {
         if matches!(event.kind, MouseEventKind::Up(_)) {
             self.mouse_owner = None;
         }
+        let layout = cx.ui.layout(screen);
         if let Some(index) = owner {
             let layer = &mut self.layers[index];
-            let area = layer.area(screen);
+            let area = layer.area(&layout, cx.ui);
             return layer.handle_mouse(event, area, cx);
         }
         let point = Position::new(event.column, event.row);
         for (index, layer) in self.layers.iter_mut().enumerate().rev() {
-            let area = layer.area(screen);
+            let area = layer.area(&layout, cx.ui).intersection(screen);
             if !area.contains(point) {
                 continue;
             }

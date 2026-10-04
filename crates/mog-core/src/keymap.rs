@@ -58,6 +58,8 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("alt+right", "next_tab"),
     ("alt+left", "prev_tab"),
     ("ctrl+w", "close_tab"),
+    ("ctrl+b", "explorer.toggle"),
+    ("ctrl+shift+e", "explorer.focus"),
     ("alt+e", "ai.explain"),
 ];
 

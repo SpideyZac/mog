@@ -8,7 +8,10 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::compositor::{Context, Layer};
+use crate::{
+    compositor::{Context, Layer},
+    ui::{Layout, Side, Ui},
+};
 
 /// The number of rows the status line takes.
 pub const STATUS_HEIGHT: u16 = 1;
@@ -25,13 +28,8 @@ impl StatusLine {
 }
 
 impl Layer for StatusLine {
-    fn area(&self, screen: Rect) -> Rect {
-        let height = STATUS_HEIGHT.min(screen.height);
-        Rect {
-            y: screen.bottom() - height,
-            height,
-            ..screen
-        }
+    fn area(&self, layout: &Layout, _ui: &Ui) -> Rect {
+        layout.status
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
@@ -44,15 +42,23 @@ impl Layer for StatusLine {
         let modified = if document.is_modified() { " [+]" } else { "" };
 
         buf.set_style(area, theme.status);
-        let left = Line::from(vec![
+        let mut left = vec![
             Span::styled(" mog ", theme.status_badge),
             Span::raw(format!(" {}{modified} ", document.name())),
-            Span::styled(
-                cx.editor.status().unwrap_or_default().to_owned(),
-                theme.status_message,
-            ),
-        ]);
-        left.render(area, buf);
+        ];
+        let mut right = Vec::new();
+        for segment in &cx.ui.segments {
+            let span = Span::styled(format!("{} ", segment.text), segment.style);
+            match segment.side {
+                Side::Left => left.push(span),
+                Side::Right => right.push(span),
+            }
+        }
+        left.push(Span::styled(
+            cx.editor.status().unwrap_or_default().to_owned(),
+            theme.status_message,
+        ));
+        Line::from(left).render(area, buf);
 
         let count = |severity| {
             document
@@ -61,7 +67,6 @@ impl Layer for StatusLine {
                 .filter(|diagnostic| diagnostic.severity == severity)
                 .count()
         };
-        let mut right = Vec::new();
         for (severity, label, style) in [
             (Severity::Error, "E", theme.error),
             (Severity::Warning, "W", theme.warning),

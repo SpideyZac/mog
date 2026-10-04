@@ -11,8 +11,7 @@ use ratatui::{
 
 use crate::{
     compositor::{Context, EventResult, Layer},
-    explorer,
-    status_line::STATUS_HEIGHT,
+    ui::{Focus, Layout, Ui},
 };
 
 /// Blank cells between the line numbers and the text.
@@ -36,22 +35,12 @@ pub struct EditorView {
     gutter_width: u16,
     /// The time, cell and count of the last left click, used to detect multi clicks.
     last_click: Option<(Instant, Position, u8)>,
-    /// Whether the file explorer is shown to the left, so the view starts after it.
-    beside_explorer: bool,
 }
 
 impl EditorView {
     /// Creates the editor view.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Makes room on the left for the file [`Explorer`](crate::Explorer).
-    pub fn beside_explorer(self) -> Self {
-        Self {
-            beside_explorer: true,
-            ..self
-        }
     }
 
     /// Records a left click at `at` and returns whether it is a single, double or triple click.
@@ -72,18 +61,8 @@ impl EditorView {
 }
 
 impl Layer for EditorView {
-    fn area(&self, screen: Rect) -> Rect {
-        let left = if self.beside_explorer {
-            explorer::width(screen)
-        } else {
-            0
-        };
-        Rect {
-            x: screen.x + left,
-            width: screen.width - left,
-            height: screen.height.saturating_sub(STATUS_HEIGHT),
-            ..screen
-        }
+    fn area(&self, layout: &Layout, _ui: &Ui) -> Rect {
+        layout.editor
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
@@ -183,6 +162,7 @@ impl Layer for EditorView {
         let row = usize::from(event.row.saturating_sub(area.y));
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                cx.ui.focus = Focus::Editor;
                 let count = self.click_count(Position::new(event.column, event.row));
                 if in_gutter || count == 3 {
                     cx.editor.select_line_at(row);
@@ -219,6 +199,9 @@ impl Layer for EditorView {
     }
 
     fn cursor(&self, area: Rect, cx: &Context<'_>) -> Option<Position> {
+        if cx.ui.focus != Focus::Editor || cx.ui.overlay.is_some() {
+            return None;
+        }
         let document = cx.editor.document();
         let text = document.text();
         let head = document.selection().head;
@@ -244,6 +227,7 @@ mod tests {
     use crate::{
         compositor::{Compositor, Context},
         theme::Theme,
+        ui::Ui,
     };
 
     /// Text is drawn after the gutter with tabs expanded and the cursor placed.
@@ -255,12 +239,16 @@ mod tests {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         let theme = Theme::default();
+        let mut ui = Ui::default();
+        ui.config.ui.tabs = false;
+        ui.config.ui.minimap = false;
         let mut terminal = Terminal::new(TestBackend::new(12, 3)).expect("test terminal");
         terminal
             .draw(|frame| {
                 let mut cx = Context {
                     editor: &mut editor,
                     theme: &theme,
+                    ui: &mut ui,
                 };
                 compositor.render(frame, &mut cx);
             })
