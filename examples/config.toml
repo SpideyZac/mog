@@ -77,7 +77,7 @@ args = []
 
 [discord]
 enabled = false
-# make an application at https://discord.com/developers/applications and paste its id
-client_id = ""
+# the official mog app, or make your own at https://discord.com/developers/applications
+client_id = "1556366148948459571"
 large_image = "mog"
 show_file = true

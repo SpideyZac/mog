@@ -2,6 +2,9 @@
 
 use serde::Deserialize;
 
+/// The id of the official mog Discord application.
+pub const DEFAULT_CLIENT_ID: &str = "1556366148948459571";
+
 /// Settings for showing what you edit on your Discord profile.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -20,7 +23,7 @@ impl Default for DiscordConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            client_id: String::new(),
+            client_id: DEFAULT_CLIENT_ID.into(),
             large_image: "mog".into(),
             show_file: true,
         }

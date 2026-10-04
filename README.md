@@ -282,7 +282,7 @@ check.command = "clippy"
 | key | default | |
 | --- | --- | --- |
 | `enabled` | `false` | Show what you're editing on your Discord profile |
-| `client_id` | `""` | Id of your app from the [Discord developer portal](https://discord.com/developers/applications) |
+| `client_id` | `"1556366148948459571"` | The mog app, or your own from the [Discord developer portal](https://discord.com/developers/applications) |
 | `large_image` | `"mog"` | Art asset key for the big picture |
 | `show_file` | `true` | Show the file name. Turn off to keep it secret |
 
