@@ -4,7 +4,9 @@
 //! own thread because audio devices are not always safe to move between threads. If there is no
 //! audio device, every call quietly does nothing.
 
+pub mod capture;
 pub mod music;
+pub mod spectrum;
 pub mod synth;
 
 use std::{
@@ -17,6 +19,7 @@ use std::{
     thread,
 };
 
+pub use capture::Loopback;
 pub use music::Mood;
 use rodio::{DeviceSinkBuilder, buffer::SamplesBuffer};
 pub use synth::Sfx;
