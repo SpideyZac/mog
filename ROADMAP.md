@@ -32,8 +32,8 @@
 - [x] Problems list
 - [x] Create, rename and delete files from the explorer
 - [x] Right click menu
-- [ ] Multiple cursors
-- [ ] Splits
+- [x] Multiple cursors
+- [x] Splits
 
 ## Look and feel
 
