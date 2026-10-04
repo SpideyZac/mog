@@ -7,7 +7,8 @@ use mog_tui::CommandInfo;
 pub const CATALOG: &[(&str, &str)] = &[
     ("save", "File: Save"),
     ("file.save_as", "File: Save as"),
-    ("file.new", "File: New file"),
+    ("file.new", "File: New untitled file"),
+    ("file.create", "File: Create file in project"),
     ("finder.files", "File: Find a file"),
     ("close_tab", "File: Close tab"),
     ("next_tab", "File: Next tab"),

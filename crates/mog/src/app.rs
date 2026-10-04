@@ -932,6 +932,15 @@ impl App {
             "prompt.submit" => self.submit_prompt(),
             "file.save_as" => self.ask_save_as(),
             "file.new" => self.editor.new_document(),
+            "file.create" => {
+                let root = self.ui.root.clone();
+                self.ui.ask(
+                    PromptKind::NewFile(root),
+                    "\u{271a} new file",
+                    "",
+                    "a path in the project folder, end with / to make a folder",
+                );
+            }
             "settings.open" => self.ui.open(Overlay::Settings),
             "lsp.complete" => self.request_completion(true),
             "lsp.hover" => self.request_feature("hover"),
