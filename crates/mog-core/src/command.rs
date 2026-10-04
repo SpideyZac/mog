@@ -110,6 +110,14 @@ pub enum Command {
     MoveLineDown,
     /// Removes one level of indentation from the selected lines.
     Outdent,
+    /// Adds a cursor selecting the next occurrence of the selection, or selects the word.
+    SelectNextOccurrence,
+    /// Puts a cursor on every occurrence of the selection.
+    SelectAllOccurrences,
+    /// Adds a cursor on the line above.
+    AddCursorAbove,
+    /// Adds a cursor on the line below.
+    AddCursorBelow,
     /// Reverts the last edit.
     Undo,
     /// Reapplies the last undone edit.
@@ -141,7 +149,7 @@ pub enum Command {
 }
 
 /// Commands without arguments paired with their names.
-const SIMPLE: [(Command, &str); 23] = [
+const SIMPLE: [(Command, &str); 27] = [
     (Command::InsertNewline, "insert_newline"),
     (Command::InsertTab, "insert_tab"),
     (Command::DeleteBackward, "delete_backward"),
@@ -154,6 +162,10 @@ const SIMPLE: [(Command, &str); 23] = [
     (Command::MoveLineUp, "move_line_up"),
     (Command::MoveLineDown, "move_line_down"),
     (Command::Outdent, "outdent"),
+    (Command::SelectNextOccurrence, "select_next_occurrence"),
+    (Command::SelectAllOccurrences, "select_all_occurrences"),
+    (Command::AddCursorAbove, "add_cursor_above"),
+    (Command::AddCursorBelow, "add_cursor_below"),
     (Command::Undo, "undo"),
     (Command::Redo, "redo"),
     (Command::Copy, "copy"),

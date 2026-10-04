@@ -12,16 +12,12 @@ use crate::{
     view,
 };
 
-/// Builds one change per cursor with `change`, then returns the transaction and the cursors
-/// after it, main cursor first.
+/// Applies one change per cursor, given main cursor first, and returns the transaction and the
+/// cursors after it in the same order.
 ///
 /// Changes that would overlap an earlier one are skipped along with their cursor.
-pub fn edit_all(ranges: &[Range], change: impl Fn(Range) -> Change) -> (Transaction, Vec<Range>) {
-    let mut changes: Vec<(usize, Change)> = ranges
-        .iter()
-        .map(|&range| change(range))
-        .enumerate()
-        .collect();
+pub fn edit_all(changes: Vec<Change>) -> (Transaction, Vec<Range>) {
+    let mut changes: Vec<(usize, Change)> = changes.into_iter().enumerate().collect();
     changes.sort_by_key(|(_, change)| change.start);
     let mut kept: Vec<(usize, Change)> = Vec::with_capacity(changes.len());
     for (i, change) in changes {
@@ -104,11 +100,16 @@ mod tests {
     fn types_everywhere() {
         let mut text = Rope::from_str("a\nb\nc");
         let ranges = [Range::point(1), Range::point(3), Range::point(5)];
-        let (tx, after) = edit_all(&ranges, |range| Change {
-            start: range.from(),
-            end: range.to(),
-            text: "!".into(),
-        });
+        let (tx, after) = edit_all(
+            ranges
+                .iter()
+                .map(|range| Change {
+                    start: range.from(),
+                    end: range.to(),
+                    text: "!".into(),
+                })
+                .collect(),
+        );
         tx.apply(&mut text);
         assert_eq!(text.to_string(), "a!\nb!\nc!");
         assert_eq!(after, [Range::point(2), Range::point(5), Range::point(8)]);
@@ -118,11 +119,16 @@ mod tests {
     #[test]
     fn skips_overlaps() {
         let ranges = [Range::new(0, 3), Range::new(2, 4)];
-        let (tx, after) = edit_all(&ranges, |range| Change {
-            start: range.from(),
-            end: range.to(),
-            text: String::new(),
-        });
+        let (tx, after) = edit_all(
+            ranges
+                .iter()
+                .map(|range| Change {
+                    start: range.from(),
+                    end: range.to(),
+                    text: String::new(),
+                })
+                .collect(),
+        );
         assert_eq!(tx.changes().len(), 1);
         assert_eq!(after.len(), 1);
     }

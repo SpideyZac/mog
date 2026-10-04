@@ -7,10 +7,12 @@ use ropey::Rope;
 use crate::{
     clipboard::Clipboard,
     command::{Command, Motion},
+    cursors,
     document::Document,
     lines::{self, LineEdit},
     movement,
     range::Range,
+    search,
     transaction::{Change, Transaction},
     view::{self, View},
 };
@@ -258,8 +260,22 @@ impl Editor {
             self.quit_armed = false;
         }
         let close_armed = mem::take(&mut self.close_armed);
+        if !self.document().cursors().is_empty() {
+            if let Some(outcome) = self.execute_multi(&command) {
+                return outcome;
+            }
+            // everything else works on the main cursor only
+            let main = self.document().selection();
+            self.document_mut().set_selection(main);
+        }
         match command {
             Command::Move { motion, extend } => self.move_cursor(motion, extend),
+            Command::SelectNextOccurrence => self.select_next_occurrence(),
+            Command::SelectAllOccurrences => self.select_all_occurrences(),
+            Command::AddCursorAbove | Command::AddCursorBelow => {
+                let up = command == Command::AddCursorAbove;
+                self.add_vertical_cursor(up);
+            }
             Command::InsertChar(ch) => {
                 let head = self.document().selection().head;
                 let merge = typing_at == Some(head) && !ch.is_whitespace();
@@ -625,11 +641,26 @@ impl Editor {
 
     /// Applies a cursor motion.
     fn move_cursor(&mut self, motion: Motion, extend: bool) {
+        let range = self.document().selection();
+        let preferred = self.views[self.active].preferred_col;
+        let (pos, preferred_col) = self.motion_target(range, motion, extend, preferred);
+        let range = range.put_head(pos, extend);
+        self.document_mut().set_selection(range);
+        self.views[self.active].preferred_col = preferred_col;
+        self.reveal_cursor();
+    }
+
+    /// Returns where `motion` takes `range` and the column vertical motion should keep.
+    fn motion_target(
+        &self,
+        range: Range,
+        motion: Motion,
+        extend: bool,
+        preferred: Option<usize>,
+    ) -> (usize, Option<usize>) {
         let tab_width = self.options.tab_width;
         let page = isize::try_from(self.views[self.active].height.max(1)).unwrap_or(isize::MAX);
-        let document = &self.documents[self.active];
-        let text = document.text();
-        let range = document.selection();
+        let text = self.document().text();
         let head = range.head;
         let mut preferred_col = None;
         let pos = match motion {
@@ -644,9 +675,7 @@ impl Editor {
                     Motion::PageUp => -page,
                     _ => page,
                 };
-                let col = self.views[self.active]
-                    .preferred_col
-                    .unwrap_or_else(|| view::visual_col(text, head, tab_width));
+                let col = preferred.unwrap_or_else(|| view::visual_col(text, head, tab_width));
                 preferred_col = Some(col);
                 let line = text.char_to_line(head);
                 let last = text.len_lines() - 1;
@@ -663,10 +692,204 @@ impl Editor {
             Motion::DocStart => 0,
             Motion::DocEnd => text.len_chars(),
         };
-        let range = range.put_head(pos, extend);
-        self.document_mut().set_selection(range);
-        self.views[self.active].preferred_col = preferred_col;
+        (pos, preferred_col)
+    }
+
+    /// Runs `command` at every cursor if it is something that makes sense there.
+    ///
+    /// Returns `None` for commands that only act on the main cursor.
+    fn execute_multi(&mut self, command: &Command) -> Option<Outcome> {
+        let ranges = self.document().all_ranges();
+        let text = self.document().text();
+        let ending = self.document().line_ending().as_str();
+        let replace = |range: Range, insert: String| Change {
+            start: range.from(),
+            end: range.to(),
+            text: insert,
+        };
+        let changes: Vec<Change> = match command {
+            Command::InsertChar(ch) => ranges.iter().map(|&r| replace(r, ch.to_string())).collect(),
+            Command::InsertText(insert) => {
+                let insert = insert.replace("\r\n", "\n").replace('\n', ending);
+                ranges.iter().map(|&r| replace(r, insert.clone())).collect()
+            }
+            Command::Paste => {
+                let pasted = self.clipboard.get()?;
+                let lines: Vec<&str> = pasted.lines().collect();
+                // one line per cursor when the counts match, like most editors
+                if lines.len() == ranges.len() {
+                    ranges
+                        .iter()
+                        .zip(lines)
+                        .map(|(&r, line)| replace(r, line.to_owned()))
+                        .collect()
+                } else {
+                    ranges.iter().map(|&r| replace(r, pasted.clone())).collect()
+                }
+            }
+            Command::InsertNewline => ranges
+                .iter()
+                .map(|&r| {
+                    let start = movement::line_start(text, r.from());
+                    let indent: String = text
+                        .slice(start..r.from())
+                        .chars()
+                        .take_while(|ch| *ch == ' ' || *ch == '\t')
+                        .collect();
+                    replace(r, format!("{ending}{indent}"))
+                })
+                .collect(),
+            Command::InsertTab => {
+                let unit = self.indent_unit();
+                ranges.iter().map(|&r| replace(r, unit.clone())).collect()
+            }
+            Command::DeleteBackward | Command::DeleteForward | Command::DeleteWordBackward => {
+                let motion: fn(&Rope, usize) -> usize = match command {
+                    Command::DeleteBackward => movement::left,
+                    Command::DeleteForward => movement::right,
+                    _ => movement::word_left,
+                };
+                ranges
+                    .iter()
+                    .map(|&r| {
+                        let (start, end) = if r.is_empty() {
+                            let target = motion(text, r.head);
+                            (target.min(r.head), target.max(r.head))
+                        } else {
+                            (r.from(), r.to())
+                        };
+                        Change {
+                            start,
+                            end,
+                            text: String::new(),
+                        }
+                    })
+                    .collect()
+            }
+            Command::Copy | Command::Cut => {
+                let copied: Vec<String> = ranges
+                    .iter()
+                    .map(|r| text.slice(r.from()..r.to()).to_string())
+                    .collect();
+                self.clipboard.set(copied.join("\n"));
+                if *command == Command::Copy {
+                    return Some(Outcome::Done);
+                }
+                ranges.iter().map(|&r| replace(r, String::new())).collect()
+            }
+            Command::Move { motion, extend } => {
+                let moved: Vec<Range> = ranges
+                    .iter()
+                    .map(|&r| {
+                        let (pos, _) = self.motion_target(r, *motion, *extend, None);
+                        r.put_head(pos, *extend)
+                    })
+                    .collect();
+                self.set_all_ranges(moved);
+                return Some(Outcome::Done);
+            }
+            Command::SelectNextOccurrence => {
+                self.select_next_occurrence();
+                return Some(Outcome::Done);
+            }
+            Command::AddCursorAbove | Command::AddCursorBelow => {
+                self.add_vertical_cursor(*command == Command::AddCursorAbove);
+                return Some(Outcome::Done);
+            }
+            _ => return None,
+        };
+        let (tx, after) = cursors::edit_all(changes);
+        let main = after.first().copied().unwrap_or_default();
+        self.document_mut().apply(tx, main, false);
+        self.document_mut()
+            .set_cursors(after.into_iter().skip(1).collect());
+        self.views[self.active].preferred_col = None;
         self.reveal_cursor();
+        Some(Outcome::Done)
+    }
+
+    /// Sets every cursor, main first, dropping duplicates.
+    fn set_all_ranges(&mut self, ranges: Vec<Range>) {
+        let mut ranges = cursors::dedup(ranges).into_iter();
+        let Some(main) = ranges.next() else {
+            return;
+        };
+        self.document_mut().set_selection(main);
+        self.document_mut().set_cursors(ranges.collect());
+        self.reveal_cursor();
+    }
+
+    /// Selects the word at the cursor, or adds a cursor on the next occurrence of the selection.
+    fn select_next_occurrence(&mut self) {
+        let document = self.document();
+        let main = document.selection();
+        if main.is_empty() {
+            let (from, to) = movement::word_at(document.text(), main.head);
+            if from < to {
+                self.document_mut().set_selection(Range::new(from, to));
+            }
+            return;
+        }
+        let mut ranges = document.all_ranges();
+        match cursors::next_occurrence(document.text(), &ranges) {
+            Some(next) => {
+                ranges.push(next);
+                self.set_all_ranges(ranges);
+            }
+            None => self.set_status("no more matches"),
+        }
+    }
+
+    /// Puts a cursor on every occurrence of the selection, or of the word at the cursor.
+    fn select_all_occurrences(&mut self) {
+        let document = self.document();
+        let main = document.selection();
+        let (from, to) = if main.is_empty() {
+            movement::word_at(document.text(), main.head)
+        } else {
+            (main.from(), main.to())
+        };
+        if from >= to {
+            return;
+        }
+        let needle = document.text().slice(from..to).to_string();
+        let mut ranges: Vec<Range> = search::find_all(document.text(), &needle, true)
+            .into_iter()
+            .map(|(a, b)| Range::new(a, b))
+            .collect();
+        // keep the one the cursor was on as the main cursor
+        if let Some(at) = ranges.iter().position(|range| range.from() == from) {
+            ranges.swap(0, at);
+        }
+        let count = ranges.len();
+        self.set_all_ranges(ranges);
+        self.set_status(format!("{count} cursors, go wild"));
+    }
+
+    /// Adds a cursor on the line above or below the outermost cursor.
+    fn add_vertical_cursor(&mut self, up: bool) {
+        let document = self.document();
+        let mut ranges = document.all_ranges();
+        if let Some(added) =
+            cursors::add_vertical(document.text(), &ranges, up, self.options.tab_width)
+        {
+            ranges.push(added);
+            self.set_all_ranges(ranges);
+        }
+    }
+
+    /// Adds a cursor at a cell of the view, or removes one that is already there.
+    pub fn toggle_cursor_at(&mut self, row: usize, col: usize) {
+        let pos = self.pos_at_cell(row, col);
+        let mut ranges = self.document().all_ranges();
+        if let Some(at) = ranges.iter().position(|range| range.head == pos) {
+            if ranges.len() > 1 {
+                ranges.remove(at);
+            }
+        } else {
+            ranges.push(Range::point(pos));
+        }
+        self.set_all_ranges(ranges);
     }
 
     /// Replaces the selection with `text` and puts the cursor after it.
@@ -944,6 +1167,40 @@ mod tests {
         editor.execute(Command::InsertNewline);
         assert_eq!(text(&editor), "{\n    \n}");
         assert_eq!(editor.document().selection().head, 6);
+    }
+
+    /// Typing and deleting happen at every cursor, and moving moves them all.
+    #[test]
+    fn multiple_cursors_edit_together() {
+        let mut editor = editor_with("foo bar foo baz foo", 0);
+        editor.execute(Command::SelectNextOccurrence);
+        editor.execute(Command::SelectNextOccurrence);
+        editor.execute(Command::SelectNextOccurrence);
+        assert_eq!(editor.document().cursors().len(), 2);
+        editor.execute(Command::InsertChar('x'));
+        assert_eq!(text(&editor), "x bar x baz x");
+        editor.execute(Command::DeleteBackward);
+        editor.execute(Command::InsertText("mog".into()));
+        assert_eq!(text(&editor), "mog bar mog baz mog");
+        editor.execute(Command::Undo);
+        assert!(editor.document().cursors().is_empty());
+        let mut editor = editor_with("ab\nab\nab", 1);
+        editor.execute(Command::AddCursorBelow);
+        editor.execute(Command::AddCursorBelow);
+        editor.execute(Command::Move {
+            motion: Motion::LineEnd,
+            extend: false,
+        });
+        editor.execute(Command::InsertChar('!'));
+        assert_eq!(text(&editor), "ab!\nab!\nab!");
+    }
+
+    /// Selecting all occurrences puts a cursor on each.
+    #[test]
+    fn select_all_occurrences() {
+        let mut editor = editor_with("a.b a.b", 1);
+        editor.execute(Command::SelectAllOccurrences);
+        assert_eq!(editor.document().cursors().len(), 1);
     }
 
     /// Mouse helpers select words and lines.

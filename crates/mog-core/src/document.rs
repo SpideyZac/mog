@@ -73,6 +73,8 @@ pub struct Document {
     saved_version: u64,
     /// Problems reported about the text.
     diagnostics: Vec<Diagnostic>,
+    /// Extra cursors besides the main selection.
+    cursors: Vec<Range>,
 }
 
 impl Document {
@@ -157,10 +159,34 @@ impl Document {
         self.selection
     }
 
-    /// Replaces the selection, clamping it to the text.
+    /// Replaces the selection, clamping it to the text, and drops any extra cursors.
     pub fn set_selection(&mut self, range: Range) {
         let max = self.text.len_chars();
         self.selection = Range::new(range.anchor.min(max), range.head.min(max));
+        self.cursors.clear();
+    }
+
+    /// Returns the extra cursors besides the main selection.
+    pub fn cursors(&self) -> &[Range] {
+        &self.cursors
+    }
+
+    /// Replaces the extra cursors, clamping them and dropping ones on the main cursor.
+    pub fn set_cursors(&mut self, cursors: Vec<Range>) {
+        let max = self.text.len_chars();
+        let main = self.selection.head;
+        self.cursors = cursors
+            .into_iter()
+            .map(|range| Range::new(range.anchor.min(max), range.head.min(max)))
+            .filter(|range| range.head != main)
+            .collect();
+    }
+
+    /// Returns every cursor, the main selection first.
+    pub fn all_ranges(&self) -> Vec<Range> {
+        let mut ranges = vec![self.selection];
+        ranges.extend_from_slice(&self.cursors);
+        ranges
     }
 
     /// Returns the line ending used for new lines.
