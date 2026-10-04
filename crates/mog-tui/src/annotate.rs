@@ -433,7 +433,8 @@ impl Layer for Annotations {
         _area: Rect,
         cx: &mut Context<'_>,
     ) -> EventResult {
-        if !cx.ui.annotate.active {
+        // popups opened while drawing get the mouse and keys
+        if !cx.ui.annotate.active || cx.ui.overlay.is_some() {
             return EventResult::Ignored;
         }
         let cell = (event.column, event.row);
@@ -466,6 +467,9 @@ impl Layer for Annotations {
     }
 
     fn handle_key(&mut self, chord: KeyChord, cx: &mut Context<'_>) -> EventResult {
+        if cx.ui.overlay.is_some() {
+            return EventResult::Ignored;
+        }
         let state = &mut cx.ui.annotate;
         if !state.active {
             return EventResult::Ignored;
