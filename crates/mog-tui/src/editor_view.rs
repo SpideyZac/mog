@@ -17,6 +17,7 @@ use ratatui::{
 
 use crate::{
     compositor::{Context, EventResult, Layer},
+    menu,
     theme::{RAINBOW_LEN, Theme},
     ui::{Focus, Layout, Ui},
 };
@@ -469,6 +470,22 @@ impl Layer for EditorView {
                 cx.editor.execute(Command::Scroll(WHEEL_LINES));
             }
             MouseEventKind::Up(MouseButton::Left) => {}
+            MouseEventKind::Down(MouseButton::Right) => {
+                cx.ui.focus = Focus::Editor;
+                // right clicking outside the selection moves the cursor there first
+                let selection = cx.editor.document().selection();
+                let at = cx.editor.view().pos_at_cell(
+                    cx.editor.document().text(),
+                    row,
+                    col,
+                    cx.editor.options().tab_width,
+                );
+                if !(selection.from()..selection.to()).contains(&at) {
+                    cx.editor.click(row, col, false);
+                }
+                let items = menu::editor_menu(cx.ui);
+                menu::open_menu(cx.ui, Position::new(event.column, event.row), items);
+            }
             _ => return EventResult::Ignored,
         }
         EventResult::Consumed

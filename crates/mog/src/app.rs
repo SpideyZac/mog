@@ -19,8 +19,9 @@ use mog_core::{
 use mog_flair::GraphView;
 use mog_lsp::{LspEvent, convert};
 use mog_tui::{
-    CompletionMenu, Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap,
-    Overlay, Popups, PromptKind, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, UiEvent,
+    CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer, Focus,
+    Minimap, Overlay, Popups, PromptKind, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui,
+    UiEvent,
     completion::{self, CompletionState},
     input, search,
     settings::{SettingKey, change as settings_change, persisted},
@@ -156,6 +157,7 @@ impl App {
         compositor.push(Box::new(Popups::new()));
         compositor.push(Box::new(SettingsPanel::new()));
         compositor.push(Box::new(GraphView::new()));
+        compositor.push(Box::new(ContextMenu::new()));
 
         let mut editor = Editor::new(clipboard::open());
         editor.set_options(settings::options(&config));

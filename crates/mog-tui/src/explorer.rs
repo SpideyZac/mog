@@ -4,11 +4,16 @@ use std::path::PathBuf;
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use mog_core::{FileTree, Key, KeyChord};
-use ratatui::{buffer::Buffer, layout::Rect, style::Style};
+use ratatui::{
+    buffer::Buffer,
+    layout::{Position, Rect},
+    style::Style,
+};
 
 use crate::{
     compositor::{Context, EventResult, Layer},
     icons,
+    menu::{self, MenuItem},
     ui::{Focus, Layout, PromptKind, Ui},
 };
 
@@ -144,6 +149,36 @@ impl Explorer {
         };
         let hint = format!("in {place}, end with / to make a folder");
         ui.ask(PromptKind::NewFile(folder), "\u{271a} new file", "", hint);
+    }
+
+    /// Returns the right click menu for the highlighted entry.
+    fn menu_items(&self) -> Vec<MenuItem> {
+        let folder = self.target_folder();
+        let mut items = vec![MenuItem::ask(
+            "New file",
+            PromptKind::NewFile(folder),
+            "\u{271a} new file",
+            "",
+            "end with / to make a folder",
+        )];
+        if let Some(entry) = self.tree.entries().get(self.selected) {
+            items.push(MenuItem::ask(
+                "Rename",
+                PromptKind::RenameFile(entry.path.clone()),
+                "\u{270e} rename",
+                &entry.name,
+                "a new name, or a path relative to the parent folder",
+            ));
+            items.push(MenuItem::separator());
+            items.push(MenuItem::ask(
+                "Delete",
+                PromptKind::DeleteFile(entry.path.clone()),
+                &format!("\u{2716} delete {}", entry.name),
+                "",
+                "type yes to delete it",
+            ));
+        }
+        items
     }
 
     /// Asks for a new name for the highlighted entry.
@@ -323,6 +358,17 @@ impl Layer for Explorer {
                     self.selected = index;
                     self.activate(cx);
                 }
+            }
+            MouseEventKind::Down(MouseButton::Right) => {
+                cx.ui.focus = Focus::Explorer;
+                let row = usize::from(event.row.saturating_sub(area.y + HEADER_HEIGHT));
+                if event.row >= area.y + HEADER_HEIGHT
+                    && self.scroll + row < self.tree.entries().len()
+                {
+                    self.selected = self.scroll + row;
+                }
+                let items = self.menu_items();
+                menu::open_menu(cx.ui, Position::new(event.column, event.row), items);
             }
             MouseEventKind::ScrollUp => {
                 self.scroll = self.scroll.saturating_sub(WHEEL_ROWS);

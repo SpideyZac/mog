@@ -11,7 +11,7 @@ use ratatui::{
 };
 
 use crate::{
-    completion::CompletionState, search::SearchState, settings::SettingKey,
+    completion::CompletionState, menu::MenuState, search::SearchState, settings::SettingKey,
     status_line::STATUS_HEIGHT,
 };
 
@@ -54,6 +54,8 @@ pub enum Overlay {
     Prompt,
     /// The project graph.
     Graph,
+    /// A right click menu.
+    Menu,
 }
 
 /// What a [`Prompt`] is asking for.
@@ -217,6 +219,8 @@ pub struct Ui {
     pub prompt: Option<Prompt>,
     /// A prompt that was answered and waits for the app to act on it.
     pub submitted: Option<Prompt>,
+    /// The open right click menu.
+    pub menu: Option<MenuState>,
 }
 
 impl Ui {
