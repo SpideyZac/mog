@@ -164,6 +164,18 @@ impl LanguageServers {
     /// Returns a message for each server that could not be started.
     pub fn sync(&mut self, documents: &[Document]) -> Vec<String> {
         let mut problems = Vec::new();
+        let closed: Vec<PathBuf> = self
+            .synced
+            .keys()
+            .filter(|path| !documents.iter().any(|d| d.path() == Some(path.as_path())))
+            .cloned()
+            .collect();
+        for path in closed {
+            self.synced.remove(&path);
+            if let Some(client) = self.client_for(&path) {
+                client.did_close(&path);
+            }
+        }
         for document in documents {
             let Some(path) = document.path() else {
                 continue;
@@ -220,6 +232,15 @@ impl LanguageServers {
                 self.failed.insert(name.to_owned());
                 Err(Some(format!("could not start {}: {err}", config.command)))
             }
+        }
+    }
+
+    /// Tells the server for `path` that it was saved, so checks that run on save start.
+    pub fn saved(&self, path: &Path) {
+        if self.synced.contains_key(path)
+            && let Some(client) = self.client_for(path)
+        {
+            client.did_save(path);
         }
     }
 

@@ -249,6 +249,20 @@ impl Client {
         );
     }
 
+    /// Tells the server a document was saved to disk.
+    pub fn did_save(&self, path: &Path) {
+        if let Some(params) = document_params(path) {
+            self.notify("textDocument/didSave", params);
+        }
+    }
+
+    /// Tells the server a document was closed.
+    pub fn did_close(&self, path: &Path) {
+        if let Some(params) = document_params(path) {
+            self.notify("textDocument/didClose", params);
+        }
+    }
+
     /// Tells the server a document changed, sending the full new text.
     pub fn did_change(&self, path: &Path, version: i32, text: &str) {
         let Some(uri) = convert::path_to_uri(path) else {
@@ -281,6 +295,12 @@ async fn last_lines(stderr: impl AsyncRead + Unpin) -> String {
     kept.join(" ")
 }
 
+/// Returns the arguments of a notification that is only about the document at `path`.
+fn document_params(path: &Path) -> Option<Value> {
+    let uri = convert::path_to_uri(path)?;
+    Some(json!({ "textDocument": { "uri": uri } }))
+}
+
 /// Builds the initialize request arguments for a project at `root`.
 fn initialize_params(root: &Path) -> Value {
     let folders = convert::path_to_uri(root).map(|uri| {
@@ -300,7 +320,11 @@ fn initialize_params(root: &Path) -> Value {
         }),
         capabilities: ClientCapabilities {
             text_document: Some(TextDocumentClientCapabilities {
-                synchronization: Some(TextDocumentSyncClientCapabilities::default()),
+                synchronization: Some(TextDocumentSyncClientCapabilities {
+                    // rust-analyzer only runs cargo check when told about saves
+                    did_save: Some(true),
+                    ..TextDocumentSyncClientCapabilities::default()
+                }),
                 publish_diagnostics: Some(PublishDiagnosticsClientCapabilities::default()),
                 completion: Some(CompletionClientCapabilities {
                     completion_item: Some(CompletionItemCapability {
@@ -523,5 +547,75 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
     /// Writes a message to the server.
     async fn write(&mut self, message: Message) -> io::Result<()> {
         transport::write_message(&mut self.writer, &message).await
+    }
+}
+
+#[cfg(test)]
+/// Tests for [`Client`].
+mod tests {
+    use std::{env, time::Duration};
+
+    use serde_json::{Value, json};
+    use tokio::{
+        io::{self, BufReader},
+        sync::mpsc,
+        time,
+    };
+
+    use super::Client;
+    use crate::transport::{self, Message};
+
+    /// Saving and closing a document reach the server after the handshake.
+    #[tokio::test]
+    async fn sends_save_and_close() {
+        let (client_side, server_side) = io::duplex(1 << 16);
+        let (client_read, client_write) = io::split(client_side);
+        let (server_read, mut server_write) = io::split(server_side);
+        let (events, _events) = mpsc::unbounded_channel();
+        let root = env::temp_dir();
+        let (client, _task) = Client::connect("test", client_read, client_write, &root, events);
+        let file = root.join("main.rs");
+        client.did_save(&file);
+        client.did_close(&file);
+        let mut server_read = BufReader::new(server_read);
+        let mut methods = Vec::new();
+        while methods.len() < 4 {
+            let message = time::timeout(
+                Duration::from_secs(5),
+                transport::read_message(&mut server_read),
+            )
+            .await
+            .expect("server got every message")
+            .expect("read")
+            .expect("message");
+            match message {
+                Message::Request { id, method, .. } => {
+                    let reply = Message::Response {
+                        id,
+                        result: Ok(json!({ "capabilities": {} })),
+                    };
+                    transport::write_message(&mut server_write, &reply)
+                        .await
+                        .expect("write");
+                    methods.push(method);
+                }
+                Message::Notification { method, params } => {
+                    if method != "initialized" {
+                        assert_ne!(params["textDocument"]["uri"], Value::Null);
+                    }
+                    methods.push(method);
+                }
+                Message::Response { .. } => {}
+            }
+        }
+        assert_eq!(
+            methods,
+            [
+                "initialize",
+                "initialized",
+                "textDocument/didSave",
+                "textDocument/didClose"
+            ]
+        );
     }
 }

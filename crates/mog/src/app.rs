@@ -690,7 +690,7 @@ impl App {
                 let path = resolve(&self.ui.root);
                 let result = self.editor.save_as(&path);
                 if result.is_ok() {
-                    self.ui.events.push(UiEvent::Saved);
+                    self.saved();
                 }
                 result
             }
@@ -1046,6 +1046,16 @@ impl App {
         }
     }
 
+    /// Reacts to the focused document being saved.
+    fn saved(&mut self) {
+        self.ui.events.push(UiEvent::Saved);
+        // a save as needs the new path opened on the server before it hears about the save
+        self.sync_language_servers();
+        if let Some(path) = self.editor.document().path() {
+            self.lsp.saved(path);
+        }
+    }
+
     /// Tells language servers about opened and changed documents.
     fn sync_language_servers(&mut self) {
         let problems = self.lsp.sync(self.editor.documents());
@@ -1094,7 +1104,7 @@ impl App {
             self.ui.events.push(event);
         }
         if saving && !self.editor.document().is_modified() {
-            self.ui.events.push(UiEvent::Saved);
+            self.saved();
         }
         if changed {
             self.ui.hover = None;
