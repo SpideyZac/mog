@@ -50,8 +50,8 @@ pub struct Editor {
     documents: Vec<Document>,
     /// The index of the focused document.
     active: usize,
-    /// The view showing the focused document.
-    view: View,
+    /// The view of each open document, in the same order as `documents`.
+    views: Vec<View>,
     /// Editing settings.
     options: Options,
     /// Where copied text goes.
@@ -70,7 +70,7 @@ impl Editor {
         Self {
             documents: vec![Document::new()],
             active: 0,
-            view: View::default(),
+            views: vec![View::default()],
             options: Options::default(),
             clipboard,
             status: None,
@@ -96,21 +96,60 @@ impl Editor {
             .position(|open| open.path().is_some() && open.path() == document.path())
         {
             self.active = index;
-        } else if current.path().is_none()
-            && !current.is_modified()
-            && current.text().len_chars() == 0
-        {
-            self.documents[self.active] = document;
-        } else {
-            self.documents.push(document);
-            self.active = self.documents.len() - 1;
+            return Ok(());
         }
-        self.view = View {
-            width: self.view.width,
-            height: self.view.height,
+        let view = View {
+            width: self.view().width,
+            height: self.view().height,
             ..View::default()
         };
+        if current.path().is_none() && !current.is_modified() && current.text().len_chars() == 0 {
+            self.documents[self.active] = document;
+            self.views[self.active] = view;
+        } else {
+            self.documents.push(document);
+            self.views.push(view);
+            self.active = self.documents.len() - 1;
+        }
         Ok(())
+    }
+
+    /// Returns the index of the focused document.
+    pub fn active(&self) -> usize {
+        self.active
+    }
+
+    /// Focuses the document at `index`. Out of range indexes are ignored.
+    pub fn focus(&mut self, index: usize) {
+        if index < self.documents.len() {
+            self.active = index;
+            self.typing_at = None;
+        }
+    }
+
+    /// Closes the document at `index`, leaving an empty scratch document if it was the last.
+    ///
+    /// Unsaved changes are thrown away, so callers should ask first.
+    pub fn close(&mut self, index: usize) {
+        if index >= self.documents.len() {
+            return;
+        }
+        if self.documents.len() == 1 {
+            let view = View {
+                width: self.view().width,
+                height: self.view().height,
+                ..View::default()
+            };
+            self.documents[0] = Document::new();
+            self.views[0] = view;
+            return;
+        }
+        self.documents.remove(index);
+        self.views.remove(index);
+        if self.active > index || self.active == self.documents.len() {
+            self.active -= 1;
+        }
+        self.typing_at = None;
     }
 
     /// Returns the focused document.
@@ -135,12 +174,12 @@ impl Editor {
 
     /// Returns the view of the focused document.
     pub fn view(&self) -> &View {
-        &self.view
+        &self.views[self.active]
     }
 
     /// Returns the view of the focused document mutably.
     pub fn view_mut(&mut self) -> &mut View {
-        &mut self.view
+        &mut self.views[self.active]
     }
 
     /// Returns the editing settings.
@@ -221,7 +260,7 @@ impl Editor {
             Command::Quit => return self.quit(),
             Command::Scroll(lines) => {
                 let text = self.documents[self.active].text();
-                self.view.scroll_by(lines, text);
+                self.views[self.active].scroll_by(lines, text);
             }
             unhandled @ (Command::CommandPalette | Command::Custom(_)) => {
                 return Outcome::Unhandled(unhandled);
@@ -237,7 +276,7 @@ impl Editor {
         let pos = self.pos_at_cell(row, col);
         let range = self.document().selection().put_head(pos, extend);
         self.document_mut().set_selection(range);
-        self.view.preferred_col = None;
+        self.views[self.active].preferred_col = None;
         self.typing_at = None;
     }
 
@@ -251,21 +290,21 @@ impl Editor {
     /// Selects the whole line shown on a row of the view.
     pub fn select_line_at(&mut self, row: usize) {
         let text = self.document().text();
-        let line = (self.view.scroll_line + row).min(text.len_lines() - 1);
+        let line = (self.views[self.active].scroll_line + row).min(text.len_lines() - 1);
         let (from, to) = movement::line_span(text, line);
         self.document_mut().set_selection(Range::new(from, to));
     }
 
     /// Returns the char offset shown at a cell of the view.
     fn pos_at_cell(&self, row: usize, col: usize) -> usize {
-        self.view
+        self.view()
             .pos_at_cell(self.document().text(), row, col, self.options.tab_width)
     }
 
     /// Scrolls the view so the cursor is visible.
     fn reveal_cursor(&mut self) {
         let document = &self.documents[self.active];
-        self.view.ensure_visible(
+        self.views[self.active].ensure_visible(
             document.text(),
             document.selection().head,
             self.options.tab_width,
@@ -275,7 +314,7 @@ impl Editor {
     /// Applies a cursor motion.
     fn move_cursor(&mut self, motion: Motion, extend: bool) {
         let tab_width = self.options.tab_width;
-        let page = isize::try_from(self.view.height.max(1)).unwrap_or(isize::MAX);
+        let page = isize::try_from(self.views[self.active].height.max(1)).unwrap_or(isize::MAX);
         let document = &self.documents[self.active];
         let text = document.text();
         let range = document.selection();
@@ -293,8 +332,7 @@ impl Editor {
                     Motion::PageUp => -page,
                     _ => page,
                 };
-                let col = self
-                    .view
+                let col = self.views[self.active]
                     .preferred_col
                     .unwrap_or_else(|| view::visual_col(text, head, tab_width));
                 preferred_col = Some(col);
@@ -315,7 +353,7 @@ impl Editor {
         };
         let range = range.put_head(pos, extend);
         self.document_mut().set_selection(range);
-        self.view.preferred_col = preferred_col;
+        self.views[self.active].preferred_col = preferred_col;
         self.reveal_cursor();
     }
 
@@ -328,7 +366,7 @@ impl Editor {
             after,
             merge,
         );
-        self.view.preferred_col = None;
+        self.views[self.active].preferred_col = None;
         self.reveal_cursor();
     }
 
@@ -379,7 +417,7 @@ impl Editor {
         };
         self.document_mut()
             .apply(Transaction::delete(from, to), Range::point(from), false);
-        self.view.preferred_col = None;
+        self.views[self.active].preferred_col = None;
         self.reveal_cursor();
     }
 
@@ -530,6 +568,24 @@ mod tests {
         editor.click(1, 1, false);
         editor.click(0, 0, true);
         assert_eq!(editor.document().selection(), Range::new(14, 0));
+    }
+
+    /// Each document keeps its own scroll position and closing moves focus to a neighbour.
+    #[test]
+    fn views_follow_documents() {
+        let dir = env::temp_dir();
+        let mut editor = editor_with("", 0);
+        editor.open(dir.join("mog-view-a.txt")).expect("open a");
+        editor.view_mut().scroll_line = 7;
+        editor.open(dir.join("mog-view-b.txt")).expect("open b");
+        assert_eq!(editor.view().scroll_line, 0);
+        editor.focus(0);
+        assert_eq!(editor.view().scroll_line, 7);
+        editor.close(0);
+        assert_eq!(editor.document().name(), "mog-view-b.txt");
+        editor.close(0);
+        assert_eq!(editor.documents().len(), 1);
+        assert!(editor.document().path().is_none());
     }
 
     /// Opening a file that is already open focuses it instead of adding a copy.
