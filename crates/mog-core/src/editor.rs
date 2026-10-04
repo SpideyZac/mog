@@ -112,6 +112,16 @@ impl Editor {
         &mut self.documents[self.active]
     }
 
+    /// Returns every open document.
+    pub fn documents(&self) -> &[Document] {
+        &self.documents
+    }
+
+    /// Returns every open document mutably.
+    pub fn documents_mut(&mut self) -> &mut [Document] {
+        &mut self.documents
+    }
+
     /// Returns the view of the focused document.
     pub fn view(&self) -> &View {
         &self.view
