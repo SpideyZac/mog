@@ -11,6 +11,7 @@ use ratatui::{
 
 use crate::{
     compositor::{Context, EventResult, Layer},
+    explorer,
     status_line::STATUS_HEIGHT,
 };
 
@@ -35,12 +36,22 @@ pub struct EditorView {
     gutter_width: u16,
     /// The time, cell and count of the last left click, used to detect multi clicks.
     last_click: Option<(Instant, Position, u8)>,
+    /// Whether the file explorer is shown to the left, so the view starts after it.
+    beside_explorer: bool,
 }
 
 impl EditorView {
     /// Creates the editor view.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Makes room on the left for the file [`Explorer`](crate::Explorer).
+    pub fn beside_explorer(self) -> Self {
+        Self {
+            beside_explorer: true,
+            ..self
+        }
     }
 
     /// Records a left click at `at` and returns whether it is a single, double or triple click.
@@ -62,7 +73,14 @@ impl EditorView {
 
 impl Layer for EditorView {
     fn area(&self, screen: Rect) -> Rect {
+        let left = if self.beside_explorer {
+            explorer::width(screen)
+        } else {
+            0
+        };
         Rect {
+            x: screen.x + left,
+            width: screen.width - left,
             height: screen.height.saturating_sub(STATUS_HEIGHT),
             ..screen
         }
