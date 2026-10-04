@@ -3,6 +3,7 @@
 use std::{env, time::Duration};
 
 use mog_lsp::{Client, LspEvent};
+use serde_json::Value;
 use tokio::{sync::mpsc, time};
 
 /// The client finishes the handshake with `rust-analyzer`.
@@ -11,7 +12,8 @@ use tokio::{sync::mpsc, time};
 async fn handshake_with_rust_analyzer() {
     let root = env::current_dir().expect("current dir");
     let (events, mut received) = mpsc::unbounded_channel();
-    let client = Client::start("rust", "rust-analyzer", &[], &root, events).expect("spawn");
+    let client =
+        Client::start("rust", "rust-analyzer", &[], &root, &Value::Null, events).expect("spawn");
     let event = time::timeout(Duration::from_secs(30), received.recv())
         .await
         .expect("no timeout");

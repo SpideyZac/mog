@@ -222,6 +222,7 @@ impl LanguageServers {
             &config.command,
             &config.args,
             &self.root,
+            &config.settings,
             self.events.clone(),
         ) {
             Ok(client) => {

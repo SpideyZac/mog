@@ -6,7 +6,7 @@ use mog_lsp::{
     Client, LspEvent, Message,
     transport::{read_message, write_message},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::{
     io::{self, BufReader},
     sync::mpsc,
@@ -20,7 +20,14 @@ async fn handshake_diagnostics_and_requests() {
     let (server_reader, client_writer) = io::duplex(4096);
     let root = env::current_dir().expect("current dir");
     let (events, mut received) = mpsc::unbounded_channel();
-    let (client, _task) = Client::connect("fake", client_reader, client_writer, &root, events);
+    let (client, _task) = Client::connect(
+        "fake",
+        client_reader,
+        client_writer,
+        &root,
+        &Value::Null,
+        events,
+    );
 
     let server = tokio::spawn(async move {
         let mut reader = BufReader::new(server_reader);

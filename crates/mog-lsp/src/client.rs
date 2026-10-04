@@ -13,7 +13,7 @@ use lsp_types::{
     CodeActionLiteralSupport, CompletionClientCapabilities, CompletionItemCapability,
     GotoCapability, HoverClientCapabilities, InitializeParams, MarkupKind,
     PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, TextDocumentClientCapabilities,
-    TextDocumentSyncClientCapabilities, WorkspaceFolder,
+    TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -116,7 +116,8 @@ pub struct Client {
 }
 
 impl Client {
-    /// Starts `command` as a language server for the project at `root`.
+    /// Starts `command` as a language server for the project at `root`, configured with
+    /// `settings`.
     ///
     /// The handshake happens in the background. Messages sent before it finishes are queued, and
     /// [`LspEvent::Ready`] is sent to `events` once it is done.
@@ -129,6 +130,7 @@ impl Client {
         command: &str,
         args: &[String],
         root: &Path,
+        settings: &Value,
         events: UnboundedSender<LspEvent>,
     ) -> io::Result<Self> {
         let name = name.into();
@@ -166,7 +168,7 @@ impl Client {
                 }
             }
         });
-        let (client, connection) = Self::connect(name, stdout, stdin, root, inner);
+        let (client, connection) = Self::connect(name, stdout, stdin, root, settings, inner);
         tokio::spawn(async move {
             let _ = connection.await;
             // a server that ignores shutdown gets killed when the child is dropped
@@ -175,7 +177,8 @@ impl Client {
         Ok(client)
     }
 
-    /// Connects to a server that reads from `writer` and writes to `reader`.
+    /// Connects to a server that reads from `writer` and writes to `reader`, configured with
+    /// `settings`.
     ///
     /// Returns the client and the handle of the background task driving the connection.
     pub fn connect<R, W>(
@@ -183,6 +186,7 @@ impl Client {
         reader: R,
         writer: W,
         root: &Path,
+        settings: &Value,
         events: UnboundedSender<LspEvent>,
     ) -> (Self, JoinHandle<()>)
     where
@@ -197,8 +201,9 @@ impl Client {
             events,
             pending: HashMap::new(),
             next_id: INITIALIZE_ID + 1,
+            settings: settings.clone(),
         };
-        let params = initialize_params(root);
+        let params = initialize_params(root, settings);
         let handle = tokio::spawn(connection.run(reader, queue, params));
         (Self { name, outgoing }, handle)
     }
@@ -301,8 +306,22 @@ fn document_params(path: &Path) -> Option<Value> {
     Some(json!({ "textDocument": { "uri": uri } }))
 }
 
-/// Builds the initialize request arguments for a project at `root`.
-fn initialize_params(root: &Path) -> Value {
+/// Returns the part of `settings` a server asks for with `section`, like `python.analysis`.
+///
+/// Servers like rust-analyzer ask for their own name, which users leave out, so a section that
+/// is not found gives all of `settings`.
+pub fn settings_section<'a>(settings: &'a Value, section: Option<&str>) -> &'a Value {
+    let Some(section) = section.filter(|section| !section.is_empty()) else {
+        return settings;
+    };
+    section
+        .split('.')
+        .try_fold(settings, |value, key| value.get(key))
+        .unwrap_or(settings)
+}
+
+/// Builds the initialize request arguments for a project at `root` with server `settings`.
+fn initialize_params(root: &Path, settings: &Value) -> Value {
     let folders = convert::path_to_uri(root).map(|uri| {
         vec![WorkspaceFolder {
             uri,
@@ -314,6 +333,7 @@ fn initialize_params(root: &Path) -> Value {
     let params = InitializeParams {
         process_id: Some(process::id()),
         workspace_folders: folders,
+        initialization_options: (!settings.is_null()).then(|| settings.clone()),
         client_info: Some(ClientInfo {
             name: "mog".into(),
             version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -364,6 +384,10 @@ fn initialize_params(root: &Path) -> Value {
                 }),
                 ..TextDocumentClientCapabilities::default()
             }),
+            workspace: Some(WorkspaceClientCapabilities {
+                configuration: Some(true),
+                ..WorkspaceClientCapabilities::default()
+            }),
             ..ClientCapabilities::default()
         },
         ..InitializeParams::default()
@@ -383,6 +407,8 @@ struct Connection<W> {
     pending: HashMap<u64, oneshot::Sender<Result<Value, Value>>>,
     /// The id the next request gets.
     next_id: u64,
+    /// The settings handed out when the server asks for its configuration.
+    settings: Value,
 }
 
 impl<W: AsyncWrite + Unpin> Connection<W> {
@@ -512,8 +538,13 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                 // answering with nulls keeps servers that wait on us from hanging
                 let result = match method.as_str() {
                     "workspace/configuration" => {
-                        let count = params["items"].as_array().map_or(0, Vec::len);
-                        Value::Array(vec![Value::Null; count])
+                        let items = params["items"].as_array().cloned().unwrap_or_default();
+                        items
+                            .iter()
+                            .map(|item| {
+                                settings_section(&self.settings, item["section"].as_str()).clone()
+                            })
+                            .collect()
                     }
                     _ => Value::Null,
                 };
@@ -562,8 +593,23 @@ mod tests {
         time,
     };
 
-    use super::Client;
+    use super::{Client, settings_section};
     use crate::transport::{self, Message};
+
+    /// Sections are looked up by dotted path and fall back to everything.
+    #[test]
+    fn finds_sections() {
+        let settings = json!({ "python": { "analysis": { "strict": true } } });
+        assert_eq!(
+            settings_section(&settings, Some("python.analysis")),
+            &json!({ "strict": true })
+        );
+        assert_eq!(
+            settings_section(&settings, Some("rust-analyzer")),
+            &settings
+        );
+        assert_eq!(settings_section(&settings, None), &settings);
+    }
 
     /// Saving and closing a document reach the server after the handshake.
     #[tokio::test]
@@ -573,7 +619,14 @@ mod tests {
         let (server_read, mut server_write) = io::split(server_side);
         let (events, _events) = mpsc::unbounded_channel();
         let root = env::temp_dir();
-        let (client, _task) = Client::connect("test", client_read, client_write, &root, events);
+        let (client, _task) = Client::connect(
+            "test",
+            client_read,
+            client_write,
+            &root,
+            &Value::Null,
+            events,
+        );
         let file = root.join("main.rs");
         client.did_save(&file);
         client.did_close(&file);
