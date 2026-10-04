@@ -1,6 +1,6 @@
 //! The editor state and command execution.
 
-use std::{io, path::PathBuf};
+use std::{io, mem, path::PathBuf};
 
 use ropey::Rope;
 
@@ -62,6 +62,8 @@ pub struct Editor {
     typing_at: Option<usize>,
     /// Set after a quit was refused due to unsaved changes, so a second quit goes through.
     quit_armed: bool,
+    /// Set after closing a document was refused due to unsaved changes.
+    close_armed: bool,
 }
 
 impl Editor {
@@ -76,6 +78,7 @@ impl Editor {
             status: None,
             typing_at: None,
             quit_armed: false,
+            close_armed: false,
         }
     }
 
@@ -208,6 +211,7 @@ impl Editor {
         if command != Command::Quit {
             self.quit_armed = false;
         }
+        let close_armed = mem::take(&mut self.close_armed);
         match command {
             Command::Move { motion, extend } => self.move_cursor(motion, extend),
             Command::InsertChar(ch) => {
@@ -258,6 +262,22 @@ impl Editor {
             }
             Command::Save => self.save(),
             Command::Quit => return self.quit(),
+            Command::NextTab => self.focus((self.active + 1) % self.documents.len()),
+            Command::PrevTab => {
+                let count = self.documents.len();
+                self.focus((self.active + count - 1) % count);
+            }
+            Command::CloseTab => {
+                if self.document().is_modified() && !close_armed {
+                    self.close_armed = true;
+                    self.set_status(format!(
+                        "{} has unsaved changes, close again to throw them away",
+                        self.document().name()
+                    ));
+                } else {
+                    self.close(self.active);
+                }
+            }
             Command::Scroll(lines) => {
                 let text = self.documents[self.active].text();
                 self.views[self.active].scroll_by(lines, text);

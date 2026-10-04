@@ -114,6 +114,12 @@ pub enum Command {
     Quit,
     /// Opens the command palette.
     CommandPalette,
+    /// Focuses the next open document.
+    NextTab,
+    /// Focuses the previous open document.
+    PrevTab,
+    /// Closes the focused document, asking first if it has unsaved changes.
+    CloseTab,
     /// Scrolls the view without moving the cursor. Negative values scroll up.
     Scroll(isize),
     /// A namespaced command handled outside the core, like `ai.explain`.
@@ -121,7 +127,7 @@ pub enum Command {
 }
 
 /// Commands without arguments paired with their names.
-const SIMPLE: [(Command, &str); 14] = [
+const SIMPLE: [(Command, &str); 17] = [
     (Command::InsertNewline, "insert_newline"),
     (Command::InsertTab, "insert_tab"),
     (Command::DeleteBackward, "delete_backward"),
@@ -136,6 +142,9 @@ const SIMPLE: [(Command, &str); 14] = [
     (Command::Save, "save"),
     (Command::Quit, "quit"),
     (Command::CommandPalette, "command_palette"),
+    (Command::NextTab, "next_tab"),
+    (Command::PrevTab, "prev_tab"),
+    (Command::CloseTab, "close_tab"),
 ];
 
 impl Display for Command {

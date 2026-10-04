@@ -53,6 +53,11 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl+q", "quit"),
     ("ctrl+p", "command_palette"),
     ("ctrl+shift+p", "command_palette"),
+    ("ctrl+pagedown", "next_tab"),
+    ("ctrl+pageup", "prev_tab"),
+    ("alt+right", "next_tab"),
+    ("alt+left", "prev_tab"),
+    ("ctrl+w", "close_tab"),
     ("alt+e", "ai.explain"),
 ];
 
