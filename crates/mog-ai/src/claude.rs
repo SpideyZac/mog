@@ -142,7 +142,7 @@ impl AiProvider for Claude {
     fn complete<'a>(
         &'a self,
         request: &'a CompletionRequest,
-    ) -> BoxFuture<'a, Result<Option<String>, AiError>> {
+    ) -> BoxFuture<'a, Result<Vec<String>, AiError>> {
         Box::pin(async move {
             let prompt = ChatMessage {
                 role: Role::User,
@@ -155,7 +155,10 @@ impl AiProvider for Claude {
                 &[prompt],
             );
             let text = self.send(body).await?;
-            Ok(Some(text).filter(|text| !text.trim().is_empty()))
+            Ok(Some(text)
+                .filter(|text| !text.trim().is_empty())
+                .into_iter()
+                .collect())
         })
     }
 }

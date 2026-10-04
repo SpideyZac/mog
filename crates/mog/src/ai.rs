@@ -30,16 +30,16 @@ pub enum AiReply {
     Chat(String),
     /// A chat that failed, with the reason.
     ChatFailed(String),
-    /// Text to suggest at `pos` of document `document` at `version`.
+    /// Texts to suggest at `pos` of document `document` at `version`.
     Ghost {
         /// The document index.
         document: usize,
-        /// The document version the suggestion was made for.
+        /// The document version the suggestions were made for.
         version: u64,
-        /// Where the suggestion goes.
+        /// Where the suggestions go.
         pos: usize,
-        /// The suggested text.
-        text: String,
+        /// The suggested texts, best first.
+        items: Vec<String>,
     },
 }
 
@@ -120,15 +120,16 @@ impl Assistant {
             if latest.load(Ordering::SeqCst) != generation {
                 return;
             }
-            if let Ok(Some(text)) = provider.complete(&request).await
-                && !text.trim().is_empty()
-                && latest.load(Ordering::SeqCst) == generation
-            {
+            let Ok(mut items) = provider.complete(&request).await else {
+                return;
+            };
+            items.retain(|text| !text.trim().is_empty());
+            if !items.is_empty() && latest.load(Ordering::SeqCst) == generation {
                 let _ = sender.send(AiReply::Ghost {
                     document,
                     version,
                     pos,
-                    text,
+                    items,
                 });
             }
         });

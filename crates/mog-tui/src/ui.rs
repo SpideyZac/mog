@@ -11,8 +11,8 @@ use ratatui::{
 };
 
 use crate::{
-    chat::ChatState, completion::CompletionState, menu::MenuState, search::SearchState,
-    settings::SettingKey, status_line::STATUS_HEIGHT,
+    chat::ChatState, completion::CompletionState, ghost::Ghost, menu::MenuState,
+    search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -269,8 +269,8 @@ pub struct Ui {
     pub chat: ChatState,
     /// Found references as `(file, line, column, line text)`, lines and columns from 0.
     pub references: Vec<(PathBuf, usize, usize, String)>,
-    /// An AI suggestion shown after the cursor, as `(document, version, pos, text)`.
-    pub ghost: Option<(usize, u64, usize, String)>,
+    /// An AI suggestion shown after the cursor.
+    pub ghost: Option<Ghost>,
     /// The split, if the editor is split.
     pub split: Option<SplitState>,
     /// Whether the terminal panel is shown.

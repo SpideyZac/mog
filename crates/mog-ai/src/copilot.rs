@@ -29,7 +29,7 @@ impl AiProvider for Copilot {
     fn complete<'a>(
         &'a self,
         _request: &'a CompletionRequest,
-    ) -> BoxFuture<'a, Result<Option<String>, AiError>> {
+    ) -> BoxFuture<'a, Result<Vec<String>, AiError>> {
         Box::pin(async { Err(AiError::Unsupported("copilot".into())) })
     }
 }

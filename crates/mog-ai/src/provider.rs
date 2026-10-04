@@ -64,9 +64,9 @@ pub trait AiProvider: Send + Sync {
     /// Sends a conversation and returns the reply text.
     fn chat<'a>(&'a self, messages: &'a [ChatMessage]) -> BoxFuture<'a, Result<String, AiError>>;
 
-    /// Suggests text to insert at the cursor, or `None` if there is nothing worth suggesting.
+    /// Suggests texts to insert at the cursor, best first, or none if nothing is worth suggesting.
     fn complete<'a>(
         &'a self,
         request: &'a CompletionRequest,
-    ) -> BoxFuture<'a, Result<Option<String>, AiError>>;
+    ) -> BoxFuture<'a, Result<Vec<String>, AiError>>;
 }

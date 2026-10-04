@@ -14,6 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
+    ghost,
     theme::Theme,
     ui::{Focus, Layout, Ui},
 };
@@ -345,22 +346,9 @@ impl Layer for CompletionMenu {
                 return EventResult::Consumed;
             }
         }
-        if let Some((document, version, pos, text)) = cx.ui.ghost.clone() {
-            let fresh = document == cx.editor.active()
-                && version == cx.editor.document().version()
-                && pos == cx.editor.document().selection().head;
-            match chord.key {
-                Key::Tab if fresh && cx.ui.completion.is_none() => {
-                    cx.ui.ghost = None;
-                    cx.editor.replace_ranges(&[(pos, pos)], &text);
-                    return EventResult::Consumed;
-                }
-                Key::Esc if fresh => {
-                    cx.ui.ghost = None;
-                    return EventResult::Consumed;
-                }
-                _ => {}
-            }
+        let menu_open = cx.ui.completion.is_some();
+        if ghost::handle_key(&mut cx.ui.ghost, chord, cx.editor, menu_open) {
+            return EventResult::Consumed;
         }
         let Some(state) = cx.ui.completion.as_mut() else {
             return EventResult::Ignored;

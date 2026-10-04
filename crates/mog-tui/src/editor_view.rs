@@ -17,6 +17,7 @@ use ratatui::{
 
 use crate::{
     compositor::{Context, EventResult, Layer},
+    ghost::Ghost,
     menu,
     theme::{RAINBOW_LEN, Theme},
     ui::{Focus, Layout, Pane, Ui},
@@ -469,13 +470,13 @@ impl Layer for EditorView {
                 }
             }
 
-            let ghost = cx.ui.ghost.as_ref().filter(|(document, version, pos, _)| {
-                *document == cx.editor.active()
-                    && *version == document_version
-                    && *pos == selection.head
+            let ghost = cx.ui.ghost.as_ref().filter(|ghost| {
+                ghost.document == cx.editor.active()
+                    && ghost.version == document_version
+                    && ghost.pos == selection.head
                     && is_cursor_line
             });
-            if let Some((_, _, _, suggestion)) = ghost {
+            if let Some(suggestion) = ghost.map(Ghost::text) {
                 let first = suggestion.lines().next().unwrap_or_default();
                 let more = if suggestion.lines().nth(1).is_some() {
                     " \u{2026}"

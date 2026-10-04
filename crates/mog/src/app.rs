@@ -30,7 +30,7 @@ use mog_lsp::{
 use mog_term::TerminalPanel;
 use mog_tui::{
     ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer,
-    Focus, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar, SettingsPanel, SplitState,
+    Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar, SettingsPanel, SplitState,
     StatusLine, Tabs, Theme, Ui, UiEvent,
     completion::{self, CompletionState},
     input,
@@ -955,14 +955,12 @@ impl App {
                 document,
                 version,
                 pos,
-                text,
+                items,
             } => {
-                let current = self.editor.document();
-                let fresh = document == self.editor.active()
-                    && version == current.version()
-                    && pos == current.selection().head;
-                if fresh {
-                    self.ui.ghost = Some((document, version, pos, text));
+                let ghost = Ghost::new(document, version, pos, items)
+                    .filter(|ghost| ghost.is_fresh(&self.editor));
+                if ghost.is_some() {
+                    self.ui.ghost = ghost;
                 }
             }
         }
