@@ -216,6 +216,7 @@ impl Layer for EditorView {
         let document_version = document.version();
         let text = document.text();
         let selection = document.selection();
+        let extras = document.cursors();
         let cursor_line = text.char_to_line(selection.head);
         let scroll = cx.editor.view();
         let brackets = movement::matching_bracket(text, selection.head);
@@ -370,7 +371,9 @@ impl Layer for EditorView {
                         style.patch(theme.search_match)
                     };
                 }
-                if (selection.from()..selection.to()).contains(&pos) {
+                let selected = (selection.from()..selection.to()).contains(&pos)
+                    || extras.iter().any(|r| (r.from()..r.to()).contains(&pos));
+                if selected {
                     style = style.patch(theme.selection);
                 }
                 if settings.error_lens
@@ -406,6 +409,19 @@ impl Layer for EditorView {
             if selection.from() <= line_end && line_end < selection.to() && visible(col) {
                 let x = text_x + cells(col - scroll.scroll_col);
                 buf.set_style(Rect::new(x, y, 1, 1), theme.selection);
+            }
+
+            // extra cursors are drawn as blocks since the terminal only has one real cursor
+            for extra in extras
+                .iter()
+                .filter(|r| (start..=line_end).contains(&r.head))
+            {
+                let cell = view::visual_col(text, extra.head, tab_width);
+                if visible(cell) {
+                    let x = text_x + cells(cell - scroll.scroll_col);
+                    let block = Style::new().bg(theme.palette.accent).fg(theme.palette.bg);
+                    buf.set_style(Rect::new(x, y, 1, 1), block);
+                }
             }
 
             let ghost = cx.ui.ghost.as_ref().filter(|(document, version, pos, _)| {
@@ -466,6 +482,10 @@ impl Layer for EditorView {
                     cx.editor.select_word_at(row, col);
                 } else {
                     let extend = event.modifiers.contains(KeyModifiers::SHIFT);
+                    if event.modifiers.contains(KeyModifiers::ALT) {
+                        cx.editor.toggle_cursor_at(row, col);
+                        return EventResult::Consumed;
+                    }
                     cx.editor.click(row, col, extend);
                     if event.modifiers.contains(KeyModifiers::CONTROL) {
                         cx.ui.request(Command::Custom("lsp.definition".into()));
