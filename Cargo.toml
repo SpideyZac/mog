@@ -18,3 +18,10 @@ doc_markdown = "warn"
 missing_panics_doc = "warn"
 missing_errors_doc = "warn"
 undocumented_unsafe_blocks = "warn"
+
+[workspace.dependencies]
+anyhow = "1"
+crossterm = { version = "0.29", features = ["event-stream"] }
+futures = "0.3"
+ratatui = "0.30"
+tokio = { version = "1", features = ["full"] }

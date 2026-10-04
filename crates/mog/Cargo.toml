@@ -8,3 +8,10 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+anyhow.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+ratatui.workspace = true
+tokio.workspace = true
