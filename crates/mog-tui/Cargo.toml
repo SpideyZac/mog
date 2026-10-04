@@ -1,0 +1,16 @@
+[package]
+name = "mog-tui"
+description = "The terminal user interface of mog."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crossterm.workspace = true
+mog-core.workspace = true
+ratatui.workspace = true
+unicode-width.workspace = true
+
+[lints]
+workspace = true
