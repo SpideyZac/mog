@@ -12,7 +12,6 @@
 - [x] Flair layer and registry
 - [x] LSP client skeleton
 - [x] AI provider skeleton
-- [x] Lua plugin host
 
 ## Everyday editing
 
@@ -40,13 +39,6 @@
 - [ ] Copilot ghost text
 - [ ] Claude chat panel
 - [ ] Ask Claude about the selection
-
-## Plugins
-
-- [ ] Commands and keybindings from Lua
-- [ ] Editor events
-- [ ] Custom flair from Lua
-- [ ] Plugin manager
 
 ## Flair
 

@@ -8,7 +8,6 @@ editor you can get work done in.
 - Modeless editing with normal keybindings and full mouse support
 - Language servers
 - Copilot and Claude
-- Lua plugins
 
 It is early. See [ROADMAP.md](ROADMAP.md) for where things are at.
 

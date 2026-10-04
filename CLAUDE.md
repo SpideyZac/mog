@@ -2,7 +2,7 @@
 
 A modeless terminal code editor written in Rust. Half joke, half real tool: it should look cool
 (ambient silly widgets, an Obsidian-style graph view, little animated critters) and still be useful
-out of the box (LSP, Copilot and Claude, Lua plugins, mouse support like VS Code).
+out of the box (LSP, Copilot and Claude, mouse support like VS Code).
 
 See `ROADMAP.md` for what is done and what is next. Update it whenever a roadmap item lands.
 
@@ -26,10 +26,9 @@ Cargo workspace, one crate per concern under `crates/`:
 - `mog-tui`: ratatui rendering. A compositor of layers, the editor view, the status line, themes,
   mouse hit-testing.
 - `mog-flair`: the fun stuff. The `Flair` trait and registry. New silly widgets, the graph view,
-  critters, etc. go here (or in plugins).
+  critters, etc. go here.
 - `mog-lsp`: language server client.
 - `mog-ai`: AI providers (Claude, Copilot) behind one trait.
-- `mog-plugin`: Lua plugin host (`mlua`).
 
 Subsystems never touch the terminal. Everything flows through the event loop in `mog`
 (`crates/mog/src/app.rs`), and only `mog-tui` draws.
@@ -38,7 +37,7 @@ Subsystems never touch the terminal. Everything flows through the event loop in 
 
 - Editing command: add a `Command` variant and its name in `mog-core/src/command.rs`, handle it
   in `Editor::execute`, bind it in `DEFAULT_BINDINGS` in `keymap.rs`.
-- App level command (needs AI, plugins, UI): use a namespaced `Command::Custom` like
+- App level command (needs AI, UI): use a namespaced `Command::Custom` like
   `ai.explain` and handle `Outcome::Unhandled` in `App::execute_command`.
 - Screen element (panel, palette, popup): implement `mog_tui::Layer` and push it in `App::new`.
   Layers get mouse events by hit testing and can animate via `tick`.
@@ -47,8 +46,6 @@ Subsystems never touch the terminal. Everything flows through the event loop in 
 - Language server feature: add the request to `mog-lsp/src/client.rs`, handle results in
   `crates/mog/src/lsp.rs`.
 - AI backend: implement `mog_ai::AiProvider` and build it in `settings::ai_providers`.
-- Plugin API: add to `install_api` in `mog-plugin/src/host.rs`. Plugins only queue
-  `PluginRequest`s, the app carries them out.
 - Config: add a field with a default in `mog-config`, and keep `examples/config.toml` valid (a
   test parses it).
 
