@@ -1,6 +1,7 @@
 //! The flairs that ship with mog.
 
 pub mod ai_meter;
+pub mod aura;
 pub mod badge;
 pub mod combo;
 pub mod critters;
@@ -14,6 +15,7 @@ pub mod spectrum;
 pub mod splash;
 
 pub use ai_meter::AiMeter;
+pub use aura::Aura;
 pub use badge::Badge;
 pub use combo::Combo;
 pub use critters::Critters;
@@ -37,6 +39,7 @@ pub fn all() -> Vec<Box<dyn Flair>> {
         Box::new(Quips::new()),
         Box::new(LeakedIp::new()),
         Box::new(AiMeter::new()),
+        Box::new(Aura::new()),
         Box::new(Session::new()),
         Box::new(Badge::new()),
         Box::new(Sparks::new()),
