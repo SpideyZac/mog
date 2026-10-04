@@ -50,6 +50,8 @@ pub struct Config {
     ///
     /// Binding a chord to `""` removes its default binding.
     pub keys: BTreeMap<String, String>,
+    /// The decorative extras.
+    pub flair: FlairConfig,
 }
 
 /// Settings for editing behavior.
@@ -67,6 +69,25 @@ impl Default for EditorConfig {
         Self {
             tab_width: 4,
             insert_spaces: true,
+        }
+    }
+}
+
+/// Settings for the decorative extras.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FlairConfig {
+    /// Whether any flair is shown at all.
+    pub enabled: bool,
+    /// The ids of flairs to turn off.
+    pub disabled: Vec<String>,
+}
+
+impl Default for FlairConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            disabled: Vec::new(),
         }
     }
 }
