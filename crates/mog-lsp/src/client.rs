@@ -1,7 +1,7 @@
 //! A connection to one language server process.
 
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, ErrorKind};
 use std::path::Path;
 use std::process::{self, Stdio};
 use std::time::Duration;
@@ -332,7 +332,7 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
             match incoming.recv().await {
                 Some(Message::Response { id, .. }) if id == json!(INITIALIZE_ID) => break,
                 Some(message) => self.receive(message).await?,
-                None => return Err(io::ErrorKind::UnexpectedEof.into()),
+                None => return Err(ErrorKind::UnexpectedEof.into()),
             }
         }
         self.write(Message::Notification {
