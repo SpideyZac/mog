@@ -13,6 +13,10 @@ use serde::Deserialize;
 use thiserror::Error;
 use toml::de::Error as TomlError;
 
+pub mod lsp;
+
+pub use lsp::ServerConfig;
+
 /// The environment variable that overrides the config directory.
 pub const CONFIG_DIR_ENV: &str = "MOG_CONFIG_DIR";
 
@@ -52,6 +56,8 @@ pub struct Config {
     pub keys: BTreeMap<String, String>,
     /// The decorative extras.
     pub flair: FlairConfig,
+    /// Language servers by name. Entries here override or extend the built in ones.
+    pub lsp: BTreeMap<String, ServerConfig>,
 }
 
 /// Settings for editing behavior.
@@ -93,6 +99,11 @@ impl Default for FlairConfig {
 }
 
 impl Config {
+    /// Returns every enabled language server, built in ones included.
+    pub fn language_servers(&self) -> BTreeMap<String, ServerConfig> {
+        lsp::merged_servers(&self.lsp)
+    }
+
     /// Parses a config from TOML text. `path` is only used in error messages.
     ///
     /// # Errors
