@@ -321,11 +321,11 @@ impl App {
         };
         let document = self.editor.document();
         let details = if !self.ui.config.discord.show_file {
-            "editing something secret".to_owned()
+            "mogging something secret".to_owned()
         } else if document.path().is_some() {
-            format!("editing {}", document.name())
+            format!("mogging {}", document.name())
         } else {
-            "staring at a blank file".to_owned()
+            "mogging a blank file".to_owned()
         };
         let project = self
             .ui

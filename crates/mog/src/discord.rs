@@ -20,7 +20,7 @@ const MIN_GAP: Duration = Duration::from_secs(4);
 /// What the status says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
-    /// The top line, like `editing main.rs`.
+    /// The top line, like `mogging main.rs`.
     pub details: String,
     /// The second line, like `in mog`.
     pub state: String,
