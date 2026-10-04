@@ -5,6 +5,7 @@ mod app;
 mod cli;
 mod clipboard;
 mod lsp;
+mod plugins;
 mod settings;
 mod terminal;
 

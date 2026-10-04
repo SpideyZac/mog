@@ -21,6 +21,7 @@ futures.workspace = true
 mog-core.workspace = true
 mog-flair.workspace = true
 mog-lsp.workspace = true
+mog-plugin.workspace = true
 mog-tui.workspace = true
 ratatui.workspace = true
 tokio.workspace = true

@@ -9,6 +9,7 @@ use futures::StreamExt;
 use mog_config::Config;
 use mog_core::{Command, Editor, Keymap, Outcome};
 use mog_lsp::LspEvent;
+use mog_plugin::{PluginHost, PluginRequest};
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 use ratatui::layout::Rect;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
@@ -18,11 +19,15 @@ use crate::ai::Assistant;
 use crate::cli::Args;
 use crate::clipboard;
 use crate::lsp::{self, LanguageServers};
+use crate::plugins;
 use crate::settings;
 use crate::terminal::Tui;
 
 /// The time between animation frames, about 30 per second.
 const FRAME_TIME: Duration = Duration::from_millis(33);
+
+/// How many rounds of plugin requests are handled after one command.
+const MAX_PLUGIN_ROUNDS: usize = 8;
 
 /// The running editor.
 pub struct App {
@@ -40,6 +45,8 @@ pub struct App {
     lsp_events: UnboundedReceiver<LspEvent>,
     /// The AI providers and their pending replies.
     assistant: Assistant,
+    /// The Lua plugins, or `None` if Lua failed to start.
+    plugins: Option<PluginHost>,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
     /// Whether the event loop should stop after the current iteration.
@@ -58,6 +65,7 @@ impl App {
         problems.extend(key_problems);
         let (providers, ai_problems) = settings::ai_providers(&config);
         problems.extend(ai_problems);
+        let plugins = plugins::start(&mut problems);
 
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
@@ -77,7 +85,7 @@ impl App {
         {
             editor.set_status(format!("could not open {}: {err}", path.display()));
         }
-        Self {
+        let mut app = Self {
             editor,
             keymap,
             compositor,
@@ -85,9 +93,13 @@ impl App {
             lsp,
             lsp_events,
             assistant: Assistant::new(providers),
+            plugins,
             screen: Rect::default(),
             quit: false,
-        }
+        };
+        app.emit_document_event("open");
+        app.drain_plugin_requests();
+        app
     }
 
     /// Runs the event loop until the user quits.
@@ -182,9 +194,59 @@ impl App {
         }
     }
 
-    /// Runs a command and acts on its outcome.
+    /// Runs a command, then anything plugins asked for while it ran.
     fn run_command(&mut self, command: Command) {
+        self.execute_command(command);
+        self.drain_plugin_requests();
+    }
+
+    /// Calls the plugin handlers for `event` with the focused document path.
+    fn emit_document_event(&mut self, event: &str) {
+        let Some(host) = &self.plugins else {
+            return;
+        };
+        let path = self
+            .editor
+            .document()
+            .path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        let problems = host.emit(event, &path);
+        if !problems.is_empty() {
+            self.editor.set_status(problems.join("; "));
+        }
+    }
+
+    /// Carries out the requests plugins queued.
+    ///
+    /// Plugin commands can queue more requests, so this repeats a bounded number of times to
+    /// stop a plugin that keeps asking from freezing the editor.
+    fn drain_plugin_requests(&mut self) {
+        for _ in 0..MAX_PLUGIN_ROUNDS {
+            let Some(host) = &self.plugins else {
+                return;
+            };
+            let requests = host.take_requests();
+            if requests.is_empty() {
+                return;
+            }
+            for request in requests {
+                match request {
+                    PluginRequest::Notify(message) => self.editor.set_status(message),
+                    PluginRequest::RunCommand(name) => match name.parse() {
+                        Ok(command) => self.execute_command(command),
+                        Err(err) => self.editor.set_status(err.to_string()),
+                    },
+                }
+            }
+        }
+    }
+
+    /// Runs a command and acts on its outcome.
+    fn execute_command(&mut self, command: Command) {
+        let saving = command == Command::Save;
         match self.editor.execute(command) {
+            Outcome::Done if saving => self.emit_document_event("save"),
             Outcome::Done => {}
             Outcome::Quit => self.quit = true,
             Outcome::Unhandled(Command::Custom(name)) if name == "ai.explain" => {
@@ -197,6 +259,16 @@ impl App {
                     self.assistant.explain(code.to_string())
                 };
                 self.editor.set_status(message);
+            }
+            Outcome::Unhandled(Command::Custom(name))
+                if self
+                    .plugins
+                    .as_ref()
+                    .is_some_and(|host| host.has_command(&name)) =>
+            {
+                if let Some(Err(err)) = self.plugins.as_ref().map(|host| host.run_command(&name)) {
+                    self.editor.set_status(format!("{name} failed: {err}"));
+                }
             }
             Outcome::Unhandled(command) => {
                 self.editor

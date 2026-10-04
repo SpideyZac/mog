@@ -1604,6 +1604,7 @@ dependencies = [
  "mog-core",
  "mog-flair",
  "mog-lsp",
+ "mog-plugin",
  "mog-tui",
  "ratatui",
  "tokio",
