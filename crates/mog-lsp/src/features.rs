@@ -3,8 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use lsp_types::{
-    CompletionItem, CompletionResponse, DocumentChanges, Documentation, GotoDefinitionResponse,
-    Hover, HoverContents, Location, MarkedString, OneOf, Position, TextEdit, WorkspaceEdit,
+    CodeActionOrCommand, CodeActionResponse, CompletionItem, CompletionResponse, Diagnostic,
+    DocumentChanges, Documentation, GotoDefinitionResponse, Hover, HoverContents, Location,
+    MarkedString, OneOf, Position, Range, TextEdit, WorkspaceEdit,
 };
 use serde_json::{Value, json};
 
@@ -34,6 +35,30 @@ fn hover_text(contents: HoverContents) -> String {
             .join("\n\n"),
         HoverContents::Markup(markup) => markup.value,
     }
+}
+
+/// Flattens a workspace edit into the edits for each file.
+fn workspace_edits(edit: WorkspaceEdit) -> Vec<(PathBuf, Vec<TextEdit>)> {
+    let mut files = Vec::new();
+    for (uri, edits) in edit.changes.unwrap_or_default() {
+        files.extend(convert::uri_to_path(&uri).map(|path| (path, edits)));
+    }
+    if let Some(DocumentChanges::Edits(documents)) = edit.document_changes {
+        for document in documents {
+            let edits = document
+                .edits
+                .into_iter()
+                .map(|edit| match edit {
+                    OneOf::Left(edit) => edit,
+                    OneOf::Right(annotated) => annotated.text_edit,
+                })
+                .collect();
+            files.extend(
+                convert::uri_to_path(&document.text_document.uri).map(|path| (path, edits)),
+            );
+        }
+    }
+    files
 }
 
 /// Returns the plain text of completion documentation.
@@ -137,29 +162,76 @@ impl Client {
         };
         params["newName"] = json!(new_name);
         let value = self.request("textDocument/rename", params).await?;
-        let Ok(Some(edit)) = serde_json::from_value::<Option<WorkspaceEdit>>(value) else {
+        Ok(serde_json::from_value::<Option<WorkspaceEdit>>(value)
+            .ok()
+            .flatten()
+            .map(workspace_edits)
+            .unwrap_or_default())
+    }
+
+    /// Asks for every place the symbol at `position` in `path` is used.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is gone or fails the request.
+    pub async fn references(
+        &self,
+        path: &Path,
+        position: Position,
+    ) -> Result<Vec<(PathBuf, Position)>, LspError> {
+        let Some(mut params) = at(path, position) else {
             return Ok(Vec::new());
         };
-        let mut files = Vec::new();
-        for (uri, edits) in edit.changes.unwrap_or_default() {
-            files.extend(convert::uri_to_path(&uri).map(|path| (path, edits)));
-        }
-        if let Some(DocumentChanges::Edits(documents)) = edit.document_changes {
-            for document in documents {
-                let edits = document
-                    .edits
-                    .into_iter()
-                    .map(|edit| match edit {
-                        OneOf::Left(edit) => edit,
-                        OneOf::Right(annotated) => annotated.text_edit,
-                    })
-                    .collect();
-                files.extend(
-                    convert::uri_to_path(&document.text_document.uri).map(|path| (path, edits)),
-                );
-            }
-        }
-        Ok(files)
+        params["context"] = json!({ "includeDeclaration": true });
+        let value = self.request("textDocument/references", params).await?;
+        Ok(serde_json::from_value::<Option<Vec<Location>>>(value)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|location| {
+                convert::uri_to_path(&location.uri).map(|path| (path, location.range.start))
+            })
+            .collect())
+    }
+
+    /// Asks for quick fixes and refactors for `range` in `path`, given the `diagnostics` there.
+    ///
+    /// Returns each action's title and the edits it makes. Actions that only run server
+    /// commands are left out.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is gone or fails the request.
+    pub async fn code_actions(
+        &self,
+        path: &Path,
+        range: Range,
+        diagnostics: Vec<Diagnostic>,
+    ) -> Result<Vec<(String, Vec<(PathBuf, Vec<TextEdit>)>)>, LspError> {
+        let Some(uri) = convert::path_to_uri(path) else {
+            return Ok(Vec::new());
+        };
+        let params = json!({
+            "textDocument": { "uri": uri },
+            "range": range,
+            "context": { "diagnostics": diagnostics },
+        });
+        let value = self.request("textDocument/codeAction", params).await?;
+        let actions = serde_json::from_value::<Option<CodeActionResponse>>(value)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        Ok(actions
+            .into_iter()
+            .filter_map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) => {
+                    let edits = action.edit.map(workspace_edits).unwrap_or_default();
+                    (!edits.is_empty()).then_some((action.title, edits))
+                }
+                CodeActionOrCommand::Command(_) => None,
+            })
+            .collect())
     }
 
     /// Asks how to format the whole of `path`.
