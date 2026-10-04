@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Key, KeyChord, project_search::ProjectResults};
+use mog_core::{Command, Key, KeyChord, project_search::ProjectResults, search::SearchOptions};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -14,6 +14,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     compositor::{Context, EventResult, Layer},
     popup,
+    search::{TOGGLES_WIDTH, Toggle, draw_toggles},
     ui::{Layout, Overlay, Ui},
 };
 
@@ -44,6 +45,12 @@ pub struct ProjectSearchState {
     pub replacement: String,
     /// Whether case has to match.
     pub case_sensitive: bool,
+    /// Whether matches have to be whole words.
+    pub whole_word: bool,
+    /// Whether the query is a regular expression.
+    pub regex: bool,
+    /// Why the last search could not run, like a broken regex.
+    pub error: Option<String>,
     /// Whether typing goes to the replacement instead of the query.
     pub replacing: bool,
     /// What the newest finished search found.
@@ -57,10 +64,29 @@ pub struct ProjectSearchState {
 }
 
 impl ProjectSearchState {
+    /// Returns how the query matches.
+    pub fn options(&self) -> SearchOptions {
+        SearchOptions {
+            case_sensitive: self.case_sensitive,
+            whole_word: self.whole_word,
+            regex: self.regex,
+        }
+    }
+
+    /// Switches `toggle` on or off.
+    pub fn flip(&mut self, toggle: Toggle) {
+        match toggle {
+            Toggle::Case => self.case_sensitive = !self.case_sensitive,
+            Toggle::Word => self.whole_word = !self.whole_word,
+            Toggle::Regex => self.regex = !self.regex,
+        }
+    }
+
     /// Notes that the query changed and asks for a new search.
     pub fn changed(&mut self, ui_requests: &mut Vec<Command>) {
         self.generation += 1;
         self.searching = !self.query.is_empty();
+        self.error = None;
         if self.query.is_empty() {
             self.results = ProjectResults::default();
         }
@@ -108,6 +134,8 @@ pub struct ProjectSearchPanel {
     list: Rect,
     /// The match on each results row from the last render.
     rows: Vec<(u16, usize)>,
+    /// Where the option toggles were drawn.
+    toggles: Vec<(Rect, Toggle)>,
     /// The popup box from the last render.
     area: Rect,
 }
@@ -184,14 +212,17 @@ impl Layer for ProjectSearchPanel {
             let x = buf
                 .set_stringn(inner.x, y, format!("{label} \u{276f} "), width, style)
                 .0;
-            let room = usize::from(inner.right().saturating_sub(x));
+            let room = usize::from(inner.right().saturating_sub(x + TOGGLES_WIDTH + 1));
             buf.set_stringn(x, y, text, room, theme.popup);
         }
+        let toggles_x = inner.right().saturating_sub(TOGGLES_WIDTH);
+        self.toggles = draw_toggles(buf, toggles_x, inner.y, state.options(), theme);
         let matches = &state.results.matches;
         let count = matches.len();
         self.selected = self.selected.min(count.saturating_sub(1));
-        let case = if state.case_sensitive { "on" } else { "off" };
-        let summary = if state.query.is_empty() {
+        let summary = if let Some(error) = &state.error {
+            format!("bad regex: {error}")
+        } else if state.query.is_empty() {
             "type to search every file in the project".to_owned()
         } else if state.searching {
             "searching\u{2026}".to_owned()
@@ -202,9 +233,14 @@ impl Layer for ProjectSearchPanel {
             format!("{count}{more} matches in {} files", state.results.files)
         };
         let help = format!(
-            "{summary}   case {case} (alt+c)  tab switch  enter open  alt+enter replace all  esc close"
+            "{summary}   alt+c case  alt+w word  alt+r regex  tab switch  enter open  alt+enter replace all"
         );
-        buf.set_stringn(inner.x, inner.y + 2, help, width, theme.popup_dim);
+        let help_style = if state.error.is_some() {
+            theme.error
+        } else {
+            theme.popup_dim
+        };
+        buf.set_stringn(inner.x, inner.y + 2, help, width, help_style);
         let rule = "\u{2500}".repeat(width);
         buf.set_stringn(inner.x, inner.y + 3, rule, width, theme.popup_border);
         self.list = Rect {
@@ -305,8 +341,12 @@ impl Layer for ProjectSearchPanel {
                 cx.ui.request(Command::Custom(REPLACE_ALL_COMMAND.into()));
             }
             Key::Enter => self.pick(cx),
-            Key::Char('c') if chord.mods.alt && !chord.mods.ctrl => {
-                state.case_sensitive = !state.case_sensitive;
+            Key::Char(key @ ('c' | 'w' | 'r')) if chord.mods.alt && !chord.mods.ctrl => {
+                state.flip(match key {
+                    'c' => Toggle::Case,
+                    'w' => Toggle::Word,
+                    _ => Toggle::Regex,
+                });
                 state.changed(&mut cx.ui.requests);
             }
             Key::Backspace => {
@@ -354,7 +394,14 @@ impl Layer for ProjectSearchPanel {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) if !inside => cx.ui.close(),
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(&(_, index)) = self.rows.iter().find(|(y, _)| *y == event.row) {
+                let point = Position::new(event.column, event.row);
+                if let Some(&(_, toggle)) =
+                    self.toggles.iter().find(|(rect, _)| rect.contains(point))
+                {
+                    let state = &mut cx.ui.project_search;
+                    state.flip(toggle);
+                    state.changed(&mut cx.ui.requests);
+                } else if let Some(&(_, index)) = self.rows.iter().find(|(y, _)| *y == event.row) {
                     self.selected = index;
                     self.pick(cx);
                 } else if event.row == self.area.y + 1 || event.row == self.area.y + 2 {

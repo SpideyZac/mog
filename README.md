@@ -490,6 +490,9 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `theme.edit` | Make your own theme |
 | `flair.toggle` | Toggle all flair |
 | `annotate.clear` | Wipe the drawing |
+| `search.toggle_case` | Toggle match case in the open search |
+| `search.toggle_word` | Toggle whole word in the open search |
+| `search.toggle_regex` | Toggle regex in the open search |
 | `terminal.restart` | Start a fresh shell in the terminal |
 | `audio.toggle_music` | Toggle music |
 | `audio.toggle_effects` | Toggle sound effects |
@@ -511,8 +514,11 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `tab` | Switch between find and replace fields |
 | `enter` in replace | Replace one |
 | `alt+enter` `ctrl+enter` | Replace all |
-| `alt+c` | Toggle case sensitivity |
+| `alt+c` | Match case (`Aa`) |
+| `alt+w` | Whole words only (`ab`) |
+| `alt+r` | Regular expressions (`.*`), with `$1` or `${name}` in the replacement for groups |
 | `ctrl+backspace` | Clear the field |
+| click `Aa` `ab` `.*` | Toggle the same options |
 | `esc` | Close |
 
 **Find in project** (`ctrl+shift+f`, needs a folder open)
@@ -524,8 +530,11 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `up` `down` `pageup` `pagedown` | Pick a match |
 | `enter` | Open the match |
 | `alt+enter` `ctrl+enter` | Replace every match, after asking |
-| `alt+c` | Toggle case sensitivity |
+| `alt+c` | Match case (`Aa`) |
+| `alt+w` | Whole words only (`ab`) |
+| `alt+r` | Regular expressions (`.*`), with `$1` or `${name}` in the replacement for groups |
 | `ctrl+backspace` | Clear the field |
+| click `Aa` `ab` `.*` | Toggle the same options |
 | `esc` | Close |
 
 Replacing changes open files in the editor so you can undo it, and saves the others right away.

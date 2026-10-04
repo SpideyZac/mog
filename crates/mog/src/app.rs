@@ -29,6 +29,7 @@ use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
     movement,
     project_search::{self, ProjectResults},
+    search::{self as core_search, Matcher},
 };
 use mog_flair::{GraphView, builtin::screensaver};
 use mog_lsp::{
@@ -46,7 +47,7 @@ use mog_tui::{
     menu::{self, MenuAction, MenuItem},
     project_search as project_search_panel,
     release_notes::{self, ReleaseNotes},
-    search,
+    search::{self, Toggle},
     settings::{SettingKey, change as settings_change, persisted},
     theme::to_hex,
     theme_editor::{self, ThemeDraft},
@@ -119,6 +120,9 @@ const NEW_CONFIG: &str = "# mog config. saving this file reloads it.
 /// requests cannot freeze the editor.
 const MAX_REQUEST_ROUNDS: usize = 8;
 
+/// What a project search found or why it could not run, with the generation it was for.
+type ProjectReply = (u64, Result<ProjectResults, String>);
+
 /// The running editor.
 pub struct App {
     /// The editing state.
@@ -182,9 +186,9 @@ pub struct App {
     /// A release installed while running, used once mog restarts.
     installed: Option<Release>,
     /// Where project searches send what they found, with the generation they were for.
-    project_sender: UnboundedSender<(u64, ProjectResults)>,
+    project_sender: UnboundedSender<ProjectReply>,
     /// What project searches found.
-    project_results: UnboundedReceiver<(u64, ProjectResults)>,
+    project_results: UnboundedReceiver<ProjectReply>,
     /// The generation of the newest project search, so older ones stop early.
     project_generation: Arc<AtomicU64>,
     /// Whether the event loop should stop after the current iteration.
@@ -1115,11 +1119,7 @@ impl App {
             .iter()
             .filter_map(|document| Some((document.path()?.to_owned(), document.text().to_string())))
             .collect();
-        let (root, query, case) = (
-            self.ui.root.clone(),
-            state.query.clone(),
-            state.case_sensitive,
-        );
+        let (root, query, options) = (self.ui.root.clone(), state.query.clone(), state.options());
         let current = self.project_generation.clone();
         let sender = self.project_sender.clone();
         task::spawn_blocking(move || {
@@ -1127,7 +1127,7 @@ impl App {
             let results = project_search::search_project(
                 &root,
                 &query,
-                case,
+                options,
                 &open,
                 PROJECT_LIMIT,
                 &cancelled,
@@ -1139,11 +1139,21 @@ impl App {
     }
 
     /// Shows what a project search found, unless a newer search started since.
-    fn show_project_results(&mut self, generation: u64, results: ProjectResults) {
+    fn show_project_results(&mut self, generation: u64, results: Result<ProjectResults, String>) {
         let state = &mut self.ui.project_search;
-        if generation == state.generation {
-            state.results = results;
-            state.searching = false;
+        if generation != state.generation {
+            return;
+        }
+        state.searching = false;
+        match results {
+            Ok(results) => {
+                state.results = results;
+                state.error = None;
+            }
+            Err(err) => {
+                state.results = ProjectResults::default();
+                state.error = Some(err);
+            }
         }
     }
 
@@ -1203,14 +1213,19 @@ impl App {
             .iter()
             .filter_map(|document| Some((document.path()?.to_owned(), document.text().to_string())))
             .collect();
-        let results = project_search::search_project(
+        let Ok(matcher) = Matcher::new(&state.query, state.options()) else {
+            return;
+        };
+        let Ok(results) = project_search::search_project(
             &self.ui.root,
             &state.query,
-            state.case_sensitive,
+            state.options(),
             &open,
             usize::MAX,
             &|| false,
-        );
+        ) else {
+            return;
+        };
         let mut paths: Vec<PathBuf> = results
             .matches
             .iter()
@@ -1227,28 +1242,24 @@ impl App {
             let count = match index {
                 Some(index) => {
                     self.editor.focus(index);
-                    let changes = project_search::replace_changes(
+                    let changes = core_search::replace_changes(
                         self.editor.document().text(),
-                        &state.query,
+                        &matcher,
                         &state.replacement,
-                        state.case_sensitive,
                     );
                     let count = changes.len();
                     self.editor.apply_changes(changes);
                     count
                 }
-                None => match project_search::replace_in_file(
-                    &path,
-                    &state.query,
-                    &state.replacement,
-                    state.case_sensitive,
-                ) {
-                    Ok(count) => count,
-                    Err(err) => {
-                        problems.push(format!("{}: {err}", path.display()));
-                        0
+                None => {
+                    match project_search::replace_in_file(&path, &matcher, &state.replacement) {
+                        Ok(count) => count,
+                        Err(err) => {
+                            problems.push(format!("{}: {err}", path.display()));
+                            0
+                        }
                     }
-                },
+                }
             };
             if count > 0 {
                 replaced += count;
@@ -1879,6 +1890,21 @@ impl App {
                 search::step(&mut self.ui, &mut self.editor, name == "search.next");
                 if !was_open {
                     search::close(&mut self.ui);
+                }
+            }
+            "search.toggle_case" | "search.toggle_word" | "search.toggle_regex" => {
+                let toggle = match name {
+                    "search.toggle_case" => Toggle::Case,
+                    "search.toggle_word" => Toggle::Word,
+                    _ => Toggle::Regex,
+                };
+                if self.ui.overlay == Some(Overlay::ProjectSearch) {
+                    let state = &mut self.ui.project_search;
+                    state.flip(toggle);
+                    state.changed(&mut self.ui.requests);
+                } else {
+                    self.ui.search.flip(toggle);
+                    search::refresh(&mut self.ui, &self.editor);
                 }
             }
             "ui.escape" => {

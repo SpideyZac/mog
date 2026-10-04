@@ -1,15 +1,17 @@
 //! Finding and replacing text across every file in a project.
 
 use std::{
-    borrow::Cow,
     collections::HashMap,
-    fs, io,
+    fs, io, iter,
     path::{Path, PathBuf},
 };
 
 use ropey::Rope;
 
-use crate::{file_tree::walk_files, search::find_all, transaction::Change};
+use crate::{
+    file_tree::walk_files,
+    search::{Matcher, SearchOptions, replace_changes},
+};
 
 /// The most files a project search looks at.
 const MAX_FILES: usize = 20_000;
@@ -48,25 +50,35 @@ pub struct ProjectResults {
     pub truncated: bool,
 }
 
-/// Returns every match of `query` in `text`, which is the contents of `path`.
-pub fn search_text(
-    path: &Path,
-    text: &str,
-    query: &str,
-    case_sensitive: bool,
-) -> Vec<ProjectMatch> {
-    if case_sensitive || query.is_ascii() {
-        return search_bytes(path, text, query, case_sensitive);
+/// Returns every match of `matcher` in `text`, which is the contents of `path`.
+pub fn search_text(path: &Path, text: &str, matcher: &Matcher) -> Vec<ProjectMatch> {
+    let ranges = matcher.find_in(text);
+    if ranges.is_empty() {
+        return Vec::new();
     }
-    let mut found = Vec::new();
-    for (line, content) in text.lines().enumerate() {
-        let rope = Rope::from_str(content);
-        for (from, to) in find_all(&rope, query, case_sensitive) {
-            let start = rope.char_to_byte(from);
-            found.push(make_match(path, line, content, start, to - from));
-        }
-    }
-    found
+    let line_starts: Vec<usize> = iter::once(0)
+        .chain(text.match_indices('\n').map(|(at, _)| at + 1))
+        .collect();
+    ranges
+        .into_iter()
+        .map(|(start, end)| {
+            let line = line_starts.partition_point(|&at| at <= start) - 1;
+            let line_start = line_starts[line];
+            let content = text[line_start..]
+                .split('\n')
+                .next()
+                .unwrap_or("")
+                .trim_end_matches('\r');
+            let offset = (start - line_start).min(content.len());
+            make_match(
+                path,
+                line,
+                content,
+                offset,
+                text[start..end].chars().count(),
+            )
+        })
+        .collect()
 }
 
 /// Builds the match of `len` chars at byte `start` of the line `content`.
@@ -88,37 +100,6 @@ fn make_match(path: &Path, line: usize, content: &str, start: usize, len: usize)
     }
 }
 
-/// Finds `query` with a plain byte search, folding ASCII case when not `case_sensitive`.
-///
-/// Much faster than going char by char, and right whenever the query is ASCII.
-fn search_bytes(path: &Path, text: &str, query: &str, case_sensitive: bool) -> Vec<ProjectMatch> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let (hay, needle) = if case_sensitive {
-        (Cow::Borrowed(text), Cow::Borrowed(query))
-    } else {
-        // ascii folding keeps every byte offset where it was
-        (
-            Cow::Owned(text.to_ascii_lowercase()),
-            Cow::Owned(query.to_ascii_lowercase()),
-        )
-    };
-    let len = query.chars().count();
-    let mut found = Vec::new();
-    let mut offset = 0;
-    for (line, content) in text.split_inclusive('\n').enumerate() {
-        let end = offset + content.len();
-        let content = content.trim_end_matches(['\n', '\r']);
-        let folded = &hay[offset..offset + content.len()];
-        for (start, _) in folded.match_indices(needle.as_ref()) {
-            found.push(make_match(path, line, content, start, len));
-        }
-        offset = end;
-    }
-    found
-}
-
 /// Reads the text of `path`, or `None` for big, unreadable or binary files.
 fn read_text(path: &Path) -> Option<String> {
     let size = fs::metadata(path).ok()?.len();
@@ -133,18 +114,23 @@ fn read_text(path: &Path) -> Option<String> {
 ///
 /// Files in `open` are searched as given instead of read from disk, so unsaved changes count.
 /// `cancelled` is asked between files so a newer search can stop this one.
+///
+/// # Errors
+///
+/// Returns the reason when the query is a broken regular expression.
 pub fn search_project(
     root: &Path,
     query: &str,
-    case_sensitive: bool,
+    options: SearchOptions,
     open: &HashMap<PathBuf, String>,
     limit: usize,
     cancelled: &dyn Fn() -> bool,
-) -> ProjectResults {
+) -> Result<ProjectResults, String> {
     let mut results = ProjectResults::default();
     if query.is_empty() {
-        return results;
+        return Ok(results);
     }
+    let matcher = Matcher::new(query, options)?;
     for path in walk_files(root, MAX_FILES) {
         if cancelled() {
             break;
@@ -156,7 +142,7 @@ pub fn search_project(
                 None => continue,
             },
         };
-        let found = search_text(&path, &text, query, case_sensitive);
+        let found = search_text(&path, &text, &matcher);
         if found.is_empty() {
             continue;
         }
@@ -167,42 +153,20 @@ pub fn search_project(
         }
         results.matches.extend(found.into_iter().take(room));
     }
-    results
+    Ok(results)
 }
 
-/// Returns the changes that replace every match of `query` in `text` with `replacement`.
-pub fn replace_changes(
-    text: &Rope,
-    query: &str,
-    replacement: &str,
-    case_sensitive: bool,
-) -> Vec<Change> {
-    find_all(text, query, case_sensitive)
-        .into_iter()
-        .map(|(start, end)| Change {
-            start,
-            end,
-            text: replacement.to_owned(),
-        })
-        .collect()
-}
-
-/// Replaces every match of `query` in the file at `path` and saves it.
+/// Replaces every match of `matcher` in the file at `path` and saves it.
 ///
 /// Returns how many matches were replaced.
 ///
 /// # Errors
 ///
 /// Returns an error if the file cannot be read or written.
-pub fn replace_in_file(
-    path: &Path,
-    query: &str,
-    replacement: &str,
-    case_sensitive: bool,
-) -> io::Result<usize> {
+pub fn replace_in_file(path: &Path, matcher: &Matcher, replacement: &str) -> io::Result<usize> {
     let text = fs::read_to_string(path)?;
     let mut rope = Rope::from_str(&text);
-    let changes = replace_changes(&rope, query, replacement, case_sensitive);
+    let changes = replace_changes(&rope, matcher, replacement);
     // back to front so earlier offsets stay right
     for change in changes.iter().rev() {
         rope.remove(change.start..change.end);
@@ -224,9 +188,8 @@ mod tests {
         process,
     };
 
-    use ropey::Rope;
-
-    use super::{replace_changes, replace_in_file, search_project, search_text};
+    use super::{replace_in_file, search_project, search_text};
+    use crate::search::{Matcher, SearchOptions};
 
     /// Creates an empty scratch folder unique to `name`.
     fn scratch(name: &str) -> PathBuf {
@@ -236,34 +199,24 @@ mod tests {
         dir
     }
 
-    /// The fast byte search and the char by char search agree.
-    #[test]
-    fn byte_search_matches_char_search() {
-        let text = "\tl\u{e9}t M\u{f6}g = mog;\r\nMOG mog\n";
-        let path = Path::new("a");
-        assert_eq!(search_text(path, text, "mog", false).len(), 3);
-        assert_eq!(search_text(path, text, "mog", true).len(), 2);
-        assert_eq!(search_text(path, text, "m\u{f6}g", false).len(), 1);
-        let fast = search_text(path, text, "mog", false);
-        assert_eq!((fast[0].line, fast[0].column), (0, 11));
-        assert_eq!((fast[1].line, fast[1].column), (1, 0));
+    /// Builds a matcher for `query`.
+    fn matcher(query: &str, options: SearchOptions) -> Matcher {
+        Matcher::new(query, options).expect("valid query")
     }
 
-    /// Matches know their line, column and length.
+    /// Matches know their line, column and length, past tabs, accents and windows line ends.
     #[test]
     fn finds_lines_and_columns() {
-        let found = search_text(
-            "a.rs".as_ref(),
-            "fn mog() {}\n\tlet x = MOG;\n",
-            "mog",
-            false,
-        );
+        let plain = SearchOptions::default();
+        let text = "\tl\u{e9}t M\u{f6}g = mog;\r\n\tlet x = MOG;\n";
+        let found = search_text(Path::new("a"), text, &matcher("mog", plain));
         assert_eq!(found.len(), 2);
-        assert_eq!((found[0].line, found[0].column, found[0].len), (0, 3, 3));
+        assert_eq!((found[0].line, found[0].column, found[0].len), (0, 11, 3));
         assert_eq!((found[1].line, found[1].column), (1, 9));
         assert_eq!(found[1].preview_column, 12);
         assert_eq!(found[1].preview, "    let x = MOG;");
-        assert_eq!(search_text("a".as_ref(), "Mog", "mog", true).len(), 0);
+        let accented = search_text(Path::new("a"), text, &matcher("m\u{f6}g", plain));
+        assert_eq!(accented.len(), 1);
     }
 
     /// Searching a folder reads files, prefers open text and respects the limit.
@@ -275,28 +228,33 @@ mod tests {
         fs::write(dir.join("c.bin"), "mog\0").expect("write");
         let mut open = HashMap::new();
         open.insert(dir.join("b.txt"), "unsaved mog\n".to_owned());
-        let results = search_project(&dir, "mog", false, &open, 100, &|| false);
+        let plain = SearchOptions::default();
+        let results = search_project(&dir, "mog", plain, &open, 100, &|| false).expect("valid");
         assert_eq!(results.files, 2);
         assert_eq!(results.matches.len(), 4);
-        let limited = search_project(&dir, "mog", false, &open, 2, &|| false);
+        let limited = search_project(&dir, "mog", plain, &open, 2, &|| false).expect("valid");
         assert_eq!(limited.matches.len(), 2);
         assert!(limited.truncated);
+        let regex = SearchOptions {
+            regex: true,
+            ..plain
+        };
+        assert!(search_project(&dir, "(", regex, &open, 2, &|| false).is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Replacing changes every match and nothing else.
+    /// Replacing a file changes every match and nothing else.
     #[test]
-    fn replaces_matches() {
-        let rope = Rope::from_str("Mog and mog");
-        let changes = replace_changes(&rope, "mog", "vim", false);
-        assert_eq!(changes.len(), 2);
+    fn replaces_in_files() {
         let dir = scratch("replace");
         let path = dir.join("a.txt");
         fs::write(&path, "Mog and mog\n").expect("write");
-        assert_eq!(
-            replace_in_file(&path, "mog", "emacs", true).expect("replace"),
-            1
-        );
+        let case = SearchOptions {
+            case_sensitive: true,
+            ..SearchOptions::default()
+        };
+        let replaced = replace_in_file(&path, &matcher("mog", case), "emacs").expect("replace");
+        assert_eq!(replaced, 1);
         assert_eq!(fs::read_to_string(&path).expect("read"), "Mog and emacs\n");
         let _ = fs::remove_dir_all(&dir);
     }
