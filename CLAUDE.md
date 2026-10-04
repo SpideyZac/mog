@@ -31,8 +31,26 @@ Cargo workspace, one crate per concern under `crates/`:
 - `mog-ai`: AI providers (Claude, Copilot) behind one trait.
 - `mog-plugin`: Lua plugin host (`mlua`).
 
-Subsystems never touch the terminal. Everything flows through the app event channel in `mog`,
-and only `mog-tui` draws.
+Subsystems never touch the terminal. Everything flows through the event loop in `mog`
+(`crates/mog/src/app.rs`), and only `mog-tui` draws.
+
+## Where new things plug in
+
+- Editing command: add a `Command` variant and its name in `mog-core/src/command.rs`, handle it
+  in `Editor::execute`, bind it in `DEFAULT_BINDINGS` in `keymap.rs`.
+- App level command (needs AI, plugins, UI): use a namespaced `Command::Custom` like
+  `ai.explain` and handle `Outcome::Unhandled` in `App::execute_command`.
+- Screen element (panel, palette, popup): implement `mog_tui::Layer` and push it in `App::new`.
+  Layers get mouse events by hit testing and can animate via `tick`.
+- Flair: implement `mog_flair::Flair` in `crates/mog-flair/src/builtin/` and add it to
+  `builtin::all()`. Keep them decorative, they get no input.
+- Language server feature: add the request to `mog-lsp/src/client.rs`, handle results in
+  `crates/mog/src/lsp.rs`.
+- AI backend: implement `mog_ai::AiProvider` and build it in `settings::ai_providers`.
+- Plugin API: add to `install_api` in `mog-plugin/src/host.rs`. Plugins only queue
+  `PluginRequest`s, the app carries them out.
+- Config: add a field with a default in `mog-config`, and keep `examples/config.toml` valid (a
+  test parses it).
 
 ## Git rules
 
