@@ -6,6 +6,8 @@ tab_width = 4
 insert_spaces = true
 auto_close_brackets = true
 auto_complete = true
+# milliseconds of no typing before language servers check the file for errors
+diagnostics_delay = 500
 
 [ui]
 # themes: mog, synthwave, matrix, sunset, ocean, forest, paper

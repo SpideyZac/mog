@@ -14,7 +14,7 @@ use crossterm::{
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
 use futures::{StreamExt, future};
-use lsp_types::Range as LspRange;
+use lsp_types::{PublishDiagnosticsParams, Range as LspRange};
 use mog_ai::{CompletionFile, CompletionRequest, CopilotEvent, CopilotStatus, DeviceCode};
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{Config, SettingValue, config_path, save_setting};
@@ -123,6 +123,10 @@ pub struct App {
     lsp_replies: UnboundedReceiver<LspReply>,
     /// The id of the newest completion request, so older answers are ignored.
     completion_request: u64,
+    /// When a document was last edited, so language servers wait for typing to pause.
+    last_edit: Instant,
+    /// Diagnostics that came in while typing, shown once it pauses.
+    pending_diagnostics: Vec<PublishDiagnosticsParams>,
     /// The code actions offered last, picked by index from the menu.
     code_actions: Vec<CodeAction>,
     /// The AI providers and their pending replies.
@@ -242,6 +246,8 @@ impl App {
             lsp_sender: reply_sender,
             lsp_replies,
             completion_request: 0,
+            last_edit: Instant::now(),
+            pending_diagnostics: Vec::new(),
             code_actions: Vec::new(),
             assistant: Assistant::new(providers),
             copilot_code: None,
@@ -382,7 +388,14 @@ impl App {
         housekeeping.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut last_tick = Instant::now();
         while !self.quit {
-            self.sync_language_servers();
+            let idle_at = self.idle_at();
+            let typing = Instant::now() < idle_at;
+            if !typing {
+                self.sync_language_servers();
+                for params in mem::take(&mut self.pending_diagnostics) {
+                    lsp::apply_diagnostics(&mut self.editor, params);
+                }
+            }
             self.sync_git();
             self.watch_focus();
             self.play_sounds();
@@ -398,6 +411,7 @@ impl App {
                 Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
                 () = changed(self.watcher.as_ref()) => self.files_changed = true,
+                () = time::sleep_until(idle_at.into()), if typing => {}
                 _ = housekeeping.tick() => self.housekeeping(),
                 _ = frames.tick(), if animating => {
                     let now = Instant::now();
@@ -1086,6 +1100,7 @@ impl App {
 
     /// Asks the language server for completions at the cursor.
     fn request_completion(&mut self, manual: bool) {
+        self.sync_language_servers();
         let document = self.editor.document();
         let Some(path) = document.path().map(ToOwned::to_owned) else {
             return;
@@ -1117,6 +1132,7 @@ impl App {
 
     /// Sends a hover, definition or format request for the focused file.
     fn request_feature(&mut self, feature: &str) {
+        self.sync_language_servers();
         let document = self.editor.document();
         let Some(path) = document.path().map(ToOwned::to_owned) else {
             self.editor
@@ -1171,6 +1187,7 @@ impl App {
 
     /// Asks the language server to rename the symbol at the cursor to `new_name`.
     fn request_rename(&mut self, new_name: String) {
+        self.sync_language_servers();
         let document = self.editor.document();
         let Some(path) = document.path().map(ToOwned::to_owned) else {
             return;
@@ -1315,12 +1332,24 @@ impl App {
         }
     }
 
+    /// Returns when typing will have paused long enough for language servers to check the file.
+    fn idle_at(&self) -> Instant {
+        self.last_edit + Duration::from_millis(self.ui.config.editor.diagnostics_delay)
+    }
+
     /// Reacts to an event from a language server.
     fn handle_lsp_event(&mut self, event: LspEvent) {
         match event {
             LspEvent::Ready { .. } => {}
             LspEvent::Diagnostics { params, .. } => {
-                lsp::apply_diagnostics(&mut self.editor, params);
+                if Instant::now() < self.idle_at() {
+                    // keep only the newest set for each file
+                    self.pending_diagnostics
+                        .retain(|pending| pending.uri != params.uri);
+                    self.pending_diagnostics.push(params);
+                } else {
+                    lsp::apply_diagnostics(&mut self.editor, params);
+                }
             }
             LspEvent::Message { server, text } => {
                 self.editor.set_status(format!("{server}: {text}"));
@@ -1380,6 +1409,7 @@ impl App {
             self.saved();
         }
         if changed {
+            self.last_edit = Instant::now();
             self.ui.hover = None;
             self.ui.ghost = None;
             self.assistant.cancel_suggestion();

@@ -114,6 +114,8 @@ pub struct EditorConfig {
     pub auto_close_brackets: bool,
     /// Whether completions pop up while typing.
     pub auto_complete: bool,
+    /// How long typing has to pause, in milliseconds, before language servers check the file.
+    pub diagnostics_delay: u64,
 }
 
 impl Default for EditorConfig {
@@ -123,6 +125,7 @@ impl Default for EditorConfig {
             insert_spaces: true,
             auto_close_brackets: true,
             auto_complete: true,
+            diagnostics_delay: 500,
         }
     }
 }
