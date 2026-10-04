@@ -54,6 +54,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("explorer.toggle", "View: Toggle file explorer"),
     ("explorer.focus", "View: Focus file explorer"),
     ("settings.open", "Settings: Open settings"),
+    ("config.open", "Settings: Open config file"),
+    ("config.reload", "Settings: Reload config"),
     ("audio.toggle_music", "Sound: Toggle music"),
     ("audio.toggle_effects", "Sound: Toggle sound effects"),
     ("flair.toggle", "Flair: Toggle all flair"),

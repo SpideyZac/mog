@@ -17,7 +17,7 @@ use futures::{StreamExt, future};
 use lsp_types::Range as LspRange;
 use mog_ai::CompletionRequest;
 use mog_audio::{Audio, Mood, Sfx};
-use mog_config::{Config, SettingValue, save_setting};
+use mog_config::{Config, SettingValue, config_path, save_setting};
 use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
     movement,
@@ -81,6 +81,21 @@ const GHOST_CONTEXT_AFTER: usize = 1000;
 /// What the chat says when no AI is set up.
 const NO_AI: &str = "no ai provider is enabled. add [ai.claude] enabled = true to the config \
 and put your key in ANTHROPIC_API_KEY, then restart mog.";
+
+/// What a new config file starts with when it is opened from the editor.
+const NEW_CONFIG: &str = "# mog config. saving this file reloads it.
+# every option is listed in examples/config.toml in the mog repo.
+
+# [ui]
+# theme = \"mog\"
+
+# [keys]
+# \"alt+w\" = \"close_tab\"
+
+# settings for a language server, here running clippy instead of check on save
+# [lsp.rust.settings]
+# check.command = \"clippy\"
+";
 
 /// How many rounds of layer requests are run after one event, so requests that queue more
 /// requests cannot freeze the editor.
@@ -628,6 +643,11 @@ impl App {
                     .set_status(format!("could not save setting: {err}"));
             }
         }
+        self.apply_config();
+    }
+
+    /// Applies the theme, editing options, sound and Discord from the live config.
+    fn apply_config(&mut self) {
         let (theme, problem) = settings::theme(&self.ui.config);
         self.theme = theme;
         if let Some(problem) = problem {
@@ -636,6 +656,70 @@ impl App {
         self.editor.set_options(settings::options(&self.ui.config));
         self.apply_audio_settings();
         self.apply_discord_settings();
+    }
+
+    /// Reads the config file again and applies everything in it.
+    ///
+    /// A broken file is reported and the current config is kept.
+    fn reload_config(&mut self) {
+        let config = match Config::load() {
+            Ok(config) => config,
+            Err(err) => {
+                self.editor
+                    .set_status(format!("config not reloaded: {err}"));
+                return;
+            }
+        };
+        let (keymap, mut problems) = settings::keymap(&config);
+        let (providers, ai_problems) = settings::ai_providers(&config);
+        problems.extend(ai_problems);
+        self.keymap = keymap;
+        self.ui.commands = commands::palette(&self.keymap);
+        self.ui.bindings = commands::bindings(&self.keymap);
+        self.assistant = Assistant::new(providers);
+        self.lsp.reconfigure(config.language_servers());
+        self.ui.config = config;
+        self.editor.set_status("config reloaded");
+        self.apply_config();
+        if !problems.is_empty() {
+            self.editor.set_status(problems.join("; "));
+        }
+    }
+
+    /// Opens the config file in the editor, creating it first if there is none.
+    fn open_config(&mut self) {
+        let Some(path) = config_path() else {
+            self.editor
+                .set_status("there is no config folder on this system");
+            return;
+        };
+        if !path.exists() {
+            let created = path
+                .parent()
+                .map_or(Ok(()), fs::create_dir_all)
+                .and_then(|()| fs::write(&path, NEW_CONFIG));
+            if let Err(err) = created {
+                self.editor
+                    .set_status(format!("could not create {}: {err}", path.display()));
+                return;
+            }
+        }
+        self.ui.close();
+        self.ui.focus = Focus::Editor;
+        match self.editor.open(&path) {
+            Ok(()) => self
+                .editor
+                .set_status("saving the config reloads it, or run Settings: Reload config"),
+            Err(err) => self
+                .editor
+                .set_status(format!("could not open {}: {err}", path.display())),
+        }
+    }
+
+    /// Returns `true` if `path` is the config file.
+    fn is_config(path: &Path) -> bool {
+        let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        config_path().is_some_and(|config| canonical(&config) == canonical(path))
     }
 
     /// Runs the commands layers asked for.
@@ -1116,8 +1200,12 @@ impl App {
         self.ui.events.push(UiEvent::Saved);
         // a save as needs the new path opened on the server before it hears about the save
         self.sync_language_servers();
-        if let Some(path) = self.editor.document().path() {
-            self.lsp.saved(path);
+        let Some(path) = self.editor.document().path().map(ToOwned::to_owned) else {
+            return;
+        };
+        self.lsp.saved(&path);
+        if Self::is_config(&path) {
+            self.reload_config();
         }
     }
 
@@ -1140,9 +1228,10 @@ impl App {
                 self.editor.set_status(format!("{server}: {text}"));
             }
             LspEvent::Exited { server, reason } => {
-                self.lsp.exited(&server);
-                self.editor
-                    .set_status(lsp::exit_message(&server, reason.as_deref()));
+                if self.lsp.exited(&server) {
+                    self.editor
+                        .set_status(lsp::exit_message(&server, reason.as_deref()));
+                }
             }
         }
     }
@@ -1289,6 +1378,8 @@ impl App {
                 );
             }
             "settings.open" => self.ui.open(Overlay::Settings),
+            "config.open" => self.open_config(),
+            "config.reload" => self.reload_config(),
             "split.toggle" => {
                 self.ui.split = match self.ui.split.take() {
                     Some(_) => None,
