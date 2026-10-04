@@ -1,6 +1,6 @@
 //! The bar at the bottom of the screen.
 
-use mog_core::view;
+use mog_core::{Severity, view};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -51,8 +51,25 @@ impl Layer for StatusLine {
             ),
         ]);
         left.render(area, buf);
-        Line::from(format!("Ln {line}, Col {col} "))
-            .right_aligned()
-            .render(area, buf);
+
+        let count = |severity| {
+            document
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == severity)
+                .count()
+        };
+        let mut right = Vec::new();
+        for (severity, label, style) in [
+            (Severity::Error, "E", theme.error),
+            (Severity::Warning, "W", theme.warning),
+        ] {
+            let n = count(severity);
+            if n > 0 {
+                right.push(Span::styled(format!("{label}{n} "), style));
+            }
+        }
+        right.push(Span::raw(format!("Ln {line}, Col {col} ")));
+        Line::from(right).right_aligned().render(area, buf);
     }
 }

@@ -23,6 +23,10 @@ pub struct Theme {
     pub status_badge: Style,
     /// Status messages.
     pub status_message: Style,
+    /// Error counts and markers.
+    pub error: Style,
+    /// Warning counts and markers.
+    pub warning: Style,
 }
 
 impl Default for Theme {
@@ -42,6 +46,8 @@ impl Default for Theme {
             status: Style::new().fg(fg).bg(Color::Rgb(40, 32, 60)),
             status_badge: Style::new().fg(bg).bg(accent).add_modifier(Modifier::BOLD),
             status_message: Style::new().fg(Color::Rgb(120, 230, 200)),
+            error: Style::new().fg(Color::Rgb(255, 85, 110)),
+            warning: Style::new().fg(Color::Rgb(255, 196, 87)),
         }
     }
 }
