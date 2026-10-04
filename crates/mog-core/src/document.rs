@@ -2,7 +2,7 @@
 
 use std::fs::File;
 use std::io::{self, BufWriter, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::{self, Path, PathBuf};
 
 use ropey::Rope;
 
@@ -95,6 +95,8 @@ impl Document {
     /// Returns an error if the file exists but cannot be read.
     pub fn open(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
+        // language servers and plugins want absolute paths so resolve it once here
+        let path = path::absolute(&path).unwrap_or(path);
         let text = match File::open(&path) {
             Ok(file) => Rope::from_reader(file)?,
             Err(err) if err.kind() == ErrorKind::NotFound => Rope::new(),
