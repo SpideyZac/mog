@@ -39,6 +39,8 @@ mog .
 - The mogling, a little face with feelings about your errors
 - A combo counter with sparks flying off the cursor
 - Aura points, a RAM download and an FBI agent counter
+- A $MOG stock ticker and a weather report for your codebase up in the tab bar
+- A resource monitor and a fake live stream chat that roasts your errors, under the explorer
 - Matrix rain when you go idle
 - Sound effects, music and spectrum bars for whatever your computer is playing
 - Discord Rich Presence
@@ -250,6 +252,10 @@ press the new keys).
 | `session` | Session timer that eventually tells you to go outside |
 | `screensaver` | Matrix rain when idle |
 | `spectrum` | Spectrum bars for system audio |
+| `stonks` | A $MOG stock ticker in the tab bar. Saving pumps it, errors dump it |
+| `weather` | The weather in your codebase, in the tab bar |
+| `resources` | CPU and RAM under the explorer, plus a GPU that is mining $MOG |
+| `stream` | A fake live stream chat under the explorer that reacts to your code |
 
 ### `[lsp]`
 

@@ -93,6 +93,8 @@
 - [x] Spectrum bars for all desktop audio
 - [x] Aura points, a RAM download and an FBI agent counter
 - [x] Draw on the screen
+- [x] Flair in the tab bar and under the explorer
+- [x] $MOG stonks, codebase weather, a resource monitor and stream chat
 
 ## Social
 
