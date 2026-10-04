@@ -179,7 +179,7 @@ pub fn accept(ui: &mut Ui, editor: &mut Editor) {
 }
 
 /// Wraps `text` to `width` columns, keeping at most `max_lines` lines.
-fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
+pub fn wrap(text: &str, width: usize, max_lines: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for raw in text.lines() {
         let raw = raw.trim_end();
@@ -343,6 +343,23 @@ impl Layer for CompletionMenu {
             cx.ui.hover = None;
             if chord.key == Key::Esc {
                 return EventResult::Consumed;
+            }
+        }
+        if let Some((document, version, pos, text)) = cx.ui.ghost.clone() {
+            let fresh = document == cx.editor.active()
+                && version == cx.editor.document().version()
+                && pos == cx.editor.document().selection().head;
+            match chord.key {
+                Key::Tab if fresh && cx.ui.completion.is_none() => {
+                    cx.ui.ghost = None;
+                    cx.editor.replace_ranges(&[(pos, pos)], &text);
+                    return EventResult::Consumed;
+                }
+                Key::Esc if fresh => {
+                    cx.ui.ghost = None;
+                    return EventResult::Consumed;
+                }
+                _ => {}
             }
         }
         let Some(state) = cx.ui.completion.as_mut() else {

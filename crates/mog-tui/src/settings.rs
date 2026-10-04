@@ -43,6 +43,8 @@ pub enum SettingKey {
     Flair(String),
     /// A toggle in the `[audio]` table, by field name.
     Audio(&'static str),
+    /// Whether AI ghost text is on.
+    GhostText,
     /// The volume.
     Volume,
 }
@@ -146,6 +148,12 @@ const TOGGLES: &[(&str, SettingKey, &str, &str)] = &[
         "Tab inserts spaces instead of a tab char.",
     ),
     (
+        "code",
+        SettingKey::GhostText,
+        "AI ghost text",
+        "Gray AI suggestions after the cursor, tab to accept.",
+    ),
+    (
         "sound",
         SettingKey::Audio("sound_effects"),
         "Sound effects",
@@ -210,6 +218,7 @@ pub fn get(config: &Config, key: &SettingKey) -> SettingValue {
             _ => false,
         }),
         SettingKey::Volume => SettingValue::Int(i64::from(config.audio.volume)),
+        SettingKey::GhostText => SettingValue::Bool(config.ai.ghost_text),
     }
 }
 
@@ -245,6 +254,7 @@ fn toggle_mut<'a>(config: &'a mut Config, key: &SettingKey) -> Option<&'a mut bo
             _ => return None,
         },
         SettingKey::FlairEnabled => &mut config.flair.enabled,
+        SettingKey::GhostText => &mut config.ai.ghost_text,
         _ => return None,
     })
 }
@@ -300,6 +310,7 @@ pub fn persisted(config: &Config, key: &SettingKey) -> (Vec<&'static str>, Setti
         ),
         SettingKey::Audio(name) => (vec!["audio", name], get(config, key)),
         SettingKey::Volume => (vec!["audio", "volume"], get(config, key)),
+        SettingKey::GhostText => (vec!["ai", "ghost_text"], get(config, key)),
     }
 }
 

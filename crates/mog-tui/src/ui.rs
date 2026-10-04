@@ -11,12 +11,15 @@ use ratatui::{
 };
 
 use crate::{
-    completion::CompletionState, menu::MenuState, search::SearchState, settings::SettingKey,
-    status_line::STATUS_HEIGHT,
+    chat::ChatState, completion::CompletionState, menu::MenuState, search::SearchState,
+    settings::SettingKey, status_line::STATUS_HEIGHT,
 };
 
 /// The widest the file explorer gets, in cells.
 const EXPLORER_MAX_WIDTH: u16 = 30;
+
+/// The widest the AI chat panel gets, in cells.
+const CHAT_MAX_WIDTH: u16 = 52;
 
 /// The width of the minimap, in cells.
 const MINIMAP_WIDTH: u16 = 14;
@@ -37,6 +40,8 @@ pub enum Focus {
     Explorer,
     /// The search bar.
     Search,
+    /// The AI chat input.
+    Chat,
 }
 
 /// A popup that covers the screen and takes all input while open.
@@ -164,6 +169,8 @@ pub struct Layout {
     pub editor: Rect,
     /// The minimap, empty when hidden.
     pub minimap: Rect,
+    /// The AI chat panel, empty when hidden.
+    pub chat: Rect,
     /// The status line.
     pub status: Rect,
 }
@@ -223,6 +230,10 @@ pub struct Ui {
     pub submitted: Option<Prompt>,
     /// The open right click menu.
     pub menu: Option<MenuState>,
+    /// The AI chat.
+    pub chat: ChatState,
+    /// An AI suggestion shown after the cursor, as `(document, version, pos, text)`.
+    pub ghost: Option<(usize, u64, usize, String)>,
 }
 
 impl Ui {
@@ -302,10 +313,24 @@ impl Ui {
             width: explorer_width,
             ..body
         };
-        let right = Rect {
+        let rest = Rect {
             x: body.x + explorer_width,
             width: body.width - explorer_width,
             ..body
+        };
+        let chat_width = if self.chat.open {
+            CHAT_MAX_WIDTH.min(rest.width / 2)
+        } else {
+            0
+        };
+        let chat = Rect {
+            x: rest.right() - chat_width,
+            width: chat_width,
+            ..rest
+        };
+        let right = Rect {
+            width: rest.width - chat_width,
+            ..rest
         };
         let tabs_height = if self.config.ui.tabs {
             TABS_HEIGHT.min(right.height)
@@ -341,6 +366,7 @@ impl Ui {
             explorer,
             editor,
             minimap,
+            chat,
             status,
         }
     }

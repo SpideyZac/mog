@@ -213,6 +213,7 @@ impl Layer for EditorView {
 
         let tab_width = cx.editor.options().tab_width;
         let document = cx.editor.document();
+        let document_version = document.version();
         let text = document.text();
         let selection = document.selection();
         let cursor_line = text.char_to_line(selection.head);
@@ -407,6 +408,27 @@ impl Layer for EditorView {
                 buf.set_style(Rect::new(x, y, 1, 1), theme.selection);
             }
 
+            let ghost = cx.ui.ghost.as_ref().filter(|(document, version, pos, _)| {
+                *document == cx.editor.active()
+                    && *version == document_version
+                    && *pos == selection.head
+                    && is_cursor_line
+            });
+            if let Some((_, _, _, suggestion)) = ghost {
+                let first = suggestion.lines().next().unwrap_or_default();
+                let more = if suggestion.lines().nth(1).is_some() {
+                    " \u{2026}"
+                } else {
+                    ""
+                };
+                let head_col = view::visual_col(text, selection.head, tab_width);
+                if visible(head_col) {
+                    let x = text_x + cells(head_col - scroll.scroll_col);
+                    let room = usize::from(text_x + text_width).saturating_sub(usize::from(x));
+                    buf.set_stringn(x, y, format!("{first}{more}"), room, theme.ghost);
+                }
+                continue;
+            }
             let inline = match diagnostic {
                 Some(d) if settings.error_lens => {
                     let message = d.message.lines().next().unwrap_or_default();
