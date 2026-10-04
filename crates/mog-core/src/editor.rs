@@ -367,6 +367,27 @@ impl Editor {
         Outcome::Done
     }
 
+    /// Applies `changes`, like edits from a formatter, as one undo step keeping the cursor put.
+    ///
+    /// Overlapping changes are dropped since they cannot be applied together.
+    pub fn apply_changes(&mut self, mut changes: Vec<Change>) {
+        changes.sort_by_key(|change| change.start);
+        let mut kept: Vec<Change> = Vec::with_capacity(changes.len());
+        for change in changes {
+            if kept.last().is_none_or(|last| last.end <= change.start) {
+                kept.push(change);
+            }
+        }
+        if kept.is_empty() {
+            return;
+        }
+        let tx = Transaction::new(kept);
+        let selection = self.document().selection();
+        let after = Range::new(tx.map_pos(selection.anchor), tx.map_pos(selection.head));
+        self.document_mut().apply(tx, after, false);
+        self.reveal_cursor();
+    }
+
     /// Applies a planned line edit as one undo step.
     fn apply_edit(&mut self, edit: LineEdit) {
         if edit.tx.is_empty() {
@@ -717,6 +738,7 @@ mod tests {
         command::{Command, Motion},
         document::Document,
         range::Range,
+        transaction::Change,
     };
 
     /// Creates an editor holding `text` with the cursor at `pos`.
@@ -803,6 +825,26 @@ mod tests {
         editor.execute(Command::InsertChar('x'));
         assert_eq!(editor.execute(Command::Quit), Outcome::Done);
         assert_eq!(editor.execute(Command::Quit), Outcome::Quit);
+    }
+
+    /// Formatter style changes apply together and overlapping ones are skipped.
+    #[test]
+    fn applies_changes() {
+        let mut editor = editor_with("a  b", 4);
+        editor.apply_changes(vec![
+            Change {
+                start: 1,
+                end: 3,
+                text: " ".into(),
+            },
+            Change {
+                start: 2,
+                end: 4,
+                text: "x".into(),
+            },
+        ]);
+        assert_eq!(text(&editor), "a b");
+        assert_eq!(editor.document().selection().head, 3);
     }
 
     /// Replacing several ranges is one undo step.
