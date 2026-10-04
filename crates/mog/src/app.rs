@@ -214,6 +214,7 @@ impl App {
         }
         let flair = settings::flair_layer(&config);
         ui.flairs = flair.describe();
+        ui.explorer_footer = flair.sidebar_height();
         compositor.push(Box::new(flair));
         compositor.push(Box::new(StatusLine::new()));
         compositor.push(Box::new(CompletionMenu::new()));

@@ -53,6 +53,18 @@ impl FlairLayer {
             .collect()
     }
 
+    /// Returns the rows the turned on sidebar flairs want under the file explorer.
+    pub fn sidebar_height(&self) -> u16 {
+        self.flairs
+            .iter()
+            .filter(|flair| self.is_on(flair.id()))
+            .map(|flair| match flair.placement() {
+                Placement::Sidebar { height } => height,
+                _ => 0,
+            })
+            .sum()
+    }
+
     /// Returns whether the flair called `id` should run.
     fn is_on(&self, id: &str) -> bool {
         !self.hidden && !self.disabled.contains(id)

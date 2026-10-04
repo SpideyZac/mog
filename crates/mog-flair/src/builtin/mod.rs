@@ -10,6 +10,7 @@ pub mod leaked_ip;
 pub mod pet;
 pub mod quips;
 pub mod ram;
+pub mod resources;
 pub mod screensaver;
 pub mod session;
 pub mod sparks;
@@ -28,6 +29,7 @@ pub use leaked_ip::LeakedIp;
 pub use pet::Pet;
 pub use quips::Quips;
 pub use ram::Ram;
+pub use resources::Resources;
 pub use screensaver::Screensaver;
 pub use session::Session;
 pub use sparks::Sparks;
@@ -57,6 +59,7 @@ pub fn all() -> Vec<Box<dyn Flair>> {
         Box::new(Spectrum::new()),
         Box::new(Stonks::new()),
         Box::new(Weather::new()),
+        Box::new(Resources::new()),
         Box::new(Screensaver::new()),
     ]
 }

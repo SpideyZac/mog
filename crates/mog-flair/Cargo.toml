@@ -12,6 +12,7 @@ mog-audio.workspace = true
 mog-core.workspace = true
 mog-tui.workspace = true
 ratatui.workspace = true
+sysinfo.workspace = true
 unicode-width.workspace = true
 
 [lints]
