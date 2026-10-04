@@ -3,6 +3,7 @@
 //! The config is a TOML file at `<config dir>/mog/config.toml`. Every field has a default so an
 //! empty or missing file is a valid config.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -45,6 +46,10 @@ pub enum ConfigError {
 pub struct Config {
     /// Editing behavior.
     pub editor: EditorConfig,
+    /// Key binding overrides from chord, like `ctrl+d`, to command name, like `select_all`.
+    ///
+    /// Binding a chord to `""` removes its default binding.
+    pub keys: BTreeMap<String, String>,
 }
 
 /// Settings for editing behavior.
@@ -127,6 +132,16 @@ mod tests {
             Config::parse("[editor]\ntab_width = 2\n", Path::new("test.toml")).expect("valid");
         assert_eq!(config.editor.tab_width, 2);
         assert!(config.editor.insert_spaces);
+    }
+
+    /// Key overrides are read as plain strings.
+    #[test]
+    fn key_overrides() {
+        let text = "[keys]
+\"ctrl+d\" = \"select_all\"
+";
+        let config = Config::parse(text, Path::new("test.toml")).expect("valid");
+        assert_eq!(config.keys["ctrl+d"], "select_all");
     }
 
     /// Unknown keys are reported instead of silently ignored.
