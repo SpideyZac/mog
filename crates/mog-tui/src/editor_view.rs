@@ -226,6 +226,10 @@ impl Layer for EditorView {
         let mut change = self.cache.changes.iter().peekable();
         let mut span_index = 0;
         let number_width = lines.to_string().len();
+        let search = &cx.ui.search;
+        let matches = &search.matches[..];
+        let first_visible = text.line_to_char(scroll.scroll_line.min(lines - 1));
+        let mut match_index = matches.partition_point(|(_, to)| *to <= first_visible);
         let mut guide_indent = 0;
 
         for row in 0..area.height {
@@ -351,21 +355,17 @@ impl Layer for EditorView {
                 if brackets.is_some_and(|(a, b)| a == pos || b == pos) {
                     style = style.patch(theme.matching_bracket);
                 }
-                if let Some((from, to)) = cx
-                    .ui
-                    .search_matches
-                    .get(cx.ui.search_current.unwrap_or(usize::MAX))
-                    .copied()
+                while matches.get(match_index).is_some_and(|(_, to)| *to <= pos) {
+                    match_index += 1;
+                }
+                if let Some(&(from, to)) = matches.get(match_index)
                     && (from..to).contains(&pos)
                 {
-                    style = style.patch(theme.search_current);
-                } else if cx
-                    .ui
-                    .search_matches
-                    .iter()
-                    .any(|(from, to)| (*from..*to).contains(&pos))
-                {
-                    style = style.patch(theme.search_match);
+                    style = if search.current == Some(match_index) {
+                        style.patch(theme.search_current)
+                    } else {
+                        style.patch(theme.search_match)
+                    };
                 }
                 if (selection.from()..selection.to()).contains(&pos) {
                     style = style.patch(theme.selection);

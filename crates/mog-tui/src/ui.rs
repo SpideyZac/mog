@@ -7,7 +7,7 @@ use mog_core::Command;
 use mog_git::FileStatus;
 use ratatui::{layout::Rect, style::Style};
 
-use crate::status_line::STATUS_HEIGHT;
+use crate::{search::SearchState, status_line::STATUS_HEIGHT};
 
 /// The widest the file explorer gets, in cells.
 const EXPLORER_MAX_WIDTH: u16 = 30;
@@ -155,10 +155,8 @@ pub struct Ui {
     pub branch: Option<String>,
     /// Who last changed the cursor line, as `(file, line, description)`.
     pub blame: Option<(PathBuf, usize, String)>,
-    /// The char ranges of search matches in the focused document.
-    pub search_matches: Vec<(usize, usize)>,
-    /// The index of the match the cursor is on.
-    pub search_current: Option<usize>,
+    /// The find and replace state.
+    pub search: SearchState,
 }
 
 impl Ui {

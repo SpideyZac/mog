@@ -12,8 +12,8 @@ use mog_config::Config;
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome};
 use mog_lsp::LspEvent;
 use mog_tui::{
-    Compositor, Context, EditorView, EventResult, Explorer, Focus, Overlay, Popups, StatusLine,
-    Tabs, Theme, Ui, input,
+    Compositor, Context, EditorView, EventResult, Explorer, Focus, Overlay, Popups, SearchBar,
+    StatusLine, Tabs, Theme, Ui, input, search,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -117,6 +117,7 @@ impl App {
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
         compositor.push(Box::new(Tabs::new()));
+        compositor.push(Box::new(SearchBar::new()));
         if let Some(tree) = tree {
             ui.has_explorer = true;
             ui.explorer_open = config.ui.explorer;
@@ -408,6 +409,28 @@ impl App {
                 };
             }
             "finder.files" => self.ui.open(Overlay::Finder),
+            "search.find" => search::open(&mut self.ui, &self.editor, false),
+            "search.replace" => search::open(&mut self.ui, &self.editor, true),
+            "search.next" | "search.prev" => {
+                if self.ui.search.query.is_empty() {
+                    search::open(&mut self.ui, &self.editor, false);
+                    return;
+                }
+                let was_open = self.ui.search.open;
+                self.ui.search.open = true;
+                search::step(&mut self.ui, &mut self.editor, name == "search.next");
+                if !was_open {
+                    search::close(&mut self.ui);
+                }
+            }
+            "ui.escape" => {
+                if self.ui.search.open {
+                    search::close(&mut self.ui);
+                } else {
+                    let head = self.editor.document().selection().head;
+                    self.editor.select(head, head);
+                }
+            }
             "help.keys" => self.ui.open(Overlay::Keys),
             "goto.prompt" => self.ui.open(Overlay::GotoLine),
             "explorer.focus" => {
