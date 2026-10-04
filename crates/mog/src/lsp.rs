@@ -5,11 +5,100 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use lsp_types::{DiagnosticSeverity, PublishDiagnosticsParams};
+use lsp_types::{
+    CompletionItem as LspItem, CompletionItemKind, CompletionTextEdit, DiagnosticSeverity,
+    Position, PublishDiagnosticsParams, TextEdit,
+};
 use mog_config::ServerConfig;
-use mog_core::{Diagnostic, Document, Editor, Severity};
-use mog_lsp::{Client, LspEvent, convert};
+use mog_core::{Change, Diagnostic, Document, Editor, Severity};
+use mog_lsp::{Client, LspEvent, convert, features};
+use mog_tui::completion::{CompletionItem, ItemKind};
 use tokio::sync::mpsc::UnboundedSender;
+
+/// An answer to a feature request.
+#[derive(Debug)]
+pub enum LspReply {
+    /// Completions for the word starting at `anchor`.
+    Completion {
+        /// Which request this answers, so stale ones can be dropped.
+        request: u64,
+        /// The document index the request was for.
+        document: usize,
+        /// Where the word being completed starts.
+        anchor: usize,
+        /// The completions.
+        items: Vec<CompletionItem>,
+    },
+    /// What is under the cursor, as text, for the char offset `pos`.
+    Hover(String, usize),
+    /// Where a symbol is defined.
+    Definition(PathBuf, Position),
+    /// Edits that format a file at a given document version.
+    Format(PathBuf, u64, Vec<TextEdit>),
+    /// A request found nothing or failed, with a message for the status line.
+    Nothing(String),
+}
+
+/// Converts a server completion to a menu item.
+pub fn to_item(item: LspItem) -> CompletionItem {
+    let kind = match item.kind {
+        Some(
+            CompletionItemKind::FUNCTION
+            | CompletionItemKind::METHOD
+            | CompletionItemKind::CONSTRUCTOR,
+        ) => ItemKind::Function,
+        Some(CompletionItemKind::VARIABLE | CompletionItemKind::VALUE) => ItemKind::Variable,
+        Some(CompletionItemKind::FIELD | CompletionItemKind::PROPERTY) => ItemKind::Field,
+        Some(
+            CompletionItemKind::CLASS
+            | CompletionItemKind::STRUCT
+            | CompletionItemKind::INTERFACE
+            | CompletionItemKind::ENUM
+            | CompletionItemKind::TYPE_PARAMETER,
+        ) => ItemKind::Type,
+        Some(CompletionItemKind::MODULE) => ItemKind::Module,
+        Some(CompletionItemKind::KEYWORD) => ItemKind::Keyword,
+        Some(CompletionItemKind::CONSTANT | CompletionItemKind::ENUM_MEMBER) => ItemKind::Constant,
+        _ => ItemKind::Other,
+    };
+    let insert = match &item.text_edit {
+        Some(CompletionTextEdit::Edit(edit)) => edit.new_text.clone(),
+        Some(CompletionTextEdit::InsertAndReplace(edit)) => edit.new_text.clone(),
+        None => item
+            .insert_text
+            .clone()
+            .unwrap_or_else(|| item.label.clone()),
+    };
+    let detail = item
+        .detail
+        .clone()
+        .or_else(|| {
+            item.documentation
+                .as_ref()
+                .map(|doc| features::documentation_text(doc).to_owned())
+        })
+        .unwrap_or_default();
+    CompletionItem {
+        filter: item.filter_text.unwrap_or_else(|| item.label.clone()),
+        label: item.label,
+        detail,
+        kind,
+        insert,
+    }
+}
+
+/// Converts server text edits to changes on `document`.
+pub fn to_changes(document: &Document, edits: &[TextEdit]) -> Vec<Change> {
+    let text = document.text();
+    edits
+        .iter()
+        .map(|edit| Change {
+            start: convert::position_to_char(text, edit.range.start),
+            end: convert::position_to_char(text, edit.range.end),
+            text: edit.new_text.clone(),
+        })
+        .collect()
+}
 
 /// The language servers for the current project.
 pub struct LanguageServers {
@@ -51,6 +140,13 @@ impl LanguageServers {
             .iter()
             .find(|(_, config)| config.extensions.iter().any(|ext| ext == extension))
             .map(|(name, _)| name.as_str())
+    }
+
+    /// Returns the running server for `path`, if there is one.
+    pub fn client_for(&self, path: &Path) -> Option<Client> {
+        self.server_for(path)
+            .and_then(|name| self.clients.get(name))
+            .cloned()
     }
 
     /// Opens every document that is not known to its server yet and sends changes for the rest.

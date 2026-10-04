@@ -13,15 +13,17 @@ use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{Config, save_setting};
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome, Severity};
 use mog_flair::GraphView;
-use mog_lsp::LspEvent;
+use mog_lsp::{LspEvent, convert};
 use mog_tui::{
-    Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap, Overlay, Popups,
-    SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, UiEvent, input, search,
+    CompletionMenu, Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap,
+    Overlay, Popups, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, UiEvent,
+    completion::{self, CompletionState},
+    input, search,
     settings::{SettingKey, change as settings_change, persisted},
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
-    sync::mpsc::{self, UnboundedReceiver},
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     time::{self, MissedTickBehavior},
 };
 
@@ -30,7 +32,7 @@ use crate::{
     cli::Args,
     clipboard, commands,
     git::{self, Git},
-    lsp::{self, LanguageServers},
+    lsp::{self, LanguageServers, LspReply},
     settings,
     terminal::Tui,
     watch::FolderWatcher,
@@ -68,6 +70,12 @@ pub struct App {
     lsp: LanguageServers,
     /// Events coming back from language servers.
     lsp_events: UnboundedReceiver<LspEvent>,
+    /// Where feature requests send their answers.
+    lsp_sender: UnboundedSender<LspReply>,
+    /// Answers to feature requests.
+    lsp_replies: UnboundedReceiver<LspReply>,
+    /// The id of the newest completion request, so older answers are ignored.
+    completion_request: u64,
     /// The AI providers and their pending replies.
     assistant: Assistant,
     /// The git state of the project.
@@ -140,6 +148,7 @@ impl App {
         ui.flairs = flair.describe();
         compositor.push(Box::new(flair));
         compositor.push(Box::new(StatusLine::new()));
+        compositor.push(Box::new(CompletionMenu::new()));
         compositor.push(Box::new(Popups::new()));
         compositor.push(Box::new(SettingsPanel::new()));
         compositor.push(Box::new(GraphView::new()));
@@ -160,6 +169,7 @@ impl App {
             editor.set_status(format!("could not open {}: {err}", path.display()));
         }
         let startup = args.run;
+        let (reply_sender, lsp_replies) = mpsc::unbounded_channel();
         let mut app = Self {
             editor,
             keymap,
@@ -168,6 +178,9 @@ impl App {
             ui,
             lsp,
             lsp_events,
+            lsp_sender: reply_sender,
+            lsp_replies,
+            completion_request: 0,
             assistant: Assistant::new(providers),
             git,
             watcher,
@@ -260,6 +273,7 @@ impl App {
                     None => break,
                 },
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
+                Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
                 Some(reply) = self.assistant.reply() => self.editor.set_status(reply),
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
                 () = changed(self.watcher.as_ref()) => self.files_changed = true,
@@ -466,6 +480,139 @@ impl App {
         }
     }
 
+    /// Opens or closes the completion menu after `ch` was typed.
+    fn auto_complete(&mut self, ch: char) {
+        if !self.ui.config.editor.auto_complete {
+            return;
+        }
+        let word = ch.is_alphanumeric() || ch == '_';
+        if word {
+            if self.ui.completion.is_none() {
+                self.request_completion(false);
+            }
+        } else if matches!(ch, '.' | ':') {
+            self.ui.completion = None;
+            self.request_completion(false);
+        } else {
+            self.ui.completion = None;
+        }
+    }
+
+    /// Asks the language server for completions at the cursor.
+    fn request_completion(&mut self, manual: bool) {
+        let document = self.editor.document();
+        let Some(path) = document.path().map(ToOwned::to_owned) else {
+            return;
+        };
+        let Some(client) = self.lsp.client_for(&path) else {
+            if manual {
+                self.editor.set_status("no language server for this file");
+            }
+            return;
+        };
+        let head = document.selection().head;
+        let anchor = completion::word_start(&self.editor, head);
+        let position = convert::char_to_position(document.text(), head);
+        self.completion_request += 1;
+        let request = self.completion_request;
+        let index = self.editor.active();
+        let sender = self.lsp_sender.clone();
+        tokio::spawn(async move {
+            let items = client.completion(&path, position).await.unwrap_or_default();
+            let items = items.into_iter().map(lsp::to_item).collect();
+            let _ = sender.send(LspReply::Completion {
+                request,
+                document: index,
+                anchor,
+                items,
+            });
+        });
+    }
+
+    /// Sends a hover, definition or format request for the focused file.
+    fn request_feature(&mut self, feature: &str) {
+        let document = self.editor.document();
+        let Some(path) = document.path().map(ToOwned::to_owned) else {
+            self.editor
+                .set_status("save the file first so a language server can see it");
+            return;
+        };
+        let Some(client) = self.lsp.client_for(&path) else {
+            self.editor.set_status("no language server for this file");
+            return;
+        };
+        let head = document.selection().head;
+        let position = convert::char_to_position(document.text(), head);
+        let version = document.version();
+        let options = self.editor.options();
+        let (tab_size, spaces) = (
+            u32::try_from(options.tab_width).unwrap_or(4),
+            options.insert_spaces,
+        );
+        let sender = self.lsp_sender.clone();
+        let feature = feature.to_owned();
+        tokio::spawn(async move {
+            let reply = match feature.as_str() {
+                "hover" => match client.hover(&path, position).await {
+                    Ok(Some(text)) => LspReply::Hover(text, head),
+                    _ => LspReply::Nothing("nothing to say about that".into()),
+                },
+                "definition" => match client.definition(&path, position).await {
+                    Ok(Some((target, at))) => LspReply::Definition(target, at),
+                    _ => LspReply::Nothing("no definition found".into()),
+                },
+                _ => match client.formatting(&path, tab_size, spaces).await {
+                    Ok(edits) => LspReply::Format(path, version, edits),
+                    Err(err) => LspReply::Nothing(format!("could not format: {err}")),
+                },
+            };
+            let _ = sender.send(reply);
+        });
+    }
+
+    /// Acts on an answer to a feature request.
+    fn handle_lsp_reply(&mut self, reply: LspReply) {
+        match reply {
+            LspReply::Completion {
+                request,
+                document,
+                anchor,
+                items,
+            } => {
+                if request != self.completion_request || document != self.editor.active() {
+                    return;
+                }
+                self.ui.completion =
+                    (!items.is_empty()).then(|| CompletionState::new(items, anchor, document));
+            }
+            LspReply::Hover(text, pos) => self.ui.hover = Some((text, pos)),
+            LspReply::Definition(path, position) => {
+                if let Err(err) = self.editor.open(&path) {
+                    self.editor
+                        .set_status(format!("could not open {}: {err}", path.display()));
+                    return;
+                }
+                let pos = convert::position_to_char(self.editor.document().text(), position);
+                self.editor.select(pos, pos);
+            }
+            LspReply::Format(path, version, edits) => {
+                let document = self.editor.document();
+                if document.path() != Some(path.as_path()) || document.version() != version {
+                    return;
+                }
+                let changes = lsp::to_changes(document, &edits);
+                let count = changes.len();
+                self.editor.apply_changes(changes);
+                self.editor.set_status(if count == 0 {
+                    "already formatted, mog approves".to_owned()
+                } else {
+                    format!("formatted ({count} edits)")
+                });
+            }
+            LspReply::Nothing(message) => self.editor.set_status(message),
+        }
+    }
+
     /// Tells language servers about opened and changed documents.
     fn sync_language_servers(&mut self) {
         let problems = self.lsp.sync(self.editor.documents());
@@ -511,6 +658,12 @@ impl App {
         }
         if saving && !self.editor.document().is_modified() {
             self.ui.events.push(UiEvent::Saved);
+        }
+        if changed {
+            self.ui.hover = None;
+            if let Some(UiEvent::Typed(ch)) = self.ui.events.last().cloned() {
+                self.auto_complete(ch);
+            }
         }
         match outcome {
             Outcome::Done => {}
@@ -577,6 +730,10 @@ impl App {
             "help.keys" => self.ui.open(Overlay::Keys),
             "goto.prompt" => self.ui.open(Overlay::GotoLine),
             "settings.open" => self.ui.open(Overlay::Settings),
+            "lsp.complete" => self.request_completion(true),
+            "lsp.hover" => self.request_feature("hover"),
+            "lsp.definition" => self.request_feature("definition"),
+            "lsp.format" => self.request_feature("format"),
             "audio.toggle_music" => self.change_setting(SettingKey::Audio("music")),
             "audio.toggle_effects" => self.change_setting(SettingKey::Audio("sound_effects")),
             "flair.toggle" => self.change_setting(SettingKey::FlairEnabled),
