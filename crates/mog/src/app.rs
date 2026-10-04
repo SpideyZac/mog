@@ -294,19 +294,25 @@ impl App {
     /// # Errors
     ///
     /// Returns an error if the size cannot be parsed or drawing fails.
-    pub async fn snapshot(&mut self, size: &str) -> Result<String> {
+    pub async fn snapshot(
+        &mut self,
+        size: &str,
+        wait: Duration,
+        commands: &[String],
+    ) -> Result<String> {
         let (width, height) = size
             .split_once('x')
             .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
             .ok_or_else(|| anyhow!("snapshot size should look like 120x40"))?;
-        let deadline = time::sleep(SNAPSHOT_SETTLE);
-        tokio::pin!(deadline);
-        loop {
-            self.sync_git();
-            tokio::select! {
-                Some(update) = self.git.update() => git::apply(&mut self.ui, update),
-                () = &mut deadline => break,
+        self.settle(wait).await;
+        if !commands.is_empty() {
+            for name in commands {
+                if let Ok(command) = name.parse() {
+                    self.execute_command(command);
+                }
             }
+            self.run_requests();
+            self.settle(wait).await;
         }
         self.compositor.tick(SNAPSHOT_SETTLE);
         let mut terminal = Terminal::new(TestBackend::new(width, height))?;
@@ -327,6 +333,23 @@ impl App {
             })
             .collect();
         Ok(rows.join("\n"))
+    }
+
+    /// Lets background work like git and language servers run for `wait`.
+    async fn settle(&mut self, wait: Duration) {
+        let deadline = time::sleep(wait);
+        tokio::pin!(deadline);
+        loop {
+            self.sync_language_servers();
+            self.sync_git();
+            tokio::select! {
+                Some(update) = self.git.update() => git::apply(&mut self.ui, update),
+                Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
+                Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
+                () = &mut deadline => break,
+            }
+        }
+        self.watch_focus();
     }
 
     /// Draws one frame.

@@ -19,4 +19,10 @@ pub struct Args {
     /// Renders one frame of the given size, like `120x40`, as text and exits. For debugging.
     #[arg(long, hide = true, value_name = "WxH")]
     pub snapshot: Option<String>,
+    /// How long a snapshot lets background work run, in milliseconds.
+    #[arg(long, hide = true, default_value_t = 800)]
+    pub snapshot_wait: u64,
+    /// Commands a snapshot runs after waiting, then waits again before drawing.
+    #[arg(long, hide = true, value_name = "COMMAND")]
+    pub snapshot_run: Vec<String>,
 }

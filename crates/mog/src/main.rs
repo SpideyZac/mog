@@ -11,6 +11,8 @@ mod settings;
 mod terminal;
 mod watch;
 
+use std::time::Duration;
+
 use anyhow::Result;
 use app::App;
 use clap::Parser;
@@ -32,7 +34,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Some(size) = args.snapshot.clone() {
-        let text = App::new(args).snapshot(&size).await?;
+        let wait = Duration::from_millis(args.snapshot_wait);
+        let commands = args.snapshot_run.clone();
+        let text = App::new(args).snapshot(&size, wait, &commands).await?;
         println!("{text}");
         return Ok(());
     }
