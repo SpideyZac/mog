@@ -1,4 +1,4 @@
-//! A resource monitor under the file explorer, with real cpu and ram and a very real gpu.
+//! A resource monitor under the file explorer, with real cpu, ram and gpu when it can find one.
 
 use std::{
     collections::VecDeque,
@@ -14,6 +14,7 @@ use sysinfo::System;
 
 use crate::{
     flair::{Flair, FlairContext, Placement, sidebar_frame},
+    gpu::{GpuMonitor, GpuReading},
     rng::Rng,
     spark::{bar, sparkline},
 };
@@ -40,8 +41,10 @@ pub struct Resources {
     cpu: VecDeque<f32>,
     /// Ram in use and in total, in bytes.
     ram: (u64, u64),
-    /// The gpu usage in percent, which is always about to mine the next block.
+    /// The made up gpu usage in percent for systems without a readable gpu, always mining.
     gpu: f32,
+    /// Reads the real gpu, started the first time the monitor is drawn.
+    monitor: Option<GpuMonitor>,
     /// Where the gpu numbers come from.
     rng: Rng,
 }
@@ -54,6 +57,7 @@ impl Default for Resources {
             cpu: VecDeque::new(),
             ram: (0, 0),
             gpu: 99.0,
+            monitor: None,
             rng: Rng::default(),
         }
     }
@@ -71,6 +75,9 @@ impl Resources {
             return;
         }
         let first = self.refreshed.is_none();
+        if first {
+            self.monitor = Some(GpuMonitor::start());
+        }
         self.refreshed = Some(Instant::now());
         self.system.refresh_cpu_usage();
         self.system.refresh_memory();
@@ -108,7 +115,7 @@ impl Flair for Resources {
     }
 
     fn description(&self) -> &str {
-        "A resource monitor under the file explorer. The gpu is mining $MOG."
+        "A resource monitor under the file explorer. Without a readable gpu, it mines $MOG."
     }
 
     fn placement(&self) -> Placement {
@@ -163,16 +170,23 @@ impl Flair for Resources {
             load_color(cx, ram),
             &percent(ram),
         );
-        let mining = format!("{:<graph$}", "mining $MOG");
-        let gpu = self.gpu / 100.0;
-        row(
-            buf,
-            inner.y + 2,
-            "gpu",
-            &mining,
-            theme.palette.accent,
-            &percent(gpu),
-        );
+        let reading = self
+            .monitor
+            .as_ref()
+            .map_or(GpuReading::Detecting, GpuMonitor::reading);
+        let (chart, color, gpu) = match reading {
+            GpuReading::Percent(busy) => {
+                let gpu = busy / 100.0;
+                (bar(gpu, graph), load_color(cx, gpu), gpu)
+            }
+            // no gpu to read so it is mining instead
+            GpuReading::Detecting | GpuReading::Missing => (
+                format!("{:<graph$}", "mining $MOG"),
+                theme.palette.accent,
+                self.gpu / 100.0,
+            ),
+        };
+        row(buf, inner.y + 2, "gpu", &chart, color, &percent(gpu));
     }
 }
 

@@ -271,7 +271,7 @@ press the new keys).
 | `spectrum` | Spectrum bars for system audio |
 | `stonks` | A $MOG stock ticker in the tab bar. Saving pumps it, errors dump it |
 | `weather` | The weather in your codebase, in the tab bar |
-| `resources` | CPU and RAM under the explorer, plus a GPU that is mining $MOG |
+| `resources` | CPU, RAM and GPU under the explorer. With no GPU it can read, the GPU is mining $MOG |
 | `stream` | A fake live stream chat under the explorer that reacts to your code |
 
 ### `[lsp]`

@@ -5,6 +5,7 @@
 
 pub mod builtin;
 pub mod flair;
+pub mod gpu;
 pub mod graph;
 pub mod layer;
 pub mod rng;
