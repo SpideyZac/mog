@@ -28,10 +28,10 @@
 - [x] Tabs
 - [x] Auto indent and bracket pairs
 - [x] Toggle comment, duplicate, move and delete lines, indent and outdent
-- [ ] Save as and new files
-- [ ] Problems list
-- [ ] Create, rename and delete files from the explorer
-- [ ] Right click menu
+- [x] Save as and new files
+- [x] Problems list
+- [x] Create, rename and delete files from the explorer
+- [x] Right click menu
 - [ ] Multiple cursors
 - [ ] Splits
 
@@ -57,15 +57,16 @@
 - [x] Completion
 - [x] Hover
 - [x] Go to definition
-- [ ] Find references
-- [ ] Rename
+- [x] Find references
+- [x] Rename
 - [x] Formatting
-- [ ] Code actions
+- [x] Code actions
 
 ## AI
 
+- [x] AI ghost text (Claude)
 - [ ] Copilot ghost text
-- [ ] Claude chat panel
+- [x] Claude chat panel
 - [x] Ask Claude about the selection
 
 ## Flair
