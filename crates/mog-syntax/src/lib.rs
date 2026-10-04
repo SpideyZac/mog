@@ -3,7 +3,7 @@
 //! Wraps tree-sitter grammars and turns their highlight captures into a small set of
 //! [`Kind`]s that themes know how to color.
 
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, iter, path::Path};
 
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter};
 
@@ -65,6 +65,7 @@ const LANGUAGES: &[(&str, &[&str])] = &[
     ("powershell", &["ps1", "psm1", "psd1"]),
     ("markdown", &["md", "markdown"]),
     ("html", &["html", "htm", "xhtml"]),
+    ("vue", &["vue"]),
     ("css", &["css"]),
     ("xml", &["xml", "svg", "xaml", "csproj", "plist", "xsd"]),
     ("yaml", &["yml", "yaml"]),
@@ -81,6 +82,77 @@ const LANGUAGES: &[(&str, &[&str])] = &[
     ("sql", &["sql"]),
     ("make", &["mk", "mak"]),
 ];
+
+/// The highlight query for Vue files.
+const VUE_HIGHLIGHTS: &str = include_str!("../queries/vue/highlights.scm");
+
+/// The injection query for Vue files, for their script and style blocks.
+const VUE_INJECTIONS: &str = include_str!("../queries/vue/injections.scm");
+
+/// Other names injections use for languages, like `ts` in `<script lang="ts">`.
+const ALIASES: &[(&str, &str)] = &[
+    ("js", "javascript"),
+    ("ts", "typescript"),
+    ("sh", "bash"),
+    ("shell", "bash"),
+    ("zsh", "bash"),
+    ("console", "bash"),
+    ("py", "python"),
+    ("rs", "rust"),
+    ("golang", "go"),
+    ("c++", "cpp"),
+    ("cs", "csharp"),
+    ("c#", "csharp"),
+    ("yml", "yaml"),
+    ("ps1", "powershell"),
+    ("pwsh", "powershell"),
+    ("scss", "css"),
+    ("md", "markdown"),
+    ("ml", "ocaml"),
+    ("makefile", "make"),
+];
+
+/// Languages whose injected blocks are always in one of a few known languages.
+const INJECTS: &[(&str, &[&str])] = &[
+    ("vue", &["javascript", "typescript", "tsx", "jsx", "css"]),
+    ("html", &["javascript", "css"]),
+];
+
+/// Returns the language called `name` by an injection, by name, alias or file extension.
+fn resolve_language(name: &str) -> Option<&'static str> {
+    let name = name.trim().to_lowercase();
+    if let Some((language, _)) = LANGUAGES.iter().find(|(language, _)| *language == name) {
+        return Some(language);
+    }
+    if let Some((_, language)) = ALIASES.iter().find(|(alias, _)| *alias == name) {
+        return Some(language);
+    }
+    LANGUAGES
+        .iter()
+        .find(|(_, extensions)| extensions.contains(&name.as_str()))
+        .map(|(language, _)| *language)
+}
+
+/// Returns the languages `text` written in `language` may inject, so they can be loaded first.
+///
+/// Markdown can fence any language, so its fences are read to load only the ones used.
+fn injected_languages(language: &str, text: &str) -> Vec<&'static str> {
+    if language == "markdown" {
+        let mut found: Vec<&'static str> = text
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("```"))
+            .filter_map(|info| resolve_language(info.split_whitespace().next().unwrap_or("")))
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        return found;
+    }
+    INJECTS
+        .iter()
+        .find(|(name, _)| *name == language)
+        .map(|(_, languages)| languages.to_vec())
+        .unwrap_or_default()
+}
 
 /// Languages for files known by their whole name instead of an extension.
 const FILE_NAMES: &[(&str, &str)] = &[
@@ -252,13 +324,19 @@ fn config_for(language: &str) -> Option<HighlightConfiguration> {
         "markdown" => (
             tree_sitter_md::LANGUAGE.into(),
             tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.to_owned(),
-            "",
+            tree_sitter_md::INJECTION_QUERY_BLOCK,
             "",
         ),
         "html" => (
             tree_sitter_html::LANGUAGE.into(),
             tree_sitter_html::HIGHLIGHTS_QUERY.to_owned(),
+            tree_sitter_html::INJECTIONS_QUERY,
             "",
+        ),
+        "vue" => (
+            tree_sitter_vue3::LANGUAGE.into(),
+            VUE_HIGHLIGHTS.to_owned(),
+            VUE_INJECTIONS,
             "",
         ),
         "css" => (
@@ -380,17 +458,20 @@ impl Highlighter {
     /// Nested captures produce overlapping spans with the innermost last. Unknown languages and
     /// parse failures give no spans.
     pub fn highlight(&mut self, language: &'static str, text: &str) -> Vec<Span> {
-        let config = self
-            .configs
-            .entry(language)
-            .or_insert_with(|| config_for(language));
-        let Some(config) = config.as_ref() else {
+        // injected grammars have to be loaded up front since highlighting borrows them
+        for name in iter::once(language).chain(injected_languages(language, text)) {
+            self.configs.entry(name).or_insert_with(|| config_for(name));
+        }
+        let Self { inner, configs } = self;
+        let Some(config) = configs.get(language).and_then(Option::as_ref) else {
             return Vec::new();
         };
-        let Ok(events) = self
-            .inner
-            .highlight(config, text.as_bytes(), None, None, |_| None)
-        else {
+        let injection = |name: &str| {
+            resolve_language(name)
+                .and_then(|name| configs.get(name))
+                .and_then(Option::as_ref)
+        };
+        let Ok(events) = inner.highlight(config, text.as_bytes(), None, None, injection) else {
             return Vec::new();
         };
         let mut spans = Vec::new();
@@ -436,7 +517,7 @@ impl Highlighter {
 mod tests {
     use std::path::Path;
 
-    use super::{Highlighter, Kind, LANGUAGES, language_for};
+    use super::{Highlighter, Kind, LANGUAGES, Span, language_for, resolve_language};
 
     /// Extensions map to languages and unknown ones do not.
     #[test]
@@ -490,6 +571,7 @@ mod tests {
             ("zig", "const x = \"hi\";"),
             ("sql", "SELECT a FROM b;"),
             ("make", "all:\n\techo hi"),
+            ("vue", "<template><p :a=\"b\">{{ c }}</p></template>"),
         ];
         let mut highlighter = Highlighter::new();
         for (name, text) in samples {
@@ -498,6 +580,52 @@ mod tests {
                 "{name} highlighted nothing"
             );
         }
+    }
+
+    /// Returns the kind of the innermost span covering char `pos`.
+    fn kind_at(spans: &[Span], pos: usize) -> Option<Kind> {
+        spans
+            .iter()
+            .rev()
+            .find(|span| (span.from..span.to).contains(&pos))
+            .map(|span| span.kind)
+    }
+
+    /// Script and style blocks in Vue and fences in Markdown get their own colors.
+    #[test]
+    fn highlights_injections() {
+        let mut highlighter = Highlighter::new();
+        let vue = "<script lang=\"ts\">const x: number = 1</script>";
+        let spans = highlighter.highlight("vue", vue);
+        let at = vue.find("const").expect("in sample");
+        assert_eq!(kind_at(&spans, at), Some(Kind::Keyword));
+        let plain = "<script>let s = \"hi\"</script><style>a { color: red; }</style>";
+        let spans = highlighter.highlight("vue", plain);
+        assert_eq!(
+            kind_at(&spans, plain.find("let").expect("in sample")),
+            Some(Kind::Keyword)
+        );
+        let md = "# hi
+
+```rust
+fn main() {}
+```
+";
+        let spans = highlighter.highlight("markdown", md);
+        assert_eq!(
+            kind_at(&spans, md.find("fn").expect("in sample")),
+            Some(Kind::Keyword)
+        );
+    }
+
+    /// Injection names resolve by name, alias and extension.
+    #[test]
+    fn resolves_injected_names() {
+        assert_eq!(resolve_language("TypeScript"), Some("typescript"));
+        assert_eq!(resolve_language("ts"), Some("typescript"));
+        assert_eq!(resolve_language("rs"), Some("rust"));
+        assert_eq!(resolve_language("hs"), Some("haskell"));
+        assert_eq!(resolve_language("klingon"), None);
     }
 
     /// Every bundled grammar loads with its queries.

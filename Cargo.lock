@@ -1945,6 +1945,7 @@ dependencies = [
 name = "mog-syntax"
 version = "0.1.0"
 dependencies = [
+ "octorus-tree-sitter-vue3",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-c-sharp",
@@ -2351,6 +2352,16 @@ dependencies = [
  "bitflags 2.13.2",
  "objc2",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "octorus-tree-sitter-vue3"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42b1a774d18509365a2bf562a0fa5f4507f22f1703bfb675b4f09e6ffab3ce7b"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
 ]
 
 [[package]]
