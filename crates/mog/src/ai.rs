@@ -8,11 +8,13 @@ use std::{
     time::Duration,
 };
 
-use mog_ai::{AiProvider, ChatMessage, CompletionRequest, Role};
+use mog_ai::{ChatMessage, CompletionRequest, Role};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     time,
 };
+
+use crate::settings::AiProviders;
 
 /// The instructions sent with every chat.
 const CHAT_SYSTEM: &str = "You are the assistant inside mog, a terminal code editor. Keep answers \
@@ -43,8 +45,8 @@ pub enum AiReply {
 
 /// Sends requests to the configured providers and collects their replies.
 pub struct Assistant {
-    /// The enabled providers, preferred first.
-    providers: Vec<Arc<dyn AiProvider>>,
+    /// The enabled providers, split by feature.
+    providers: AiProviders,
     /// Where finished requests send their reply.
     sender: UnboundedSender<AiReply>,
     /// Finished replies waiting to be shown.
@@ -55,7 +57,7 @@ pub struct Assistant {
 
 impl Assistant {
     /// Creates an assistant over `providers`.
-    pub fn new(providers: Vec<Arc<dyn AiProvider>>) -> Self {
+    pub fn new(providers: AiProviders) -> Self {
         let (sender, replies) = mpsc::unbounded_channel();
         Self {
             providers,
@@ -65,16 +67,16 @@ impl Assistant {
         }
     }
 
-    /// Returns the name of the preferred provider, if any is enabled.
-    pub fn provider_name(&self) -> Option<&str> {
-        self.providers.first().map(|provider| provider.id())
+    /// Returns whether any provider is allowed to suggest ghost text.
+    pub fn can_suggest(&self) -> bool {
+        !self.providers.ghost.is_empty()
     }
 
     /// Sends the conversation `history`, as `(from_user, text)` pairs, to the preferred provider.
     ///
-    /// Returns `false` if no provider is enabled.
+    /// Returns `false` if no provider is enabled for chat.
     pub fn chat(&self, history: &[(bool, String)]) -> bool {
-        let Some(provider) = self.providers.first().cloned() else {
+        let Some(provider) = self.providers.chat.first().cloned() else {
             return false;
         };
         let messages: Vec<ChatMessage> = history
@@ -107,7 +109,7 @@ impl Assistant {
 
     /// Asks for a ghost suggestion once typing pauses, replacing any pending request.
     pub fn suggest(&self, request: CompletionRequest, document: usize, version: u64, pos: usize) {
-        let Some(provider) = self.providers.first().cloned() else {
+        let Some(provider) = self.providers.ghost.first().cloned() else {
             return;
         };
         let generation = self.ghost_generation.fetch_add(1, Ordering::SeqCst) + 1;

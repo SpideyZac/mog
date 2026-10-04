@@ -79,8 +79,8 @@ const GHOST_CONTEXT_BEFORE: usize = 4000;
 const GHOST_CONTEXT_AFTER: usize = 1000;
 
 /// What the chat says when no AI is set up.
-const NO_AI: &str = "no ai provider is enabled. add [ai.claude] enabled = true to the config \
-and put your key in ANTHROPIC_API_KEY, then restart mog.";
+const NO_AI: &str = "no ai provider is enabled for chat. add [ai.claude] enabled = true to the \
+config and put your key in ANTHROPIC_API_KEY, then restart mog.";
 
 /// What a new config file starts with when it is opened from the editor.
 const NEW_CONFIG: &str = "# mog config. saving this file reloads it.
@@ -900,7 +900,7 @@ impl App {
 
     /// Asks the AI for a ghost suggestion at the cursor once typing pauses.
     fn suggest_ghost(&self) {
-        if !self.ui.config.ai.ghost_text || self.assistant.provider_name().is_none() {
+        if !self.ui.config.ai.ghost_text || !self.assistant.can_suggest() {
             return;
         }
         let document = self.editor.document();

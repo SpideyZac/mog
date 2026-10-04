@@ -56,12 +56,21 @@ pub fn flair_layer(config: &Config) -> FlairLayer {
     layer
 }
 
-/// Builds the enabled AI providers, Claude first.
+/// The enabled AI providers, split by what each one is allowed to do.
+#[derive(Default)]
+pub struct AiProviders {
+    /// Providers that answer in the chat panel, preferred first.
+    pub chat: Vec<Arc<dyn AiProvider>>,
+    /// Providers that suggest ghost text, preferred first.
+    pub ghost: Vec<Arc<dyn AiProvider>>,
+}
+
+/// Builds the enabled AI providers, Claude first for chat and Copilot first for ghost text.
 ///
 /// Providers that are enabled but cannot work, like Claude without a key, are skipped and
 /// described in the returned list of problems.
-pub fn ai_providers(config: &Config) -> (Vec<Arc<dyn AiProvider>>, Vec<String>) {
-    let mut providers: Vec<Arc<dyn AiProvider>> = Vec::new();
+pub fn ai_providers(config: &Config) -> (AiProviders, Vec<String>) {
+    let mut providers = AiProviders::default();
     let mut problems = Vec::new();
     let claude_config = &config.ai.claude;
     if claude_config.enabled {
@@ -71,7 +80,13 @@ pub fn ai_providers(config: &Config) -> (Vec<Arc<dyn AiProvider>>, Vec<String>) 
                     .model
                     .clone()
                     .unwrap_or_else(|| claude::DEFAULT_MODEL.into());
-                providers.push(Arc::new(Claude::new(key, model)));
+                let claude: Arc<dyn AiProvider> = Arc::new(Claude::new(key, model));
+                if claude_config.chat {
+                    providers.chat.push(Arc::clone(&claude));
+                }
+                if claude_config.ghost_text {
+                    providers.ghost.push(claude);
+                }
             }
             _ => problems.push(format!(
                 "claude is enabled but {} is not set",
@@ -79,8 +94,16 @@ pub fn ai_providers(config: &Config) -> (Vec<Arc<dyn AiProvider>>, Vec<String>) 
             )),
         }
     }
-    if config.ai.copilot.enabled {
-        providers.push(Arc::new(Copilot::new()));
+    let copilot_config = &config.ai.copilot;
+    if copilot_config.enabled {
+        let copilot: Arc<dyn AiProvider> = Arc::new(Copilot::new());
+        if copilot_config.chat {
+            providers.chat.push(Arc::clone(&copilot));
+        }
+        if copilot_config.ghost_text {
+            // copilot is built for inline suggestions so it goes ahead of claude
+            providers.ghost.insert(0, copilot);
+        }
     }
     (providers, problems)
 }
