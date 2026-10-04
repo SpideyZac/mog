@@ -12,6 +12,7 @@ pub mod file_tree;
 pub mod fuzzy;
 pub mod history;
 pub mod keymap;
+pub mod lines;
 pub mod movement;
 pub mod range;
 pub mod search;
