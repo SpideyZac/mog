@@ -11,7 +11,7 @@
 - [x] Config file
 - [x] Flair layer and registry
 - [x] LSP client skeleton
-- [ ] AI provider skeleton
+- [x] AI provider skeleton
 - [ ] Lua plugin host
 
 ## Everyday editing
