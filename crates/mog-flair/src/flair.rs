@@ -38,6 +38,13 @@ pub enum Placement {
     Screen,
     /// A piece of the status line, see [`Flair::segment`].
     Status(Side),
+    /// A piece of the free space at the right end of the tab bar, see [`Flair::segment`].
+    TabBar,
+    /// A box under the file explorer, stacked with the other sidebar flairs.
+    Sidebar {
+        /// The height of the box in rows.
+        height: u16,
+    },
 }
 
 impl Placement {
@@ -53,6 +60,8 @@ impl Placement {
             Self::Overlay => editor_area,
             Self::Screen => layout.screen,
             Self::Status(_) => layout.status,
+            Self::TabBar => layout.tabs,
+            Self::Sidebar { .. } => layout.explorer_footer,
             Self::Corner {
                 corner,
                 width,
@@ -72,6 +81,26 @@ impl Placement {
             }
         }
     }
+}
+
+/// Paints the explorer background and border over a sidebar box and titles it.
+///
+/// Returns the space left for content, under the title and inside the border.
+pub fn sidebar_frame(area: Rect, buf: &mut Buffer, theme: &Theme, title: &str) -> Rect {
+    buf.set_style(area, theme.sidebar);
+    let border_x = area.right().saturating_sub(1);
+    for y in area.top()..area.bottom() {
+        buf.set_string(border_x, y, "\u{2502}", theme.border);
+    }
+    let width = area.width.saturating_sub(1);
+    let rule = format!("\u{2500} {title} {}", "\u{2500}".repeat(usize::from(width)));
+    buf.set_stringn(area.x, area.y, rule, usize::from(width), theme.border);
+    Rect::new(
+        area.x + 1,
+        area.y + 1,
+        area.width.saturating_sub(3),
+        area.height.saturating_sub(1),
+    )
 }
 
 /// What a flair can look at while drawing.
@@ -113,10 +142,10 @@ pub trait Flair {
         false
     }
 
-    /// Draws the flair into `buf` within `area`. Not called for status line flairs.
+    /// Draws the flair into `buf` within `area`. Not called for status line or tab bar flairs.
     fn render(&mut self, _area: Rect, _buf: &mut Buffer, _cx: &FlairContext<'_>) {}
 
-    /// Returns the status line piece of a [`Placement::Status`] flair.
+    /// Returns the piece of a [`Placement::Status`] or [`Placement::TabBar`] flair.
     fn segment(&mut self, _cx: &FlairContext<'_>) -> Option<Segment> {
         None
     }

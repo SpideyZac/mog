@@ -216,6 +216,8 @@ pub struct Layout {
     pub tabs: Rect,
     /// The file explorer, empty when hidden.
     pub explorer: Rect,
+    /// Room under the file explorer for flair, empty when hidden or unused.
+    pub explorer_footer: Rect,
     /// The document text with its gutter, the left pane when split.
     pub editor: Rect,
     /// The right pane of a split, empty when not split.
@@ -307,6 +309,10 @@ pub struct Ui {
     pub annotate: AnnotateState,
     /// The theme being edited in the theme editor, previewed live.
     pub theme_draft: Option<ThemeDraft>,
+    /// The rows flair wants under the file explorer.
+    pub explorer_footer: u16,
+    /// The column just past the last tab, where the free part of the tab bar starts.
+    pub tabs_end: u16,
 }
 
 impl Ui {
@@ -382,9 +388,20 @@ impl Ui {
         } else {
             0
         };
+        let footer_height = if explorer_width > 0 {
+            self.explorer_footer.min(body.height / 2)
+        } else {
+            0
+        };
         let explorer = Rect {
             width: explorer_width,
+            height: body.height - footer_height,
             ..body
+        };
+        let explorer_footer = Rect {
+            y: explorer.bottom(),
+            height: footer_height,
+            ..explorer
         };
         let rest = Rect {
             x: body.x + explorer_width,
@@ -465,6 +482,7 @@ impl Ui {
             screen,
             tabs,
             explorer,
+            explorer_footer,
             editor,
             split,
             minimap,
@@ -496,6 +514,29 @@ mod tests {
         assert_eq!(layout.editor, Rect::new(30, 1, 76, 38));
         assert_eq!(layout.minimap, Rect::new(106, 1, 14, 38));
         assert_eq!(layout.status, Rect::new(0, 39, 120, 1));
+    }
+
+    /// Flair under the explorer takes rows from it, but never more than half.
+    #[test]
+    fn layout_with_explorer_footer() {
+        let mut ui = Ui {
+            has_explorer: true,
+            explorer_open: true,
+            explorer_footer: 8,
+            ..Ui::default()
+        };
+        let layout = ui.layout(Rect::new(0, 0, 120, 40));
+        assert_eq!(layout.explorer, Rect::new(0, 0, 30, 31));
+        assert_eq!(layout.explorer_footer, Rect::new(0, 31, 30, 8));
+        ui.explorer_footer = 100;
+        let layout = ui.layout(Rect::new(0, 0, 120, 40));
+        assert_eq!(layout.explorer_footer.height, 19);
+        ui.explorer_open = false;
+        assert!(
+            ui.layout(Rect::new(0, 0, 120, 40))
+                .explorer_footer
+                .is_empty()
+        );
     }
 
     /// With everything hidden the editor gets the whole body.

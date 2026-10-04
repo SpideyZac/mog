@@ -2,8 +2,9 @@
 
 use std::{collections::HashSet, time::Duration};
 
-use mog_tui::{Context, Layer, Layout, Ui};
+use mog_tui::{Context, Layer, Layout, Segment, Ui};
 use ratatui::{buffer::Buffer, layout::Rect};
+use unicode_width::UnicodeWidthStr;
 
 use crate::flair::{Flair, FlairContext, Placement};
 
@@ -58,6 +59,38 @@ impl FlairLayer {
     }
 }
 
+/// The gap between tab bar pieces.
+const TAB_GAP: u16 = 2;
+
+/// Draws `segments` right aligned in `area`, dropping the last ones that do not fit.
+fn draw_tab_segments(area: Rect, buf: &mut Buffer, segments: &[Segment]) {
+    if area.is_empty() || area.height == 0 {
+        return;
+    }
+    let width = |segment: &Segment| -> u16 {
+        segment
+            .parts
+            .iter()
+            .map(|(text, _)| u16::try_from(text.width()).unwrap_or(u16::MAX))
+            .sum()
+    };
+    let mut shown = segments.len();
+    let total =
+        |count: usize| -> u16 { segments[..count].iter().map(|s| width(s) + TAB_GAP).sum() };
+    while shown > 0 && total(shown) > area.width {
+        shown -= 1;
+    }
+    let mut x = area.right() - total(shown);
+    for segment in &segments[..shown] {
+        for (text, style) in &segment.parts {
+            x = buf
+                .set_stringn(x, area.y, text, usize::from(area.right() - x), *style)
+                .0;
+        }
+        x += TAB_GAP;
+    }
+}
+
 impl Layer for FlairLayer {
     fn area(&self, layout: &Layout, _ui: &Ui) -> Rect {
         layout.screen
@@ -75,6 +108,10 @@ impl Layer for FlairLayer {
             layout,
         };
         let mut segments = Vec::new();
+        let mut tab_segments = Vec::new();
+        let footer = layout.explorer_footer;
+        let mut footer_wanted = 0;
+        let mut footer_y = footer.y;
         let (hidden, disabled) = (self.hidden, &self.disabled);
         for flair in &mut self.flairs {
             if hidden || disabled.contains(flair.id()) {
@@ -85,6 +122,15 @@ impl Layer for FlairLayer {
             }
             match flair.placement() {
                 Placement::Status(_) => segments.extend(flair.segment(&flair_cx)),
+                Placement::TabBar => tab_segments.extend(flair.segment(&flair_cx)),
+                Placement::Sidebar { height } => {
+                    footer_wanted += height;
+                    if !footer.is_empty() && footer_y + height <= footer.bottom() {
+                        let rect = Rect::new(footer.x, footer_y, footer.width, height);
+                        flair.render(rect, buf, &flair_cx);
+                        footer_y += height;
+                    }
+                }
                 placement => {
                     let flair_area = placement.area(&layout);
                     if !flair_area.is_empty() {
@@ -93,7 +139,14 @@ impl Layer for FlairLayer {
                 }
             }
         }
+        let free = Rect {
+            x: flair_cx.ui.tabs_end + 1,
+            width: layout.tabs.right().saturating_sub(flair_cx.ui.tabs_end + 1),
+            ..layout.tabs
+        };
+        draw_tab_segments(free, buf, &tab_segments);
         cx.ui.segments.extend(segments);
+        cx.ui.explorer_footer = footer_wanted;
     }
 
     fn tick(&mut self, dt: Duration) {
@@ -109,5 +162,28 @@ impl Layer for FlairLayer {
         self.flairs
             .iter()
             .any(|flair| self.is_on(flair.id()) && flair.is_animating())
+    }
+}
+
+#[cfg(test)]
+/// Tests for the flair layer.
+mod tests {
+    use mog_tui::{Segment, Side};
+    use ratatui::{buffer::Buffer, layout::Rect, style::Style};
+
+    use super::draw_tab_segments;
+
+    /// Tab bar pieces hug the right and the ones that do not fit are dropped.
+    #[test]
+    fn tab_segments_fit_right() {
+        let area = Rect::new(0, 0, 12, 1);
+        let mut buf = Buffer::empty(area);
+        let segments = [
+            Segment::new("abc", Style::new(), Side::Right),
+            Segment::new("too wide to fit", Style::new(), Side::Right),
+        ];
+        draw_tab_segments(area, &mut buf, &segments);
+        let row: String = (0..12).map(|x| buf[(x, 0)].symbol().to_owned()).collect();
+        assert_eq!(row, "       abc  ");
     }
 }

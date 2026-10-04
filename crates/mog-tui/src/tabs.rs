@@ -128,6 +128,7 @@ impl Layer for Tabs {
                 close,
             });
         }
+        cx.ui.tabs_end = x;
     }
 
     fn handle_mouse(
