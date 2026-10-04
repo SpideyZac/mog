@@ -4,7 +4,9 @@
 
 pub mod compositor;
 pub mod input;
+pub mod status_line;
 pub mod theme;
 
 pub use compositor::{Compositor, Context, EventResult, Layer};
+pub use status_line::StatusLine;
 pub use theme::Theme;
