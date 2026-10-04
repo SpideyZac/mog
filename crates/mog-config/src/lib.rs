@@ -26,7 +26,7 @@ pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
 pub use audio::AudioConfig;
 pub use discord::DiscordConfig;
 pub use lsp::ServerConfig;
-pub use save::{SettingValue, save_setting};
+pub use save::{SettingValue, config_path, save_setting};
 pub use terminal::TerminalConfig;
 pub use ui::UiConfig;
 

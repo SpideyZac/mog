@@ -34,6 +34,9 @@ enabled = true
 disabled = []
 
 # built in servers: rust, python, typescript, go, c, lua
+# settings go to the server itself, for example
+# [lsp.rust.settings]
+# check.command = "clippy"
 [lsp.zig]
 command = "zls"
 extensions = ["zig"]

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 /// The servers known out of the box as `(name, command, args, extensions)`.
 const BUILTIN_SERVERS: &[(&str, &str, &[&str], &[&str])] = &[
@@ -33,6 +34,11 @@ pub struct ServerConfig {
     pub extensions: Vec<String>,
     /// The language id sent to the server. Defaults to the server name.
     pub language_id: Option<String>,
+    /// Settings for the server itself, like `check.command = "clippy"` for rust-analyzer.
+    ///
+    /// They are sent as initialization options and given to the server when it asks for its
+    /// configuration.
+    pub settings: Value,
 }
 
 impl Default for ServerConfig {
@@ -43,6 +49,7 @@ impl Default for ServerConfig {
             args: Vec::new(),
             extensions: Vec::new(),
             language_id: None,
+            settings: Value::Null,
         }
     }
 }
@@ -88,9 +95,10 @@ pub fn merged_servers(
 #[cfg(test)]
 /// Tests for server merging.
 mod tests {
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, path::Path};
 
     use super::{ServerConfig, merged_servers};
+    use crate::Config;
 
     /// Overrides replace built ins and disabled servers are dropped.
     #[test]
@@ -132,5 +140,15 @@ mod tests {
         assert_eq!(servers["python"].command, "my-pyright");
         assert_eq!(servers["python"].extensions, ["py"]);
         assert_eq!(servers["python"].args, ["--stdio"]);
+    }
+
+    /// Server settings are read from a nested table, dotted keys included.
+    #[test]
+    fn reads_settings() {
+        let text = "[lsp.rust.settings]\ncheck.command = \"clippy\"\n";
+        let config = Config::parse(text, Path::new("test.toml")).expect("valid");
+        let servers = config.language_servers();
+        assert_eq!(servers["rust"].settings["check"]["command"], "clippy");
+        assert_eq!(servers["rust"].command, "rust-analyzer");
     }
 }
