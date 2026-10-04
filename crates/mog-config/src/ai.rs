@@ -64,6 +64,10 @@ pub struct CopilotConfig {
     pub chat: bool,
     /// Whether Copilot suggests ghost text.
     pub ghost_text: bool,
+    /// The Copilot language server program, from `npm i -g @github/copilot-language-server`.
+    pub command: String,
+    /// The arguments to pass to it.
+    pub args: Vec<String>,
 }
 
 impl Default for CopilotConfig {
@@ -72,6 +76,8 @@ impl Default for CopilotConfig {
             enabled: false,
             chat: true,
             ghost_text: true,
+            command: "copilot-language-server".into(),
+            args: vec!["--stdio".into()],
         }
     }
 }

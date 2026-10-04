@@ -59,6 +59,9 @@ api_key_env = "ANTHROPIC_API_KEY"
 enabled = false
 chat = true
 ghost_text = true
+# install with: npm i -g @github/copilot-language-server
+command = "copilot-language-server"
+args = ["--stdio"]
 
 [audio]
 sound_effects = false
