@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     io::{self, ErrorKind},
-    path::Path,
+    path::{Path, PathBuf},
     process::{self, Stdio},
     time::Duration,
 };
@@ -126,7 +126,9 @@ impl Client {
         events: UnboundedSender<LspEvent>,
     ) -> io::Result<Self> {
         let name = name.into();
-        let mut child = Command::new(command)
+        // windows only finds programs given with its own separators, so rebuild the path
+        let program: PathBuf = Path::new(command).components().collect();
+        let mut child = Command::new(program)
             .args(args)
             .current_dir(root)
             .stdin(Stdio::piped())
