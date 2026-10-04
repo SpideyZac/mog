@@ -1,5 +1,7 @@
 //! Stacked layers that together make up the screen.
 
+use std::time::Duration;
+
 use crossterm::event::{MouseEvent, MouseEventKind};
 use mog_core::Editor;
 use ratatui::Frame;
@@ -47,6 +49,14 @@ pub trait Layer {
     fn cursor(&self, _area: Rect, _cx: &Context<'_>) -> Option<Position> {
         None
     }
+
+    /// Advances animations by `dt`.
+    fn tick(&mut self, _dt: Duration) {}
+
+    /// Returns `true` while the layer needs [`Layer::tick`] calls and redraws.
+    fn is_animating(&self) -> bool {
+        false
+    }
 }
 
 /// The ordered stack of [`Layer`]s, bottom first.
@@ -67,6 +77,18 @@ impl Compositor {
     /// Puts `layer` on top of the stack.
     pub fn push(&mut self, layer: Box<dyn Layer>) {
         self.layers.push(layer);
+    }
+
+    /// Advances the animations of every layer by `dt`.
+    pub fn tick(&mut self, dt: Duration) {
+        for layer in &mut self.layers {
+            layer.tick(dt);
+        }
+    }
+
+    /// Returns `true` if any layer is animating.
+    pub fn is_animating(&self) -> bool {
+        self.layers.iter().any(|layer| layer.is_animating())
     }
 
     /// Draws every layer and places the cursor.
