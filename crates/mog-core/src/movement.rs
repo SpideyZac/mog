@@ -4,6 +4,12 @@
 
 use ropey::Rope;
 
+/// Bracket pairs as `(open, close)`.
+pub const BRACKETS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+
+/// How far bracket matching looks before giving up, in chars.
+const BRACKET_SCAN_LIMIT: usize = 20_000;
+
 /// A rough classification of chars used for word motions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CharClass {
@@ -177,14 +183,73 @@ pub fn line_span(text: &Rope, line: usize) -> (usize, usize) {
     (start, start + text.line(line).len_chars())
 }
 
+/// Finds the bracket matching one at or just before `pos`.
+///
+/// Returns `(bracket, partner)` offsets, or `None` when there is no bracket or no partner nearby.
+pub fn matching_bracket(text: &Rope, pos: usize) -> Option<(usize, usize)> {
+    let len = text.len_chars();
+    let candidates = [Some(pos), pos.checked_sub(1)];
+    for at in candidates.into_iter().flatten().filter(|&at| at < len) {
+        let ch = text.char(at);
+        for (open, close) in BRACKETS {
+            if ch == open {
+                return scan_bracket(text, at, open, close, true).map(|other| (at, other));
+            }
+            if ch == close {
+                return scan_bracket(text, at, open, close, false).map(|other| (at, other));
+            }
+        }
+    }
+    None
+}
+
+/// Scans from the bracket at `from` for its partner, forward if `forward` is set.
+fn scan_bracket(text: &Rope, from: usize, open: char, close: char, forward: bool) -> Option<usize> {
+    let mut depth = 0usize;
+    let (start, step_char) = if forward {
+        (open, close)
+    } else {
+        (close, open)
+    };
+    let positions: Box<dyn Iterator<Item = usize>> = if forward {
+        Box::new((from + 1..text.len_chars()).take(BRACKET_SCAN_LIMIT))
+    } else {
+        Box::new((0..from).rev().take(BRACKET_SCAN_LIMIT))
+    };
+    for at in positions {
+        let ch = text.char(at);
+        if ch == start {
+            depth += 1;
+        } else if ch == step_char {
+            if depth == 0 {
+                return Some(at);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 /// Tests for the motions.
 mod tests {
     use ropey::Rope;
 
     use super::{
-        left, line_end, line_len, right, smart_home, vertical, word_at, word_left, word_right,
+        left, line_end, line_len, matching_bracket, right, smart_home, vertical, word_at,
+        word_left, word_right,
     };
+
+    /// Brackets match across nesting in both directions.
+    #[test]
+    fn matches_brackets() {
+        let text = Rope::from_str("f(a[1], (b))");
+        assert_eq!(matching_bracket(&text, 1), Some((1, 11)));
+        assert_eq!(matching_bracket(&text, 12), Some((11, 1)));
+        assert_eq!(matching_bracket(&text, 3), Some((3, 5)));
+        assert_eq!(matching_bracket(&text, 0), None);
+        assert_eq!(matching_bracket(&Rope::from_str("(("), 0), None);
+    }
 
     /// `\r\n` counts as one step both ways.
     #[test]
