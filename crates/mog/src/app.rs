@@ -83,6 +83,7 @@ impl App {
                     self.run_command(command);
                 }
             }
+            Event::Paste(text) => self.run_command(Command::InsertText(text)),
             _ => {}
         }
     }
