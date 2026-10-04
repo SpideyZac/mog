@@ -17,7 +17,7 @@ const CYCLE: Duration = Duration::from_secs(3);
 const HUE_STEP: f32 = 24.0;
 
 /// Converts a hue in degrees to a fully saturated color.
-fn hue_to_color(hue: f32) -> Color {
+pub fn hue_to_color(hue: f32) -> Color {
     let h = hue.rem_euclid(360.0) / 60.0;
     let x = 1.0 - (h % 2.0 - 1.0).abs();
     let (r, g, b) = match h as u8 {
