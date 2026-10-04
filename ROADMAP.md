@@ -41,6 +41,8 @@
 
 - [x] Seven themes built from palettes
 - [x] Settings menu that saves to the config
+- [x] Open and reload the config file from the editor
+- [x] Settings for each language server
 - [x] Minimap
 - [x] Indent guides, rainbow brackets and matching bracket
 - [x] Error lens
