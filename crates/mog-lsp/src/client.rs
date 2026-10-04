@@ -1,0 +1,413 @@
+//! A connection to one language server process.
+
+use std::collections::HashMap;
+use std::io;
+use std::path::Path;
+use std::process::{self, Stdio};
+use std::time::Duration;
+
+use lsp_types::{
+    ClientCapabilities, ClientInfo, InitializeParams, PublishDiagnosticsClientCapabilities,
+    PublishDiagnosticsParams, TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities,
+    WorkspaceFolder,
+};
+use serde_json::{Value, json};
+use thiserror::Error;
+use tokio::io::{BufReader, BufWriter};
+use tokio::process::{ChildStdin, ChildStdout, Command};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
+use tokio::time;
+
+use crate::convert;
+use crate::transport::{self, Message};
+
+/// The id of the initialize request, always the first request sent.
+const INITIALIZE_ID: u64 = 0;
+
+/// How long a server gets to exit after shutdown before it is killed.
+const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Something a language server did that the editor may care about.
+#[derive(Debug, Clone)]
+pub enum LspEvent {
+    /// The server finished starting up and is ready for documents.
+    Ready {
+        /// The name of the server.
+        server: String,
+    },
+    /// The server published diagnostics for a document.
+    Diagnostics {
+        /// The name of the server.
+        server: String,
+        /// The published diagnostics.
+        params: PublishDiagnosticsParams,
+    },
+    /// The server wants to show the user a message.
+    Message {
+        /// The name of the server.
+        server: String,
+        /// The message text.
+        text: String,
+    },
+    /// The server process went away.
+    Exited {
+        /// The name of the server.
+        server: String,
+    },
+}
+
+/// An error from a request to a language server.
+#[derive(Debug, Error)]
+pub enum LspError {
+    /// The server is no longer running.
+    #[error("language server is not running")]
+    Closed,
+    /// The server answered with an error object.
+    #[error("language server error: {0}")]
+    Server(Value),
+}
+
+/// A message waiting to be sent to the server.
+enum Outgoing {
+    /// A request whose result goes to `reply`.
+    Request {
+        /// The method to call.
+        method: String,
+        /// The call arguments.
+        params: Value,
+        /// Where the response goes.
+        reply: oneshot::Sender<Result<Value, Value>>,
+    },
+    /// A notification.
+    Notification {
+        /// The method to call.
+        method: String,
+        /// The call arguments.
+        params: Value,
+    },
+}
+
+/// A running language server.
+///
+/// Dropping the client kills the server process.
+pub struct Client {
+    /// The name of the server, from the config.
+    name: String,
+    /// The queue of messages for the server.
+    outgoing: UnboundedSender<Outgoing>,
+}
+
+impl Client {
+    /// Starts `command` as a language server for the project at `root`.
+    ///
+    /// The handshake happens in the background. Messages sent before it finishes are queued, and
+    /// [`LspEvent::Ready`] is sent to `events` once it is done.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the process cannot be started.
+    pub fn start(
+        name: impl Into<String>,
+        command: &str,
+        args: &[String],
+        root: &Path,
+        events: UnboundedSender<LspEvent>,
+    ) -> io::Result<Self> {
+        let name = name.into();
+        let mut child = Command::new(command)
+            .args(args)
+            .current_dir(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            return Err(io::Error::other("language server has no stdio"));
+        };
+        let (outgoing, queue) = mpsc::unbounded_channel();
+        let connection = Connection {
+            name: name.clone(),
+            writer: BufWriter::new(stdin),
+            events,
+            pending: HashMap::new(),
+            next_id: INITIALIZE_ID + 1,
+        };
+        let params = initialize_params(root);
+        tokio::spawn(async move {
+            connection.run(stdout, queue, params).await;
+            // a server that ignores shutdown gets killed when the child is dropped
+            let _ = time::timeout(EXIT_TIMEOUT, child.wait()).await;
+        });
+        Ok(Self { name, outgoing })
+    }
+
+    /// Returns the name of the server.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Sends a request and waits for the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is gone or answers with an error.
+    pub async fn request(&self, method: &str, params: Value) -> Result<Value, LspError> {
+        let (reply, response) = oneshot::channel();
+        self.outgoing
+            .send(Outgoing::Request {
+                method: method.to_owned(),
+                params,
+                reply,
+            })
+            .map_err(|_| LspError::Closed)?;
+        response
+            .await
+            .map_err(|_| LspError::Closed)?
+            .map_err(LspError::Server)
+    }
+
+    /// Sends a notification. Notifications to a dead server are dropped.
+    pub fn notify(&self, method: &str, params: Value) {
+        let _ = self.outgoing.send(Outgoing::Notification {
+            method: method.to_owned(),
+            params,
+        });
+    }
+
+    /// Tells the server a document was opened.
+    pub fn did_open(&self, path: &Path, language_id: &str, version: i32, text: &str) {
+        let Some(uri) = convert::path_to_uri(path) else {
+            return;
+        };
+        self.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": {
+                "uri": uri, "languageId": language_id, "version": version, "text": text
+            }}),
+        );
+    }
+
+    /// Tells the server a document changed, sending the full new text.
+    pub fn did_change(&self, path: &Path, version: i32, text: &str) {
+        let Some(uri) = convert::path_to_uri(path) else {
+            return;
+        };
+        self.notify(
+            "textDocument/didChange",
+            json!({
+                "textDocument": { "uri": uri, "version": version },
+                "contentChanges": [{ "text": text }],
+            }),
+        );
+    }
+}
+
+/// Builds the initialize request arguments for a project at `root`.
+fn initialize_params(root: &Path) -> Value {
+    let folders = convert::path_to_uri(root).map(|uri| {
+        vec![WorkspaceFolder {
+            uri,
+            name: root
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into()),
+        }]
+    });
+    let params = InitializeParams {
+        process_id: Some(process::id()),
+        workspace_folders: folders,
+        client_info: Some(ClientInfo {
+            name: "mog".into(),
+            version: Some(env!("CARGO_PKG_VERSION").into()),
+        }),
+        capabilities: ClientCapabilities {
+            text_document: Some(TextDocumentClientCapabilities {
+                synchronization: Some(TextDocumentSyncClientCapabilities::default()),
+                publish_diagnostics: Some(PublishDiagnosticsClientCapabilities::default()),
+                ..TextDocumentClientCapabilities::default()
+            }),
+            ..ClientCapabilities::default()
+        },
+        ..InitializeParams::default()
+    };
+    serde_json::to_value(params).unwrap_or(Value::Null)
+}
+
+/// The background half of a [`Client`] that owns the pipes.
+struct Connection {
+    /// The name of the server.
+    name: String,
+    /// The server stdin.
+    writer: BufWriter<ChildStdin>,
+    /// Where events for the editor go.
+    events: UnboundedSender<LspEvent>,
+    /// Requests waiting for a response, by id.
+    pending: HashMap<u64, oneshot::Sender<Result<Value, Value>>>,
+    /// The id the next request gets.
+    next_id: u64,
+}
+
+impl Connection {
+    /// Runs the connection until the server exits or the client is dropped.
+    async fn run(
+        mut self,
+        stdout: ChildStdout,
+        mut queue: UnboundedReceiver<Outgoing>,
+        params: Value,
+    ) {
+        let (incoming_tx, mut incoming) = mpsc::unbounded_channel();
+        // reading is not cancel safe so it gets its own task instead of a select branch
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout);
+            while let Ok(Some(message)) = transport::read_message(&mut reader).await {
+                if incoming_tx.send(message).is_err() {
+                    break;
+                }
+            }
+        });
+
+        if self.handshake(&mut incoming, params).await.is_ok() {
+            let _ = self.events.send(LspEvent::Ready {
+                server: self.name.clone(),
+            });
+            loop {
+                let result = tokio::select! {
+                    message = queue.recv() => match message {
+                        Some(message) => self.send(message).await,
+                        None => {
+                            let _ = self.shutdown().await;
+                            break;
+                        }
+                    },
+                    message = incoming.recv() => match message {
+                        Some(message) => self.receive(message).await,
+                        None => break,
+                    },
+                };
+                if result.is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = self.events.send(LspEvent::Exited {
+            server: self.name.clone(),
+        });
+    }
+
+    /// Sends initialize, waits for its response and sends initialized.
+    async fn handshake(
+        &mut self,
+        incoming: &mut UnboundedReceiver<Message>,
+        params: Value,
+    ) -> io::Result<()> {
+        self.write(Message::Request {
+            id: json!(INITIALIZE_ID),
+            method: "initialize".into(),
+            params,
+        })
+        .await?;
+        loop {
+            match incoming.recv().await {
+                Some(Message::Response { id, .. }) if id == json!(INITIALIZE_ID) => break,
+                Some(message) => self.receive(message).await?,
+                None => return Err(io::ErrorKind::UnexpectedEof.into()),
+            }
+        }
+        self.write(Message::Notification {
+            method: "initialized".into(),
+            params: json!({}),
+        })
+        .await
+    }
+
+    /// Asks the server to shut down and exit.
+    async fn shutdown(&mut self) -> io::Result<()> {
+        let id = self.next_id;
+        self.write(Message::Request {
+            id: json!(id),
+            method: "shutdown".into(),
+            params: Value::Null,
+        })
+        .await?;
+        self.write(Message::Notification {
+            method: "exit".into(),
+            params: Value::Null,
+        })
+        .await
+    }
+
+    /// Sends a queued message.
+    async fn send(&mut self, message: Outgoing) -> io::Result<()> {
+        match message {
+            Outgoing::Request {
+                method,
+                params,
+                reply,
+            } => {
+                let id = self.next_id;
+                self.next_id += 1;
+                self.pending.insert(id, reply);
+                self.write(Message::Request {
+                    id: json!(id),
+                    method,
+                    params,
+                })
+                .await
+            }
+            Outgoing::Notification { method, params } => {
+                self.write(Message::Notification { method, params }).await
+            }
+        }
+    }
+
+    /// Handles a message from the server.
+    async fn receive(&mut self, message: Message) -> io::Result<()> {
+        match message {
+            Message::Response { id, result } => {
+                if let Some(reply) = id.as_u64().and_then(|id| self.pending.remove(&id)) {
+                    let _ = reply.send(result);
+                }
+            }
+            Message::Notification { method, params } => self.notification(&method, params),
+            Message::Request { id, method, params } => {
+                // answering with nulls keeps servers that wait on us from hanging
+                let result = match method.as_str() {
+                    "workspace/configuration" => {
+                        let count = params["items"].as_array().map_or(0, Vec::len);
+                        Value::Array(vec![Value::Null; count])
+                    }
+                    _ => Value::Null,
+                };
+                self.write(Message::Response {
+                    id,
+                    result: Ok(result),
+                })
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Turns a server notification into an editor event.
+    fn notification(&self, method: &str, params: Value) {
+        let server = self.name.clone();
+        let event = match method {
+            "textDocument/publishDiagnostics" => match serde_json::from_value(params) {
+                Ok(params) => LspEvent::Diagnostics { server, params },
+                Err(_) => return,
+            },
+            "window/showMessage" => LspEvent::Message {
+                server,
+                text: params["message"].as_str().unwrap_or_default().to_owned(),
+            },
+            _ => return,
+        };
+        let _ = self.events.send(event);
+    }
+
+    /// Writes a message to the server.
+    async fn write(&mut self, message: Message) -> io::Result<()> {
+        transport::write_message(&mut self.writer, &message).await
+    }
+}
