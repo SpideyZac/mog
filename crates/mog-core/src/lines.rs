@@ -23,10 +23,13 @@ pub struct LineEdit {
 /// Returns the line comment token for files with `extension`, if the language has one.
 pub fn comment_token(extension: &str) -> Option<&'static str> {
     Some(match extension {
-        "rs" | "c" | "h" | "cpp" | "hpp" | "cc" | "js" | "jsx" | "ts" | "tsx" | "go" | "java"
-        | "kt" | "swift" | "cs" | "zig" | "dart" | "scss" | "jsonc" => "//",
-        "py" | "sh" | "bash" | "zsh" | "toml" | "yaml" | "yml" | "rb" | "pl" | "r" | "nix"
-        | "conf" | "ps1" | "cmake" | "dockerfile" | "gitignore" => "#",
+        "rs" | "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" | "hh" | "hxx" | "ino" | "js" | "jsx"
+        | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "go" | "java" | "kt" | "kts" | "swift"
+        | "cs" | "csx" | "zig" | "zon" | "dart" | "scss" | "jsonc" | "json5" | "scala" | "sc"
+        | "sbt" | "php" | "glsl" | "proto" => "//",
+        "py" | "pyi" | "sh" | "bash" | "zsh" | "toml" | "yaml" | "yml" | "rb" | "rake"
+        | "gemspec" | "pl" | "r" | "nix" | "conf" | "ps1" | "psm1" | "psd1" | "cmake"
+        | "dockerfile" | "gitignore" | "ex" | "exs" | "mk" | "mak" | "jl" | "tf" => "#",
         "lua" | "sql" | "hs" | "elm" => "--",
         "vim" => "\"",
         "lisp" | "clj" | "scm" | "el" | "ini" | "asm" => ";",
