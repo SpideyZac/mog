@@ -7,6 +7,8 @@ pub mod editor_view;
 pub mod explorer;
 pub mod icons;
 pub mod input;
+pub mod picker;
+pub mod popup;
 pub mod status_line;
 pub mod tabs;
 pub mod theme;
