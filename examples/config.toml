@@ -35,13 +35,14 @@ icons = true
 enabled = true
 disabled = []
 
-# built in servers: rust, python, typescript, go, c, lua
+# built in servers: rust, python, typescript, go, c, lua, zig, java, csharp, kotlin, swift,
+# ruby, php, scala, haskell, ocaml, elixir, dart, bash, html, css, json, yaml, toml, markdown
 # settings go to the server itself, for example
 # [lsp.rust.settings]
 # check.command = "clippy"
-[lsp.zig]
-command = "zls"
-extensions = ["zig"]
+[lsp.nim]
+command = "nimlangserver"
+extensions = ["nim"]
 
 [lsp.go]
 enabled = false

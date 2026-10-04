@@ -94,8 +94,27 @@ mog starts a server when you open a file it handles, if the program is on your `
 | `python` | `pyright-langserver --stdio` | `py` |
 | `typescript` | `typescript-language-server --stdio` | `ts` `tsx` `js` `jsx` |
 | `go` | `gopls` | `go` |
-| `c` | `clangd` | `c` `h` `cpp` `hpp` `cc` |
+| `c` | `clangd` | `c` `h` `cpp` `hpp` `cc` `cxx` `hh` |
 | `lua` | `lua-language-server` | `lua` |
+| `zig` | `zls` | `zig` |
+| `java` | `jdtls` | `java` |
+| `csharp` | `csharp-ls` | `cs` |
+| `kotlin` | `kotlin-language-server` | `kt` `kts` |
+| `swift` | `sourcekit-lsp` | `swift` |
+| `ruby` | `ruby-lsp` | `rb` |
+| `php` | `intelephense --stdio` | `php` |
+| `scala` | `metals` | `scala` `sbt` |
+| `haskell` | `haskell-language-server-wrapper --lsp` | `hs` |
+| `ocaml` | `ocamllsp` | `ml` `mli` |
+| `elixir` | `elixir-ls` | `ex` `exs` |
+| `dart` | `dart language-server` | `dart` |
+| `bash` | `bash-language-server start` | `sh` `bash` |
+| `html` | `vscode-html-language-server --stdio` | `html` `htm` |
+| `css` | `vscode-css-language-server --stdio` | `css` `scss` |
+| `json` | `vscode-json-language-server --stdio` | `json` `jsonc` |
+| `yaml` | `yaml-language-server --stdio` | `yml` `yaml` |
+| `toml` | `taplo lsp stdio` | `toml` |
+| `markdown` | `marksman` | `md` |
 
 Add more or change these under [`[lsp]`](#lsp) in the config.
 

@@ -16,9 +16,61 @@ const BUILTIN_SERVERS: &[(&str, &str, &[&str], &[&str])] = &[
         &["ts", "tsx", "js", "jsx"],
     ),
     ("go", "gopls", &[], &["go"]),
-    ("c", "clangd", &[], &["c", "h", "cpp", "hpp", "cc"]),
+    (
+        "c",
+        "clangd",
+        &[],
+        &["c", "h", "cpp", "hpp", "cc", "cxx", "hh"],
+    ),
     ("lua", "lua-language-server", &[], &["lua"]),
+    ("zig", "zls", &[], &["zig"]),
+    ("java", "jdtls", &[], &["java"]),
+    ("csharp", "csharp-ls", &[], &["cs"]),
+    ("kotlin", "kotlin-language-server", &[], &["kt", "kts"]),
+    ("swift", "sourcekit-lsp", &[], &["swift"]),
+    ("ruby", "ruby-lsp", &[], &["rb"]),
+    ("php", "intelephense", &["--stdio"], &["php"]),
+    ("scala", "metals", &[], &["scala", "sbt"]),
+    (
+        "haskell",
+        "haskell-language-server-wrapper",
+        &["--lsp"],
+        &["hs"],
+    ),
+    ("ocaml", "ocamllsp", &[], &["ml", "mli"]),
+    ("elixir", "elixir-ls", &[], &["ex", "exs"]),
+    ("dart", "dart", &["language-server"], &["dart"]),
+    ("bash", "bash-language-server", &["start"], &["sh", "bash"]),
+    (
+        "html",
+        "vscode-html-language-server",
+        &["--stdio"],
+        &["html", "htm"],
+    ),
+    (
+        "css",
+        "vscode-css-language-server",
+        &["--stdio"],
+        &["css", "scss"],
+    ),
+    (
+        "json",
+        "vscode-json-language-server",
+        &["--stdio"],
+        &["json", "jsonc"],
+    ),
+    (
+        "yaml",
+        "yaml-language-server",
+        &["--stdio"],
+        &["yml", "yaml"],
+    ),
+    ("toml", "taplo", &["lsp", "stdio"], &["toml"]),
+    ("markdown", "marksman", &[], &["md"]),
 ];
+
+/// Built in servers whose language id differs from their name.
+const LANGUAGE_IDS: &[(&str, &str)] = &[("bash", "shellscript")];
 
 /// How to run one language server.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -68,6 +120,10 @@ pub fn merged_servers(
                 command: (*command).to_owned(),
                 args: args.iter().map(|arg| (*arg).to_owned()).collect(),
                 extensions: extensions.iter().map(|ext| (*ext).to_owned()).collect(),
+                language_id: LANGUAGE_IDS
+                    .iter()
+                    .find(|(server, _)| server == name)
+                    .map(|(_, id)| (*id).to_owned()),
                 ..ServerConfig::default()
             };
             ((*name).to_owned(), config)
@@ -84,6 +140,9 @@ pub fn merged_servers(
             }
             if server.extensions.is_empty() {
                 server.extensions.clone_from(&builtin.extensions);
+            }
+            if server.language_id.is_none() {
+                server.language_id.clone_from(&builtin.language_id);
             }
         }
         servers.insert(name.clone(), server);
