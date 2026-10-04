@@ -3,13 +3,25 @@
 use serde::Deserialize;
 
 /// Settings for every AI provider.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AiConfig {
+    /// Whether the AI suggests code in gray after the cursor when typing pauses.
+    pub ghost_text: bool,
     /// Claude settings.
     pub claude: ClaudeConfig,
     /// GitHub Copilot settings.
     pub copilot: CopilotConfig,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            ghost_text: true,
+            claude: ClaudeConfig::default(),
+            copilot: CopilotConfig::default(),
+        }
+    }
 }
 
 /// Settings for Claude.
