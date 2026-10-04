@@ -23,6 +23,7 @@
 - [x] Fuzzy file finder
 - [x] Command palette
 - [x] Key binding list (`ctrl+k` and `mog --keys`)
+- [x] Change key bindings from the key list
 - [x] Search and replace
 - [x] Go to line
 - [x] Tabs
