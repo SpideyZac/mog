@@ -4,6 +4,25 @@
 [editor]
 tab_width = 4
 insert_spaces = true
+auto_close_brackets = true
+auto_complete = true
+
+[ui]
+# themes: mog, synthwave, matrix, sunset, ocean, forest, paper
+theme = "mog"
+tabs = true
+line_numbers = true
+relative_line_numbers = false
+cursor_line = true
+indent_guides = true
+rainbow_brackets = true
+syntax_highlighting = true
+minimap = true
+error_lens = true
+git_gutter = true
+git_blame = true
+explorer = true
+icons = true
 
 [keys]
 # chord = command name, or "" to remove a default binding
@@ -29,3 +48,8 @@ api_key_env = "ANTHROPIC_API_KEY"
 
 [ai.copilot]
 enabled = false
+
+[audio]
+sound_effects = false
+music = false
+volume = 50

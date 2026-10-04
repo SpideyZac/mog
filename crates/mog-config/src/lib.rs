@@ -15,10 +15,14 @@ use thiserror::Error;
 use toml::de::Error as TomlError;
 
 pub mod ai;
+pub mod audio;
 pub mod lsp;
+pub mod ui;
 
 pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
+pub use audio::AudioConfig;
 pub use lsp::ServerConfig;
+pub use ui::UiConfig;
 
 /// The environment variable that overrides the config directory.
 pub const CONFIG_DIR_ENV: &str = "MOG_CONFIG_DIR";
@@ -53,6 +57,8 @@ pub enum ConfigError {
 pub struct Config {
     /// Editing behavior.
     pub editor: EditorConfig,
+    /// What the editor shows.
+    pub ui: UiConfig,
     /// Key binding overrides from chord, like `ctrl+d`, to command name, like `select_all`.
     ///
     /// Binding a chord to `""` removes its default binding.
@@ -63,6 +69,8 @@ pub struct Config {
     pub lsp: BTreeMap<String, ServerConfig>,
     /// AI providers.
     pub ai: AiConfig,
+    /// Sound effects and music.
+    pub audio: AudioConfig,
 }
 
 /// Settings for editing behavior.
@@ -73,6 +81,10 @@ pub struct EditorConfig {
     pub tab_width: usize,
     /// Whether the tab key inserts spaces.
     pub insert_spaces: bool,
+    /// Whether typing an opening bracket or quote also types the closing one.
+    pub auto_close_brackets: bool,
+    /// Whether completions pop up while typing.
+    pub auto_complete: bool,
 }
 
 impl Default for EditorConfig {
@@ -80,6 +92,8 @@ impl Default for EditorConfig {
         Self {
             tab_width: 4,
             insert_spaces: true,
+            auto_close_brackets: true,
+            auto_complete: true,
         }
     }
 }
