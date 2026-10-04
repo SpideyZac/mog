@@ -1,5 +1,6 @@
 //! The `mog` binary, the entry point of the editor.
 
+mod ai;
 mod app;
 mod cli;
 mod clipboard;

@@ -1541,6 +1541,7 @@ dependencies = [
  "crossterm",
  "futures",
  "lsp-types",
+ "mog-ai",
  "mog-config",
  "mog-core",
  "mog-flair",

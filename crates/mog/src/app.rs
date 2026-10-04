@@ -14,6 +14,7 @@ use ratatui::layout::Rect;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::time::{self, MissedTickBehavior};
 
+use crate::ai::Assistant;
 use crate::cli::Args;
 use crate::clipboard;
 use crate::lsp::{self, LanguageServers};
@@ -37,6 +38,8 @@ pub struct App {
     lsp: LanguageServers,
     /// Events coming back from language servers.
     lsp_events: UnboundedReceiver<LspEvent>,
+    /// The AI providers and their pending replies.
+    assistant: Assistant,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
     /// Whether the event loop should stop after the current iteration.
@@ -53,6 +56,8 @@ impl App {
         });
         let (keymap, key_problems) = settings::keymap(&config);
         problems.extend(key_problems);
+        let (providers, ai_problems) = settings::ai_providers(&config);
+        problems.extend(ai_problems);
 
         let mut compositor = Compositor::new();
         compositor.push(Box::new(EditorView::new()));
@@ -79,6 +84,7 @@ impl App {
             theme: Theme::default(),
             lsp,
             lsp_events,
+            assistant: Assistant::new(providers),
             screen: Rect::default(),
             quit: false,
         }
@@ -104,6 +110,7 @@ impl App {
                     None => break,
                 },
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
+                Some(reply) = self.assistant.reply() => self.editor.set_status(reply),
                 _ = frames.tick(), if animating => {
                     let now = Instant::now();
                     self.compositor.tick(now - last_tick);
@@ -180,6 +187,17 @@ impl App {
         match self.editor.execute(command) {
             Outcome::Done => {}
             Outcome::Quit => self.quit = true,
+            Outcome::Unhandled(Command::Custom(name)) if name == "ai.explain" => {
+                let document = self.editor.document();
+                let selection = document.selection();
+                let message = if selection.is_empty() {
+                    "select some code to explain first".to_owned()
+                } else {
+                    let code = document.text().slice(selection.from()..selection.to());
+                    self.assistant.explain(code.to_string())
+                };
+                self.editor.set_status(message);
+            }
             Outcome::Unhandled(command) => {
                 self.editor
                     .set_status(format!("{command} is not available yet"));

@@ -1,5 +1,9 @@
 //! Turning the loaded config into editor state.
 
+use std::env;
+use std::sync::Arc;
+
+use mog_ai::{AiProvider, Claude, Copilot, claude};
 use mog_config::Config;
 use mog_core::{Command, KeyChord, Keymap, Options};
 use mog_flair::{FlairLayer, builtin};
@@ -49,4 +53,33 @@ pub fn flair_layer(config: &Config) -> FlairLayer {
         layer.disable(id.clone());
     }
     layer
+}
+
+/// Builds the enabled AI providers, Claude first.
+///
+/// Providers that are enabled but cannot work, like Claude without a key, are skipped and
+/// described in the returned list of problems.
+pub fn ai_providers(config: &Config) -> (Vec<Arc<dyn AiProvider>>, Vec<String>) {
+    let mut providers: Vec<Arc<dyn AiProvider>> = Vec::new();
+    let mut problems = Vec::new();
+    let claude_config = &config.ai.claude;
+    if claude_config.enabled {
+        match env::var(&claude_config.api_key_env) {
+            Ok(key) if !key.is_empty() => {
+                let model = claude_config
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| claude::DEFAULT_MODEL.into());
+                providers.push(Arc::new(Claude::new(key, model)));
+            }
+            _ => problems.push(format!(
+                "claude is enabled but {} is not set",
+                claude_config.api_key_env
+            )),
+        }
+    }
+    if config.ai.copilot.enabled {
+        providers.push(Arc::new(Copilot::new()));
+    }
+    (providers, problems)
 }

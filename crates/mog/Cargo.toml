@@ -13,6 +13,7 @@ workspace = true
 anyhow.workspace = true
 arboard.workspace = true
 clap.workspace = true
+mog-ai.workspace = true
 lsp-types.workspace = true
 mog-config.workspace = true
 crossterm.workspace = true
