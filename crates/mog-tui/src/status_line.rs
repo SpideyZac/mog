@@ -76,6 +76,12 @@ impl Layer for StatusLine {
                 right.push(Span::styled(format!("{label}{n} "), style));
             }
         }
+        if let Some(branch) = &cx.ui.branch {
+            right.push(Span::styled(
+                format!("\u{2387} {branch} "),
+                theme.status_message,
+            ));
+        }
         right.push(Span::raw(format!("Ln {line}, Col {col} ")));
         Line::from(right).right_aligned().render(area, buf);
     }

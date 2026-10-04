@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyEventKind};
-use futures::StreamExt;
+use futures::{StreamExt, future};
 use mog_config::Config;
 use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome};
 use mog_lsp::LspEvent;
@@ -24,13 +24,21 @@ use crate::{
     ai::Assistant,
     cli::Args,
     clipboard,
+    git::{self, Git},
     lsp::{self, LanguageServers},
     settings,
     terminal::Tui,
+    watch::FolderWatcher,
 };
 
 /// The time between animation frames, about 30 per second.
 const FRAME_TIME: Duration = Duration::from_millis(33);
+
+/// How often housekeeping like refreshing git runs.
+const HOUSEKEEPING_TIME: Duration = Duration::from_secs(1);
+
+/// How often git status is refreshed even when no files changed, to catch commits made elsewhere.
+const GIT_REFRESH_TIME: Duration = Duration::from_secs(15);
 
 /// How many rounds of layer requests are run after one event, so requests that queue more
 /// requests cannot freeze the editor.
@@ -54,6 +62,14 @@ pub struct App {
     lsp_events: UnboundedReceiver<LspEvent>,
     /// The AI providers and their pending replies.
     assistant: Assistant,
+    /// The git state of the project.
+    git: Git,
+    /// Watches the open folder for changes, if a folder is open.
+    watcher: Option<FolderWatcher>,
+    /// Whether files changed on disk since the last housekeeping.
+    files_changed: bool,
+    /// When git status was last refreshed.
+    git_refreshed: Instant,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
     /// Whether the event loop should stop after the current iteration.
@@ -107,6 +123,9 @@ impl App {
             editor.set_status(problems.join("; "));
         }
         let (lsp_sender, lsp_events) = mpsc::unbounded_channel();
+        let watcher = ui.has_explorer.then(|| FolderWatcher::new(&root)).flatten();
+        let mut git = Git::new(&root);
+        git.refresh();
         let lsp = LanguageServers::new(config.language_servers(), root, lsp_sender);
         if let Some(path) = file
             && let Err(err) = editor.open(&path)
@@ -122,6 +141,10 @@ impl App {
             lsp,
             lsp_events,
             assistant: Assistant::new(providers),
+            git,
+            watcher,
+            files_changed: false,
+            git_refreshed: Instant::now(),
             screen: Rect::default(),
             quit: false,
         }
@@ -136,9 +159,12 @@ impl App {
         let mut events = EventStream::new();
         let mut frames = time::interval(FRAME_TIME);
         frames.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut housekeeping = time::interval(HOUSEKEEPING_TIME);
+        housekeeping.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut last_tick = Instant::now();
         while !self.quit {
             self.sync_language_servers();
+            self.sync_git();
             self.draw(terminal)?;
             let animating = self.compositor.is_animating();
             tokio::select! {
@@ -148,6 +174,9 @@ impl App {
                 },
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
                 Some(reply) = self.assistant.reply() => self.editor.set_status(reply),
+                Some(update) = self.git.update() => git::apply(&mut self.ui, update),
+                () = changed(self.watcher.as_ref()) => self.files_changed = true,
+                _ = housekeeping.tick() => self.housekeeping(),
                 _ = frames.tick(), if animating => {
                     let now = Instant::now();
                     self.compositor.tick(now - last_tick);
@@ -219,6 +248,37 @@ impl App {
             for command in mem::take(&mut self.ui.requests) {
                 self.execute_command(command);
             }
+        }
+    }
+
+    /// Asks git about open files and the cursor line.
+    fn sync_git(&mut self) {
+        for document in self.editor.documents() {
+            if let Some(path) = document.path() {
+                self.git.ensure_base(path);
+            }
+        }
+        if !self.ui.config.ui.git_blame {
+            return;
+        }
+        let document = self.editor.document();
+        if let Some(path) = document.path() {
+            let line = document.text().char_to_line(document.selection().head);
+            self.git.request_blame(path, line, document.version(), || {
+                document.text().to_string()
+            });
+        }
+    }
+
+    /// Runs periodic work like refreshing the explorer and git after files changed.
+    fn housekeeping(&mut self) {
+        let changed = mem::take(&mut self.files_changed);
+        if changed {
+            self.ui.refresh_explorer = true;
+        }
+        if changed || self.git_refreshed.elapsed() >= GIT_REFRESH_TIME {
+            self.git.refresh();
+            self.git_refreshed = Instant::now();
         }
     }
 
@@ -298,5 +358,13 @@ impl App {
                 .editor
                 .set_status(format!("{name} is not available yet")),
         }
+    }
+}
+
+/// Waits for `watcher` to see a change, or forever when there is no watcher.
+async fn changed(watcher: Option<&FolderWatcher>) {
+    match watcher {
+        Some(watcher) => watcher.changed().await,
+        None => future::pending().await,
     }
 }

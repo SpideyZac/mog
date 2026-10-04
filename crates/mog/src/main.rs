@@ -4,9 +4,11 @@ mod ai;
 mod app;
 mod cli;
 mod clipboard;
+mod git;
 mod lsp;
 mod settings;
 mod terminal;
+mod watch;
 
 use anyhow::Result;
 use app::App;
