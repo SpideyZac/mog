@@ -28,6 +28,7 @@ dirs = "7"
 futures = "0.3"
 mog-config = { path = "crates/mog-config" }
 mog-core = { path = "crates/mog-core" }
+mog-flair = { path = "crates/mog-flair" }
 mog-tui = { path = "crates/mog-tui" }
 ratatui = "0.30"
 ropey = "1.6"
