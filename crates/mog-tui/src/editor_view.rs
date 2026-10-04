@@ -17,7 +17,6 @@ use ratatui::{
 
 use crate::{
     compositor::{Context, EventResult, Layer},
-    ghost::Ghost,
     menu,
     theme::{RAINBOW_LEN, Theme},
     ui::{Focus, Layout, Pane, Ui},
@@ -476,13 +475,17 @@ impl Layer for EditorView {
                     && ghost.pos == selection.head
                     && is_cursor_line
             });
-            if let Some(suggestion) = ghost.map(Ghost::text) {
+            if let Some(ghost) = ghost {
+                let suggestion = ghost.text();
                 let first = suggestion.lines().next().unwrap_or_default();
-                let more = if suggestion.lines().nth(1).is_some() {
-                    " \u{2026}"
+                let mut more = if suggestion.lines().nth(1).is_some() {
+                    " \u{2026}".to_owned()
                 } else {
-                    ""
+                    String::new()
                 };
+                if ghost.items.len() > 1 {
+                    more.push_str(&format!("  {}/{}", ghost.index + 1, ghost.items.len()));
+                }
                 let head_col = view::visual_col(text, selection.head, tab_width);
                 if visible(head_col) {
                     let x = text_x + cells(head_col - scroll.scroll_col);
