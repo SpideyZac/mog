@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    env,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
     process::{self, Stdio},
@@ -134,9 +135,7 @@ impl Client {
         events: UnboundedSender<LspEvent>,
     ) -> io::Result<Self> {
         let name = name.into();
-        // windows only finds programs given with its own separators, so rebuild the path
-        let program: PathBuf = Path::new(command).components().collect();
-        let mut child = Command::new(program)
+        let mut child = Command::new(program_path(command))
             .args(args)
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -303,6 +302,25 @@ async fn last_lines(stderr: impl AsyncRead + Unpin) -> String {
         kept.push(line.to_owned());
     }
     kept.join(" ")
+}
+
+/// Returns the path to run for `command`.
+///
+/// Windows only finds `.exe` files on its own, so bare names are also looked up as the `.cmd`
+/// and `.bat` shims npm installs.
+fn program_path(command: &str) -> PathBuf {
+    // windows only finds programs given with its own separators, so rebuild the path
+    let program: PathBuf = Path::new(command).components().collect();
+    if !cfg!(windows) || program.extension().is_some() || program.components().count() > 1 {
+        return program;
+    }
+    let Some(dirs) = env::var_os("PATH") else {
+        return program;
+    };
+    env::split_paths(&dirs)
+        .flat_map(|dir| ["exe", "cmd", "bat"].map(|ext| dir.join(&program).with_extension(ext)))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or(program)
 }
 
 /// Returns the arguments of a notification that is only about the document at `path`.
