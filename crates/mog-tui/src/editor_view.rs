@@ -280,6 +280,7 @@ impl Layer for EditorView {
         let first_visible = text.line_to_char(scroll.scroll_line.min(lines - 1));
         let mut match_index = matches.partition_point(|(_, to)| *to <= first_visible);
         let mut guide_indent = 0;
+        let mut ghost_below: Option<(u16, Vec<String>)> = None;
 
         for row in 0..area.height {
             let line = scroll.scroll_line + usize::from(row);
@@ -476,22 +477,22 @@ impl Layer for EditorView {
                     && is_cursor_line
             });
             if let Some(ghost) = ghost {
-                let suggestion = ghost.text();
-                let first = suggestion.lines().next().unwrap_or_default();
-                let mut more = if suggestion.lines().nth(1).is_some() {
-                    " \u{2026}".to_owned()
-                } else {
-                    String::new()
-                };
+                let tab = " ".repeat(tab_width.max(1));
+                let mut suggestion = ghost
+                    .text()
+                    .split('\n')
+                    .map(|line| line.replace('\t', &tab));
+                let mut first = suggestion.next().unwrap_or_default();
                 if ghost.items.len() > 1 {
-                    more.push_str(&format!("  {}/{}", ghost.index + 1, ghost.items.len()));
+                    first.push_str(&format!("  {}/{}", ghost.index + 1, ghost.items.len()));
                 }
                 let head_col = view::visual_col(text, selection.head, tab_width);
                 if visible(head_col) {
                     let x = text_x + cells(head_col - scroll.scroll_col);
                     let room = usize::from(text_x + text_width).saturating_sub(usize::from(x));
-                    buf.set_stringn(x, y, format!("{first}{more}"), room, theme.ghost);
+                    buf.set_stringn(x, y, first, room, theme.ghost);
                 }
+                ghost_below = Some((y, suggestion.collect()));
                 continue;
             }
             let inline = match diagnostic {
@@ -512,6 +513,26 @@ impl Layer for EditorView {
                         buf.set_stringn(text_x + cells(x), y, message, room, style);
                     }
                 }
+            }
+        }
+
+        // the rest of a multi line suggestion covers the lines below until it is accepted
+        if let Some((y, rest)) = ghost_below {
+            let text_x = area.x + self.gutter_width;
+            let rows = usize::from(area.bottom().saturating_sub(y + 1));
+            let shown = rest.len().min(rows);
+            for (i, line) in rest.iter().take(shown).enumerate() {
+                let row_y = y + 1 + u16::try_from(i).unwrap_or(u16::MAX);
+                let mut line: String = line.chars().skip(scroll.scroll_col).collect();
+                if i + 1 == shown && shown < rest.len() {
+                    line.push_str(" \u{2026}");
+                }
+                let row = Rect::new(text_x, row_y, text_width, 1);
+                buf.set_style(row, theme.text);
+                for x in row.left()..row.right() {
+                    buf[(x, row_y)].set_symbol(" ");
+                }
+                buf.set_stringn(text_x, row_y, line, usize::from(text_width), theme.ghost);
             }
         }
     }
