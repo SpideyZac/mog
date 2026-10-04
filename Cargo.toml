@@ -29,6 +29,7 @@ futures = "0.3"
 ignore = "0.4"
 lsp-types = "0.97"
 mog-ai = { path = "crates/mog-ai" }
+mog-audio = { path = "crates/mog-audio" }
 mog-config = { path = "crates/mog-config" }
 mog-core = { path = "crates/mog-core" }
 mog-flair = { path = "crates/mog-flair" }
@@ -38,6 +39,7 @@ mog-syntax = { path = "crates/mog-syntax" }
 mog-tui = { path = "crates/mog-tui" }
 notify = "8"
 ratatui = "0.30"
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
 reqwest = { version = "0.13", features = ["json"] }
 ropey = "1.6"
 serde = { version = "1", features = ["derive"] }
