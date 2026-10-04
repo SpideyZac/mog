@@ -136,6 +136,8 @@ pub enum PromptKind {
     CopilotSignIn,
     /// The name to save the theme being edited under.
     SaveTheme,
+    /// Whether to trust the project config.
+    TrustProject,
     /// Confirmation to replace every match of a project search.
     ReplaceAll,
 }

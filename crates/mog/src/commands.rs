@@ -64,6 +64,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("settings.open", "Settings: Open settings"),
     ("config.open", "Settings: Open config file"),
     ("config.reload", "Settings: Reload config"),
+    ("config.open_project", "Settings: Open project config"),
     ("audio.toggle_music", "Sound: Toggle music"),
     ("audio.toggle_effects", "Sound: Toggle sound effects"),
     ("flair.toggle", "Flair: Toggle all flair"),

@@ -3,7 +3,7 @@
 use std::{env, path::Path, sync::Arc};
 
 use mog_ai::{AiProvider, Claude, Copilot, CopilotEvent, claude};
-use mog_config::Config;
+use mog_config::{Config, ProjectFile, project, read_project};
 use mog_core::{Command, KeyChord, Keymap, Options};
 use mog_flair::{FlairLayer, builtin};
 use mog_tui::{Theme, theme::Palette};
@@ -127,6 +127,34 @@ pub fn ai_providers(config: &Config, root: &Path) -> (AiProviders, Vec<String>) 
         }
     }
     (providers, problems)
+}
+
+/// What came of looking for a project config.
+#[derive(Debug)]
+pub enum ProjectStatus {
+    /// The project has no config, or one that changes nothing.
+    Missing,
+    /// The project config was trusted and applied.
+    Applied,
+    /// The project config was not applied because it is not trusted yet.
+    Untrusted(ProjectFile),
+    /// The project config could not be read.
+    Broken(String),
+}
+
+/// Applies the trusted project config of the project at `root` to `config`.
+pub fn apply_project(config: &mut Config, root: &Path) -> ProjectStatus {
+    match read_project(root) {
+        Ok(None) => ProjectStatus::Missing,
+        // nothing to run means nothing to trust
+        Ok(Some(file)) if file.config.lsp.is_empty() => ProjectStatus::Missing,
+        Ok(Some(file)) if project::is_trusted(&file) => {
+            file.config.apply(config);
+            ProjectStatus::Applied
+        }
+        Ok(Some(file)) => ProjectStatus::Untrusted(file),
+        Err(err) => ProjectStatus::Broken(err.to_string()),
+    }
 }
 
 /// Builds the theme named in `config`, falling back to the default with a problem message.

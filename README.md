@@ -302,6 +302,29 @@ enabled = false
 check.command = "clippy"
 ```
 
+#### Per project settings
+
+A project can have its own language server settings in `.mog/config.toml` at its root, using
+the same `[lsp.<name>]` tables. They change only what they set: `settings` tables merge key by
+key, and anything left out comes from your global config. `Settings: Open project config`
+(`config.open_project`) creates the file.
+
+```toml
+# .mog/config.toml
+[lsp.rust.settings]
+check.command = "clippy"
+cargo.features = ["serde"]
+
+[lsp.python]
+command = "pylsp"
+
+[lsp.go]
+enabled = false
+```
+
+Since a project config can pick programs to run, mog asks before using one and asks again
+whenever it changes. Saving it applies it right away.
+
 ### `[ai]`
 
 | key | default | |
@@ -486,6 +509,7 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `file.create` | Create a file in the project |
 | `config.open` | Open the config file |
 | `config.reload` | Reload the config |
+| `config.open_project` | Open this project's `.mog/config.toml` |
 | `theme.next` | Next theme |
 | `theme.edit` | Make your own theme |
 | `flair.toggle` | Toggle all flair |

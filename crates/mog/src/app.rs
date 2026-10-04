@@ -23,7 +23,8 @@ use lsp_types::{PublishDiagnosticsParams, Range as LspRange};
 use mog_ai::{CompletionFile, CompletionRequest, CopilotEvent, CopilotStatus, DeviceCode};
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{
-    Config, SettingValue, ThemeConfig, config_path, save_setting, theme::COLOR_NAMES,
+    Config, ProjectFile, SettingValue, ThemeConfig, config_path, project, project_config_path,
+    save_setting, theme::COLOR_NAMES,
 };
 use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
@@ -70,7 +71,7 @@ use crate::{
     discord::{Presence, Status},
     git::{self, Git},
     lsp::{self, LanguageServers, LspReply},
-    settings,
+    settings::{self, ProjectStatus},
     terminal::Tui,
     update::{self, Release, UpdateEvent, Updater},
     watch::FolderWatcher,
@@ -114,6 +115,22 @@ const NEW_CONFIG: &str = "# mog config. saving this file reloads it.
 # settings for a language server, here running clippy instead of check on save
 # [lsp.rust.settings]
 # check.command = \"clippy\"
+";
+
+/// What a new project config starts with when it is opened from the editor.
+const NEW_PROJECT_CONFIG: &str =
+    "# language server settings just for this project. they change only what they set
+# in your global config, settings tables merge key by key.
+# mog asks before using this file, and again whenever it changes.
+
+# [lsp.rust.settings]
+# check.command = \"clippy\"
+
+# [lsp.python]
+# command = \"pylsp\"
+
+# [lsp.go]
+# enabled = false
 ";
 
 /// How many rounds of layer requests are run after one event, so requests that queue more
@@ -185,6 +202,8 @@ pub struct App {
     update: Option<Release>,
     /// A release installed while running, used once mog restarts.
     installed: Option<Release>,
+    /// A project config waiting for the user to trust it.
+    untrusted_project: Option<ProjectFile>,
     /// Where project searches send what they found, with the generation they were for.
     project_sender: UnboundedSender<ProjectReply>,
     /// What project searches found.
@@ -199,7 +218,7 @@ impl App {
     /// Creates a new app, opening the file or folder named in `args` if there is one.
     pub fn new(args: Args) -> Self {
         let mut problems = Vec::new();
-        let config = Config::load().unwrap_or_else(|err| {
+        let mut config = Config::load().unwrap_or_else(|err| {
             problems.push(err.to_string());
             Config::default()
         });
@@ -222,6 +241,7 @@ impl App {
             || env::current_dir().unwrap_or_default(),
             |tree| tree.root().to_owned(),
         );
+        let project = settings::apply_project(&mut config, &root);
         let (providers, ai_problems) = settings::ai_providers(&config, &root);
         problems.extend(ai_problems);
 
@@ -306,6 +326,7 @@ impl App {
             updater: Updater::new(),
             update: None,
             installed: None,
+            untrusted_project: None,
             project_sender,
             project_results,
             project_generation: Arc::new(AtomicU64::new(0)),
@@ -320,7 +341,25 @@ impl App {
         app.run_requests();
         app.apply_audio_settings();
         app.apply_discord_settings();
+        app.project_status(project);
         app
+    }
+
+    /// Reports a project config that is broken, or asks whether to trust a new one.
+    fn project_status(&mut self, status: ProjectStatus) {
+        match status {
+            ProjectStatus::Missing | ProjectStatus::Applied => self.untrusted_project = None,
+            ProjectStatus::Broken(err) => self.editor.set_status(format!("project config: {err}")),
+            ProjectStatus::Untrusted(file) => {
+                self.untrusted_project = Some(file);
+                self.ui.ask(
+                    PromptKind::TrustProject,
+                    "trust this project's .mog/config.toml?",
+                    "",
+                    "it can choose programs to run. y trusts it until it changes",
+                );
+            }
+        }
     }
 
     /// Shows what is new after an update and looks for the next one.
@@ -823,7 +862,7 @@ impl App {
     ///
     /// A broken file is reported and the current config is kept.
     fn reload_config(&mut self) {
-        let config = match Config::load() {
+        let mut config = match Config::load() {
             Ok(config) => config,
             Err(err) => {
                 self.editor
@@ -831,6 +870,7 @@ impl App {
                 return;
             }
         };
+        let project = settings::apply_project(&mut config, &self.ui.root);
         let (keymap, mut problems) = settings::keymap(&config);
         // restarting the ai drops the copilot server, so only do it when its settings changed
         if config.ai != self.ui.config.ai {
@@ -848,6 +888,33 @@ impl App {
         self.apply_config();
         if !problems.is_empty() {
             self.editor.set_status(problems.join("; "));
+        }
+        self.project_status(project);
+    }
+
+    /// Opens the project config in the editor, creating it first if there is none.
+    fn open_project_config(&mut self) {
+        let path = project_config_path(&self.ui.root);
+        if !path.exists() {
+            let created = path
+                .parent()
+                .map_or(Ok(()), fs::create_dir_all)
+                .and_then(|()| fs::write(&path, NEW_PROJECT_CONFIG));
+            if let Err(err) = created {
+                self.editor
+                    .set_status(format!("could not create {}: {err}", path.display()));
+                return;
+            }
+        }
+        self.ui.close();
+        self.ui.focus = Focus::Editor;
+        match self.editor.open(&path) {
+            Ok(()) => self
+                .editor
+                .set_status("language server settings for this project only, saving applies them"),
+            Err(err) => self
+                .editor
+                .set_status(format!("could not open {}: {err}", path.display())),
         }
     }
 
@@ -1063,6 +1130,17 @@ impl App {
             PromptKind::RenameSymbol => {
                 self.request_rename(text.to_owned());
                 Ok(())
+            }
+            PromptKind::TrustProject => {
+                if let Some(file) = self.untrusted_project.take()
+                    && matches!(text, "y" | "yes")
+                {
+                    match project::trust(&file) {
+                        Ok(()) => self.reload_config(),
+                        Err(err) => self.editor.set_status(format!("could not trust it: {err}")),
+                    }
+                }
+                return;
             }
             PromptKind::ReplaceAll => {
                 if matches!(text, "y" | "yes") {
@@ -1721,7 +1799,10 @@ impl App {
             return;
         };
         self.lsp.saved(&path);
-        if Self::is_config(&path) {
+        let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        if Self::is_config(&path)
+            || canonical(&path) == canonical(&project_config_path(&self.ui.root))
+        {
             self.reload_config();
         }
     }
@@ -1950,6 +2031,7 @@ impl App {
             "settings.open" => self.ui.open(Overlay::Settings),
             "config.open" => self.open_config(),
             "config.reload" => self.reload_config(),
+            "config.open_project" => self.open_project_config(),
             "split.toggle" => {
                 self.ui.split = match self.ui.split.take() {
                     Some(_) => None,

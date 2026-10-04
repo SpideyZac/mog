@@ -69,6 +69,7 @@
 - [x] Rename
 - [x] Formatting
 - [x] Code actions
+- [x] Per project language server settings
 
 ## AI
 
