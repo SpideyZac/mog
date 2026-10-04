@@ -43,6 +43,8 @@ pub enum AiReply {
         pos: usize,
         /// The suggested texts, best first.
         items: Vec<String>,
+        /// Whether these were asked for to cycle through, so they add to the shown ones.
+        more: bool,
     },
     /// Something the Copilot server reported.
     Copilot(CopilotEvent),
@@ -203,6 +205,8 @@ impl Assistant {
     }
 
     /// Asks for a ghost suggestion once typing pauses, replacing any pending request.
+    ///
+    /// Requests the user `invoked` skip the pause.
     pub fn suggest(&self, request: CompletionRequest, document: usize, version: u64, pos: usize) {
         let Some(provider) = self.providers.ghost.first().cloned() else {
             return;
@@ -211,7 +215,9 @@ impl Assistant {
         let latest = Arc::clone(&self.ghost_generation);
         let sender = self.sender.clone();
         tokio::spawn(async move {
-            time::sleep(GHOST_DELAY).await;
+            if !request.invoked {
+                time::sleep(GHOST_DELAY).await;
+            }
             if latest.load(Ordering::SeqCst) != generation {
                 return;
             }
@@ -225,6 +231,7 @@ impl Assistant {
                     version,
                     pos,
                     items,
+                    more: request.invoked,
                 });
             }
         });

@@ -2,6 +2,20 @@
 
 use mog_core::{Editor, Key, KeyChord};
 
+/// The command asking the AI for more suggestions to cycle through.
+pub const MORE_COMMAND: &str = "ai.more_suggestions";
+
+/// What [`handle_key`] did with a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GhostKey {
+    /// The key was not for the ghost.
+    Ignored,
+    /// The key acted on the ghost.
+    Used,
+    /// The key asked to cycle but there is only one suggestion, so more should be fetched.
+    WantsMore,
+}
+
 /// An AI suggestion waiting after the cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ghost {
@@ -46,23 +60,22 @@ impl Ghost {
 /// Handles the keys that act on a fresh suggestion.
 ///
 /// Tab accepts it, `ctrl+right` accepts the next word, `alt+]` and `alt+[` cycle through the
-/// suggestions and escape dismisses it. Returns `true` if the key was used. `menu_open` keeps
-/// tab for the completion menu.
+/// suggestions and escape dismisses it. `menu_open` keeps tab for the completion menu.
 pub fn handle_key(
     ghost: &mut Option<Ghost>,
     chord: KeyChord,
     editor: &mut Editor,
     menu_open: bool,
-) -> bool {
+) -> GhostKey {
     let Some(current) = ghost.as_ref().filter(|ghost| ghost.is_fresh(editor)) else {
-        return false;
+        return GhostKey::Ignored;
     };
     match chord.key {
         Key::Tab if !menu_open && !chord.mods.ctrl && !chord.mods.alt => {
             let (pos, text) = (current.pos, current.text().to_owned());
             *ghost = None;
             editor.replace_ranges(&[(pos, pos)], &text);
-            true
+            GhostKey::Used
         }
         Key::Right if chord.mods.ctrl && !chord.mods.alt => {
             let text = current.text();
@@ -80,25 +93,43 @@ pub fn handle_key(
                     .into_iter()
                     .collect(),
             );
-            true
+            GhostKey::Used
         }
         Key::Char(ch @ (']' | '[')) if chord.mods.alt && !chord.mods.ctrl => {
-            if let Some(ghost) = ghost.as_mut() {
-                let len = ghost.items.len();
-                ghost.index = if ch == ']' {
-                    (ghost.index + 1) % len
-                } else {
-                    (ghost.index + len - 1) % len
-                };
-            }
-            true
+            let Some(ghost) = ghost.as_mut().filter(|ghost| ghost.items.len() > 1) else {
+                return GhostKey::WantsMore;
+            };
+            let len = ghost.items.len();
+            ghost.index = if ch == ']' {
+                (ghost.index + 1) % len
+            } else {
+                (ghost.index + len - 1) % len
+            };
+            GhostKey::Used
         }
         Key::Esc => {
             *ghost = None;
-            true
+            GhostKey::Used
         }
-        _ => false,
+        _ => GhostKey::Ignored,
     }
+}
+
+/// Adds `more` suggestions to `ghost` and shows the first new one.
+///
+/// Returns `false` if none of them were new.
+pub fn add_more(ghost: &mut Ghost, more: Vec<String>) -> bool {
+    let before = ghost.items.len();
+    for item in more {
+        if !ghost.items.contains(&item) {
+            ghost.items.push(item);
+        }
+    }
+    if ghost.items.len() == before {
+        return false;
+    }
+    ghost.index = before;
+    true
 }
 
 /// Returns how many chars of `text` make up its next word, with the whitespace before it.
@@ -129,7 +160,7 @@ fn next_word_len(text: &str) -> usize {
 mod tests {
     use mog_core::{Document, Editor, KeyChord, MemoryClipboard, Range};
 
-    use super::{Ghost, handle_key, next_word_len};
+    use super::{Ghost, GhostKey, add_more, handle_key, next_word_len};
 
     /// Builds an editor holding `text` with the cursor at the end and a ghost of `items`.
     fn setup(text: &str, items: &[&str]) -> (Editor, Option<Ghost>) {
@@ -144,7 +175,7 @@ mod tests {
     }
 
     /// Presses `chord` on the ghost.
-    fn press(chord: &str, editor: &mut Editor, ghost: &mut Option<Ghost>) -> bool {
+    fn press(chord: &str, editor: &mut Editor, ghost: &mut Option<Ghost>) -> GhostKey {
         let chord: KeyChord = chord.parse().expect("valid chord");
         handle_key(ghost, chord, editor, false)
     }
@@ -163,7 +194,7 @@ mod tests {
     #[test]
     fn accepts_one_word() {
         let (mut editor, mut ghost) = setup("let x = ", &["vec_new(1)"]);
-        assert!(press("ctrl+right", &mut editor, &mut ghost));
+        assert_eq!(press("ctrl+right", &mut editor, &mut ghost), GhostKey::Used);
         assert_eq!(editor.document().text().to_string(), "let x = vec_new");
         let rest = ghost.expect("rest stays");
         assert_eq!(rest.text(), "(1)");
@@ -174,12 +205,23 @@ mod tests {
     #[test]
     fn cycles_then_accepts() {
         let (mut editor, mut ghost) = setup("x", &["1", "2", "3"]);
-        assert!(press("alt+[", &mut editor, &mut ghost));
+        assert_eq!(press("alt+[", &mut editor, &mut ghost), GhostKey::Used);
         assert_eq!(ghost.as_ref().map(Ghost::text), Some("3"));
-        assert!(press("alt+]", &mut editor, &mut ghost));
-        assert!(press("alt+]", &mut editor, &mut ghost));
-        assert!(press("tab", &mut editor, &mut ghost));
+        press("alt+]", &mut editor, &mut ghost);
+        press("alt+]", &mut editor, &mut ghost);
+        assert_eq!(press("tab", &mut editor, &mut ghost), GhostKey::Used);
         assert_eq!(editor.document().text().to_string(), "x2");
         assert!(ghost.is_none());
+    }
+
+    /// Cycling a lone suggestion asks for more, and new ones are shown first.
+    #[test]
+    fn fetches_more() {
+        let (mut editor, mut ghost) = setup("x", &["1"]);
+        assert_eq!(press("alt+]", &mut editor, &mut ghost), GhostKey::WantsMore);
+        let ghost = ghost.as_mut().expect("ghost");
+        assert!(!add_more(ghost, vec!["1".into()]));
+        assert!(add_more(ghost, vec!["1".into(), "2".into()]));
+        assert_eq!(ghost.text(), "2");
     }
 }

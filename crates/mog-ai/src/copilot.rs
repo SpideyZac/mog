@@ -23,6 +23,9 @@ use crate::provider::{
 /// The server name used in events and errors.
 const NAME: &str = "copilot";
 
+/// The trigger kind for completions the user asked for, which gives several.
+const TRIGGER_INVOKED: u8 = 1;
+
 /// The trigger kind for completions asked for while typing.
 const TRIGGER_AUTOMATIC: u8 = 2;
 
@@ -235,7 +238,9 @@ impl AiProvider for Copilot {
             let params = json!({
                 "textDocument": { "uri": uri, "version": version },
                 "position": convert::char_to_position(&text, file.cursor),
-                "context": { "triggerKind": TRIGGER_AUTOMATIC },
+                "context": {
+                    "triggerKind": if request.invoked { TRIGGER_INVOKED } else { TRIGGER_AUTOMATIC },
+                },
                 "formattingOptions": {
                     "tabSize": file.tab_size,
                     "insertSpaces": file.insert_spaces,

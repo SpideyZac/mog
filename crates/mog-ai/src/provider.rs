@@ -56,6 +56,8 @@ pub struct CompletionRequest {
     pub language: Option<String>,
     /// The whole file, for providers that keep their own copy of it.
     pub file: Option<CompletionFile>,
+    /// Whether the user asked for suggestions instead of just pausing, which can give more.
+    pub invoked: bool,
 }
 
 /// The whole file a [`CompletionRequest`] is for.

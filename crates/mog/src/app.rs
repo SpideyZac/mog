@@ -33,7 +33,7 @@ use mog_tui::{
     EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar,
     SettingsPanel, SplitState, StatusLine, Tabs, Theme, Ui, UiEvent,
     completion::{self, CompletionState},
-    input,
+    ghost, input,
     menu::{self, MenuAction, MenuItem},
     search,
     settings::{SettingKey, change as settings_change, persisted},
@@ -915,8 +915,9 @@ impl App {
         }
     }
 
-    /// Asks the AI for a ghost suggestion at the cursor once typing pauses.
-    fn suggest_ghost(&self) {
+    /// Asks the AI for a ghost suggestion at the cursor once typing pauses, or right away with
+    /// several suggestions if the user `invoked` it.
+    fn suggest_ghost(&self, invoked: bool) {
         if !self.ui.config.ai.ghost_text || !self.assistant.can_suggest() {
             return;
         }
@@ -939,6 +940,7 @@ impl App {
                 tab_size: self.editor.options().tab_width,
                 insert_spaces: self.editor.options().insert_spaces,
             }),
+            invoked,
         };
         self.assistant
             .suggest(request, self.editor.active(), document.version(), head);
@@ -980,6 +982,23 @@ impl App {
                 version,
                 pos,
                 items,
+                more: true,
+            } => {
+                let shown = self.ui.ghost.as_mut().filter(|ghost| {
+                    ghost.document == document && ghost.version == version && ghost.pos == pos
+                });
+                if let Some(ghost) = shown
+                    && !ghost::add_more(ghost, items)
+                {
+                    self.editor.set_status("no other suggestions");
+                }
+            }
+            AiReply::Ghost {
+                document,
+                version,
+                pos,
+                items,
+                more: false,
             } => {
                 let ghost = Ghost::new(document, version, pos, items)
                     .filter(|ghost| ghost.is_fresh(&self.editor));
@@ -1365,7 +1384,7 @@ impl App {
             self.assistant.cancel_suggestion();
             if let Some(UiEvent::Typed(ch)) = self.ui.events.last().cloned() {
                 self.auto_complete(ch);
-                self.suggest_ghost();
+                self.suggest_ghost(false);
             }
         }
         match outcome {
@@ -1408,6 +1427,7 @@ impl App {
                 };
             }
             "ai.send" => self.send_chat(),
+            ghost::MORE_COMMAND => self.suggest_ghost(true),
             "copilot.sign_in" => self.assistant.copilot_sign_in(),
             "copilot.sign_out" => self.assistant.copilot_sign_out(),
             "copilot.status" => self.assistant.copilot_check(),

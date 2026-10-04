@@ -3,7 +3,7 @@
 use std::mem;
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Editor, Key, KeyChord, fuzzy_match};
+use mog_core::{Command, Editor, Key, KeyChord, fuzzy_match};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
-    ghost,
+    ghost::{self, GhostKey},
     theme::Theme,
     ui::{Focus, Layout, Ui},
 };
@@ -347,8 +347,13 @@ impl Layer for CompletionMenu {
             }
         }
         let menu_open = cx.ui.completion.is_some();
-        if ghost::handle_key(&mut cx.ui.ghost, chord, cx.editor, menu_open) {
-            return EventResult::Consumed;
+        match ghost::handle_key(&mut cx.ui.ghost, chord, cx.editor, menu_open) {
+            GhostKey::Ignored => {}
+            GhostKey::Used => return EventResult::Consumed,
+            GhostKey::WantsMore => {
+                cx.ui.request(Command::Custom(ghost::MORE_COMMAND.into()));
+                return EventResult::Consumed;
+            }
         }
         let Some(state) = cx.ui.completion.as_mut() else {
             return EventResult::Ignored;
