@@ -2,6 +2,7 @@
 
 use std::{
     env, mem,
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -9,11 +10,12 @@ use anyhow::{Result, anyhow};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::{StreamExt, future};
 use mog_config::{Config, save_setting};
-use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome};
+use mog_core::{Command, Editor, FileTree, KeyChord, Keymap, Outcome, Severity};
 use mog_lsp::LspEvent;
 use mog_tui::{
     Compositor, Context, EditorView, EventResult, Explorer, Focus, Minimap, Overlay, Popups,
-    SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, input, search, settings::persisted,
+    SearchBar, SettingsPanel, StatusLine, Tabs, Theme, Ui, UiEvent, input, search,
+    settings::persisted,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -74,6 +76,10 @@ pub struct App {
     files_changed: bool,
     /// When git status was last refreshed.
     git_refreshed: Instant,
+    /// The focused file at the last check, to notice switches.
+    last_focus: Option<PathBuf>,
+    /// The error and warning counts of the focused file at the last check.
+    last_problems: (usize, usize),
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
     /// Whether the event loop should stop after the current iteration.
@@ -160,6 +166,8 @@ impl App {
             watcher,
             files_changed: false,
             git_refreshed: Instant::now(),
+            last_focus: None,
+            last_problems: (0, 0),
             screen: Rect::default(),
             quit: false,
         };
@@ -188,6 +196,7 @@ impl App {
         while !self.quit {
             self.sync_language_servers();
             self.sync_git();
+            self.watch_focus();
             self.draw(terminal)?;
             let animating = self.compositor.is_animating();
             tokio::select! {
@@ -336,6 +345,31 @@ impl App {
         }
     }
 
+    /// Notices a new focused file or changed problem counts and tells the flair about it.
+    fn watch_focus(&mut self) {
+        let document = self.editor.document();
+        let path = document.path().map(ToOwned::to_owned);
+        if path != self.last_focus {
+            self.last_focus = path;
+            self.ui.events.push(UiEvent::Opened);
+        }
+        let count = |severity| {
+            document
+                .diagnostics()
+                .iter()
+                .filter(|d| d.severity == severity)
+                .count()
+        };
+        let problems = (count(Severity::Error), count(Severity::Warning));
+        if problems != self.last_problems {
+            self.last_problems = problems;
+            self.ui.events.push(UiEvent::Diagnostics {
+                errors: problems.0,
+                warnings: problems.1,
+            });
+        }
+    }
+
     /// Asks git about open files and the cursor line.
     fn sync_git(&mut self) {
         for document in self.editor.documents() {
@@ -395,7 +429,25 @@ impl App {
 
     /// Runs a command and acts on its outcome.
     fn execute_command(&mut self, command: Command) {
-        match self.editor.execute(command) {
+        let version = self.editor.document().version();
+        let event = match &command {
+            Command::InsertChar(ch) => Some(UiEvent::Typed(*ch)),
+            Command::InsertNewline => Some(UiEvent::Typed('\n')),
+            Command::DeleteBackward | Command::DeleteForward | Command::DeleteWordBackward => {
+                Some(UiEvent::Deleted)
+            }
+            _ => None,
+        };
+        let saving = command == Command::Save;
+        let outcome = self.editor.execute(command);
+        let changed = self.editor.document().version() != version;
+        if let Some(event) = event.filter(|_| changed) {
+            self.ui.events.push(event);
+        }
+        if saving && !self.editor.document().is_modified() {
+            self.ui.events.push(UiEvent::Saved);
+        }
+        match outcome {
             Outcome::Done => {}
             Outcome::Quit => self.quit = true,
             Outcome::Unhandled(Command::Custom(name)) => self.execute_custom(&name),
