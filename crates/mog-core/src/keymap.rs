@@ -100,6 +100,8 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl+shift+e", "explorer.focus"),
     ("alt+e", "ai.explain"),
     ("ctrl+l", "ai.chat"),
+    ("ctrl+`", "terminal.toggle"),
+    ("alt+`", "terminal.toggle"),
 ];
 
 /// A key on the keyboard, independent of any terminal library.

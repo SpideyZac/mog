@@ -36,8 +36,10 @@ mog-flair = { path = "crates/mog-flair" }
 mog-git = { path = "crates/mog-git" }
 mog-lsp = { path = "crates/mog-lsp" }
 mog-syntax = { path = "crates/mog-syntax" }
+mog-term = { path = "crates/mog-term" }
 mog-tui = { path = "crates/mog-tui" }
 notify = "8"
+portable-pty = "0.9"
 ratatui = "0.30"
 rodio = { version = "0.22", default-features = false, features = ["playback"] }
 reqwest = { version = "0.13", features = ["json"] }
@@ -61,3 +63,4 @@ tree-sitter-typescript = "0.23"
 toml = "1"
 toml_edit = "0.25"
 unicode-width = "0.2"
+vt100 = "0.16"

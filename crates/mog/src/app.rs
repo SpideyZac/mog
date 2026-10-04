@@ -27,6 +27,7 @@ use mog_lsp::{
     LspEvent, convert,
     features::{CodeAction, FileEdits},
 };
+use mog_term::TerminalPanel;
 use mog_tui::{
     ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, EditorView, EventResult, Explorer,
     Focus, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar, SettingsPanel, SplitState,
@@ -174,6 +175,7 @@ impl App {
         compositor.push(Box::new(Tabs::new()));
         compositor.push(Box::new(ChatPanel::new()));
         compositor.push(Box::new(Minimap::new()));
+        compositor.push(Box::new(TerminalPanel::new()));
         compositor.push(Box::new(SearchBar::new()));
         if let Some(tree) = tree {
             ui.has_explorer = true;
@@ -454,6 +456,9 @@ impl App {
                     ui: &mut self.ui,
                 };
                 self.compositor.handle_mouse(mouse, self.screen, &mut cx);
+            }
+            Event::Paste(text) if self.ui.focus == Focus::Terminal && self.ui.terminal_open => {
+                self.ui.terminal_input.extend_from_slice(text.as_bytes());
             }
             Event::Paste(text) => self.execute_command(Command::InsertText(text)),
             _ => {}
@@ -1222,6 +1227,15 @@ impl App {
                 } else {
                     self.ui.open(Overlay::Graph);
                 }
+            }
+            "terminal.toggle" => {
+                let focused = self.ui.terminal_open && self.ui.focus == Focus::Terminal;
+                self.ui.terminal_open = !focused;
+                self.ui.focus = if focused {
+                    Focus::Editor
+                } else {
+                    Focus::Terminal
+                };
             }
             "explorer.focus" => {
                 if self.ui.has_explorer {
