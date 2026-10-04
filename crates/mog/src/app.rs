@@ -17,7 +17,9 @@ use futures::{StreamExt, future};
 use lsp_types::{PublishDiagnosticsParams, Range as LspRange};
 use mog_ai::{CompletionFile, CompletionRequest, CopilotEvent, CopilotStatus, DeviceCode};
 use mog_audio::{Audio, Mood, Sfx};
-use mog_config::{Config, SettingValue, config_path, save_setting};
+use mog_config::{
+    Config, SettingValue, ThemeConfig, config_path, save_setting, theme::COLOR_NAMES,
+};
 use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
     movement,
@@ -31,12 +33,14 @@ use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
     EditorView, EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind,
-    SearchBar, SettingsPanel, SplitState, StatusLine, Tabs, Theme, Ui, UiEvent,
+    SearchBar, SettingsPanel, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
     completion::{self, CompletionState},
     ghost, input,
     menu::{self, MenuAction, MenuItem},
     search,
     settings::{SettingKey, change as settings_change, persisted},
+    theme::to_hex,
+    theme_editor::{self, ThemeDraft},
 };
 use ratatui::{
     Terminal,
@@ -215,6 +219,7 @@ impl App {
         compositor.push(Box::new(CompletionMenu::new()));
         compositor.push(Box::new(Popups::new()));
         compositor.push(Box::new(SettingsPanel::new()));
+        compositor.push(Box::new(ThemeEditor::new()));
         compositor.push(Box::new(GraphView::new()));
         compositor.push(Box::new(ContextMenu::new()));
         compositor.push(Box::new(Annotations::new()));
@@ -494,6 +499,7 @@ impl App {
     /// The cursor stays hidden while cells are written and is only shown once it is in place,
     /// otherwise it visibly jumps to whatever was drawn last.
     fn draw(&mut self, terminal: &mut Tui) -> Result<()> {
+        self.sync_theme_draft();
         queue!(terminal.backend_mut(), BeginSynchronizedUpdate, Hide)?;
         let mut cursor = None;
         terminal.draw(|frame| {
@@ -922,11 +928,67 @@ impl App {
                 self.request_rename(text.to_owned());
                 Ok(())
             }
+            PromptKind::SaveTheme => {
+                self.save_theme(text);
+                return;
+            }
             PromptKind::CopilotSignIn => Ok(()),
         };
         self.ui.refresh_explorer = true;
         if let Err(err) = result {
             self.editor.set_status(format!("that did not work: {err}"));
+        }
+    }
+
+    /// Saves the theme being edited as `[themes.<name>]` and switches to it.
+    fn save_theme(&mut self, name: &str) {
+        let Some(draft) = self.ui.theme_draft.take() else {
+            return;
+        };
+        let mut custom = ThemeConfig::default();
+        for (index, color_name) in COLOR_NAMES.iter().enumerate() {
+            let hex = to_hex(draft.palette.get(index));
+            let saved = save_setting(
+                &["themes", name, color_name],
+                &SettingValue::Text(hex.clone()),
+            );
+            if let Err(err) = saved {
+                self.editor
+                    .set_status(format!("could not save the theme: {err}"));
+                self.apply_config();
+                return;
+            }
+            if let Some(slot) = custom.color_mut(color_name) {
+                *slot = Some(hex);
+            }
+        }
+        self.ui.config.themes.insert(name.to_owned(), custom);
+        self.ui.config.ui.theme = name.to_owned();
+        self.ui.setting_changes.push(SettingKey::Theme);
+        self.apply_setting_changes();
+        self.editor
+            .set_status(format!("saved theme {name}, it mogs"));
+    }
+
+    /// Previews the theme being edited, or puts the saved theme back once editing stopped.
+    fn sync_theme_draft(&mut self) {
+        let editing = self.ui.overlay == Some(Overlay::ThemeEditor)
+            || self
+                .ui
+                .prompt
+                .as_ref()
+                .is_some_and(|prompt| prompt.kind == PromptKind::SaveTheme);
+        match &self.ui.theme_draft {
+            Some(draft) if editing => {
+                if self.theme.palette != draft.palette {
+                    self.theme = Theme::from_palette(&draft.name, draft.palette);
+                }
+            }
+            Some(_) => {
+                self.ui.theme_draft = None;
+                self.apply_config();
+            }
+            None => {}
         }
     }
 
@@ -1601,6 +1663,31 @@ impl App {
             "audio.toggle_music" => self.change_setting(SettingKey::Audio("music")),
             "audio.toggle_effects" => self.change_setting(SettingKey::Audio("sound_effects")),
             "flair.toggle" => self.change_setting(SettingKey::FlairEnabled),
+            "theme.edit" => {
+                self.ui.theme_draft = Some(ThemeDraft::new(&self.theme));
+                self.ui.open(Overlay::ThemeEditor);
+            }
+            theme_editor::CANCEL_COMMAND => {
+                self.ui.theme_draft = None;
+                self.ui.close();
+                self.apply_config();
+            }
+            theme_editor::SAVE_COMMAND => {
+                let Some(draft) = &self.ui.theme_draft else {
+                    return;
+                };
+                let name = if self.ui.config.themes.contains_key(&draft.name) {
+                    draft.name.clone()
+                } else {
+                    format!("my-{}", draft.name)
+                };
+                self.ui.ask(
+                    PromptKind::SaveTheme,
+                    "\u{25d0} save theme as",
+                    name,
+                    "saved as [themes.<name>] in your config",
+                );
+            }
             "theme.next" => {
                 self.change_setting(SettingKey::Theme);
                 self.editor

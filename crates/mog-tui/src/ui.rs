@@ -13,6 +13,7 @@ use ratatui::{
 use crate::{
     annotate::AnnotateState, chat::ChatState, completion::CompletionState, ghost::Ghost,
     menu::MenuState, search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
+    theme_editor::ThemeDraft,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -94,6 +95,8 @@ pub enum Overlay {
     Problems,
     /// The places a symbol is used.
     References,
+    /// The theme editor.
+    ThemeEditor,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -126,6 +129,8 @@ pub enum PromptKind {
     RenameSymbol,
     /// Confirmation to open GitHub and finish signing in to Copilot.
     CopilotSignIn,
+    /// The name to save the theme being edited under.
+    SaveTheme,
 }
 
 /// A one line question, like where to save a file.
@@ -300,6 +305,8 @@ pub struct Ui {
     pub rebind: Option<(String, Option<String>)>,
     /// The drawing on top of the screen.
     pub annotate: AnnotateState,
+    /// The theme being edited in the theme editor, previewed live.
+    pub theme_draft: Option<ThemeDraft>,
 }
 
 impl Ui {

@@ -74,6 +74,29 @@ impl ThemeConfig {
         };
         color.as_deref()
     }
+
+    /// Returns the color called `name`, one of [`COLOR_NAMES`], to change it.
+    pub fn color_mut(&mut self, name: &str) -> Option<&mut Option<String>> {
+        Some(match name {
+            "bg" => &mut self.bg,
+            "panel" => &mut self.panel,
+            "raised" => &mut self.raised,
+            "select" => &mut self.select,
+            "fg" => &mut self.fg,
+            "dim" => &mut self.dim,
+            "accent" => &mut self.accent,
+            "accent2" => &mut self.accent2,
+            "red" => &mut self.red,
+            "orange" => &mut self.orange,
+            "yellow" => &mut self.yellow,
+            "green" => &mut self.green,
+            "cyan" => &mut self.cyan,
+            "blue" => &mut self.blue,
+            "purple" => &mut self.purple,
+            "pink" => &mut self.pink,
+            _ => return None,
+        })
+    }
 }
 
 #[cfg(test)]

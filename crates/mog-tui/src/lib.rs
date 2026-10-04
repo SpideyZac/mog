@@ -21,6 +21,7 @@ pub mod settings;
 pub mod status_line;
 pub mod tabs;
 pub mod theme;
+pub mod theme_editor;
 pub mod ui;
 
 pub use annotate::Annotations;
@@ -38,6 +39,7 @@ pub use settings::{SettingKey, SettingsPanel};
 pub use status_line::StatusLine;
 pub use tabs::Tabs;
 pub use theme::Theme;
+pub use theme_editor::ThemeEditor;
 pub use ui::{
     CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, Prompt, PromptKind, Segment, Side,
     SplitState, Ui, UiEvent,

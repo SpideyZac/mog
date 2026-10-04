@@ -84,7 +84,7 @@ large_image = "mog"
 show_file = true
 
 # custom themes start from a built in one and change any of its colors. pick them with
-# ui.theme.
+# ui.theme, or make one with Theme: Edit colors from the command palette.
 # colors: bg panel raised select fg dim accent accent2 red orange yellow green cyan blue purple pink
 [themes.midnight]
 base = "ocean"

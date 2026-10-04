@@ -40,6 +40,7 @@
 ## Look and feel
 
 - [x] Seven themes built from palettes
+- [x] Custom themes and a theme editor
 - [x] Settings menu that saves to the config
 - [x] Open and reload the config file from the editor
 - [x] Settings for each language server

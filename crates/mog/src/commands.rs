@@ -62,6 +62,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("audio.toggle_effects", "Sound: Toggle sound effects"),
     ("flair.toggle", "Flair: Toggle all flair"),
     ("theme.next", "Theme: Next theme"),
+    ("theme.edit", "Theme: Edit colors"),
     ("command_palette", "Help: Command palette"),
     ("help.keys", "Help: Key bindings"),
     ("ai.explain", "AI: Explain the selection"),

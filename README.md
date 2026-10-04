@@ -27,7 +27,8 @@ mog .
   formatting, code actions
 - Git gutter, branch in the status line, file colors and inline blame
 - Claude chat, explain selection and ghost text. Copilot ghost text.
-- Seven themes and a settings menu that writes to your config
+- Seven themes, a theme editor where you drag colors around, and a settings menu that writes
+  to your config
 
 **The rest**
 
@@ -207,6 +208,8 @@ bg = "#070b14"
 
 The colors are `bg`, `panel`, `raised`, `select`, `fg`, `dim`, `accent`, `accent2`, `red`,
 `orange`, `yellow`, `green`, `cyan`, `blue`, `purple` and `pink`.
+
+Or run `Theme: Edit colors` (`theme.edit`) and drag them around. See [theme editor](#theme-editor).
 
 ### `[keys]`
 
@@ -457,6 +460,7 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `config.open` | Open the config file |
 | `config.reload` | Reload the config |
 | `theme.next` | Next theme |
+| `theme.edit` | Make your own theme |
 | `flair.toggle` | Toggle all flair |
 | `annotate.clear` | Wipe the drawing |
 | `audio.toggle_music` | Toggle music |
@@ -547,6 +551,23 @@ In the key list, `enter` on a command waits for new keys. `backspace` unbinds it
 
 The drawing stays on screen after you stop, until you clear it. The toolbar at the top is
 clickable too.
+
+**Theme editor** (`theme.edit`)
+
+The editor behind it shows the theme live as you change it.
+
+| keys | |
+| --- | --- |
+| click a color, `up` `down` | Pick the color to change |
+| drag a swatch onto another | Swap the two colors |
+| drag in the big field | Set hue (across) and lightness (down) |
+| drag a slider | Set hue, saturation or lightness |
+| `tab` `shift+tab` | Pick a slider |
+| `left` `right` | Move the slider, `shift` for bigger steps |
+| `#` | Type a hex color |
+| `r` | Reset the color |
+| `enter` | Save under a name in `[themes]` |
+| `esc` | Throw away the changes |
 
 **Project graph**
 
