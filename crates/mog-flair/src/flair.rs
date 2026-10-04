@@ -43,7 +43,12 @@ pub enum Placement {
 impl Placement {
     /// Returns the area this placement covers on a screen split like `layout`.
     pub fn area(self, layout: &Layout) -> Rect {
-        let editor_area = layout.editor;
+        // a split spreads the text over two panes and flair should cover both
+        let editor_area = if layout.split.is_empty() {
+            layout.editor
+        } else {
+            layout.editor.union(layout.split)
+        };
         match self {
             Self::Overlay => editor_area,
             Self::Screen => layout.screen,
@@ -143,5 +148,21 @@ mod tests {
             ..Layout::default()
         };
         assert_eq!(placement.area(&tiny), Rect::new(0, 0, 4, 2));
+    }
+
+    /// With a split the corners belong to the right pane.
+    #[test]
+    fn corner_area_spans_split() {
+        let layout = Layout {
+            editor: Rect::new(0, 0, 40, 20),
+            split: Rect::new(40, 0, 40, 20),
+            ..Layout::default()
+        };
+        let placement = Placement::Corner {
+            corner: Corner::BottomRight,
+            width: 10,
+            height: 3,
+        };
+        assert_eq!(placement.area(&layout), Rect::new(70, 17, 10, 3));
     }
 }
