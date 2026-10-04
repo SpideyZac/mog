@@ -49,7 +49,8 @@ impl Default for ServerConfig {
 
 /// Returns the built in servers merged with `overrides`, which win by name.
 ///
-/// Disabled servers are left out.
+/// An override of a built in server only replaces what it sets, so changing just the command
+/// keeps the built in extensions and arguments. Disabled servers are left out.
 pub fn merged_servers(
     overrides: &BTreeMap<String, ServerConfig>,
 ) -> BTreeMap<String, ServerConfig> {
@@ -65,7 +66,21 @@ pub fn merged_servers(
             ((*name).to_owned(), config)
         })
         .collect();
-    servers.extend(overrides.clone());
+    for (name, server) in overrides {
+        let mut server = server.clone();
+        if let Some(builtin) = servers.get(name) {
+            if server.command.is_empty() {
+                server.command.clone_from(&builtin.command);
+            }
+            if server.args.is_empty() {
+                server.args.clone_from(&builtin.args);
+            }
+            if server.extensions.is_empty() {
+                server.extensions.clone_from(&builtin.extensions);
+            }
+        }
+        servers.insert(name.clone(), server);
+    }
     servers.retain(|_, server| server.enabled && !server.command.is_empty());
     servers
 }
@@ -100,5 +115,22 @@ mod tests {
         assert!(!servers.contains_key("go"));
         assert_eq!(servers["zig"].command, "zls");
         assert_eq!(servers["rust"].command, "rust-analyzer");
+    }
+
+    /// Overriding only the command keeps the built in extensions and arguments.
+    #[test]
+    fn partial_override_keeps_builtin_fields() {
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "python".to_owned(),
+            ServerConfig {
+                command: "my-pyright".into(),
+                ..ServerConfig::default()
+            },
+        );
+        let servers = merged_servers(&overrides);
+        assert_eq!(servers["python"].command, "my-pyright");
+        assert_eq!(servers["python"].extensions, ["py"]);
+        assert_eq!(servers["python"].args, ["--stdio"]);
     }
 }
