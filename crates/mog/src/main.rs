@@ -3,6 +3,7 @@
 mod app;
 mod cli;
 mod clipboard;
+mod lsp;
 mod settings;
 mod terminal;
 

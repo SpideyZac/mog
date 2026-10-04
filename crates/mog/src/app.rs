@@ -1,5 +1,6 @@
 //! The application state and event loop.
 
+use std::env;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -7,12 +8,15 @@ use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures::StreamExt;
 use mog_config::Config;
 use mog_core::{Command, Editor, Keymap, Outcome};
+use mog_lsp::LspEvent;
 use mog_tui::{Compositor, Context, EditorView, StatusLine, Theme, input};
 use ratatui::layout::Rect;
+use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::time::{self, MissedTickBehavior};
 
 use crate::cli::Args;
 use crate::clipboard;
+use crate::lsp::{self, LanguageServers};
 use crate::settings;
 use crate::terminal::Tui;
 
@@ -29,6 +33,10 @@ pub struct App {
     compositor: Compositor,
     /// The active theme.
     theme: Theme,
+    /// The language servers for the project.
+    lsp: LanguageServers,
+    /// Events coming back from language servers.
+    lsp_events: UnboundedReceiver<LspEvent>,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
     /// Whether the event loop should stop after the current iteration.
@@ -56,6 +64,9 @@ impl App {
         if !problems.is_empty() {
             editor.set_status(problems.join("; "));
         }
+        let (lsp_sender, lsp_events) = mpsc::unbounded_channel();
+        let root = env::current_dir().unwrap_or_default();
+        let lsp = LanguageServers::new(config.language_servers(), root, lsp_sender);
         if let Some(path) = args.file
             && let Err(err) = editor.open(&path)
         {
@@ -66,6 +77,8 @@ impl App {
             keymap,
             compositor,
             theme: Theme::default(),
+            lsp,
+            lsp_events,
             screen: Rect::default(),
             quit: false,
         }
@@ -82,6 +95,7 @@ impl App {
         frames.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut last_tick = Instant::now();
         while !self.quit {
+            self.sync_language_servers();
             self.draw(terminal)?;
             let animating = self.compositor.is_animating();
             tokio::select! {
@@ -89,6 +103,7 @@ impl App {
                     Some(event) => self.handle_event(event?),
                     None => break,
                 },
+                Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
                 _ = frames.tick(), if animating => {
                     let now = Instant::now();
                     self.compositor.tick(now - last_tick);
@@ -131,6 +146,32 @@ impl App {
             }
             Event::Paste(text) => self.run_command(Command::InsertText(text)),
             _ => {}
+        }
+    }
+
+    /// Tells language servers about opened and changed documents.
+    fn sync_language_servers(&mut self) {
+        let problems = self.lsp.sync(self.editor.documents());
+        if !problems.is_empty() {
+            self.editor.set_status(problems.join("; "));
+        }
+    }
+
+    /// Reacts to an event from a language server.
+    fn handle_lsp_event(&mut self, event: LspEvent) {
+        match event {
+            LspEvent::Ready { .. } => {}
+            LspEvent::Diagnostics { params, .. } => {
+                lsp::apply_diagnostics(&mut self.editor, params);
+            }
+            LspEvent::Message { server, text } => {
+                self.editor.set_status(format!("{server}: {text}"));
+            }
+            LspEvent::Exited { server } => {
+                self.lsp.exited(&server);
+                self.editor
+                    .set_status(format!("{server} language server stopped"));
+            }
         }
     }
 
