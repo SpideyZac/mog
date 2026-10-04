@@ -9,3 +9,12 @@ license = "Apache-2.0"
 repository = "https://github.com/SpideyZac/mog"
 
 [workspace.lints.rust]
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+missing_docs_in_private_items = "deny"
+absolute_paths = "deny"
+doc_markdown = "warn"
+missing_panics_doc = "warn"
+missing_errors_doc = "warn"
+undocumented_unsafe_blocks = "warn"
