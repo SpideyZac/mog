@@ -46,6 +46,7 @@ portable-pty = "0.9"
 ratatui = "0.30"
 rodio = { version = "0.22", default-features = false, features = ["playback"] }
 reqwest = { version = "0.13", features = ["json"] }
+regex = "1"
 ropey = "1.6"
 serde = { version = "1", features = ["derive"] }
 self-replace = "1.5"
