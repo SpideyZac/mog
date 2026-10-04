@@ -48,6 +48,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("move_doc_start", "Go: Start of file"),
     ("move_doc_end", "Go: End of file"),
     ("graph.toggle", "View: Project graph"),
+    ("annotate.toggle", "Draw: Draw on the screen"),
+    ("annotate.clear", "Draw: Clear the drawing"),
     ("split.toggle", "View: Split editor"),
     ("terminal.toggle", "View: Toggle terminal"),
     ("split.focus", "View: Focus other split"),

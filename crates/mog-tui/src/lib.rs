@@ -2,6 +2,7 @@
 //!
 //! Everything that draws to the screen or reads terminal input lives here.
 
+pub mod annotate;
 pub mod chat;
 pub mod completion;
 pub mod compositor;
@@ -22,6 +23,7 @@ pub mod tabs;
 pub mod theme;
 pub mod ui;
 
+pub use annotate::Annotations;
 pub use chat::ChatPanel;
 pub use completion::CompletionMenu;
 pub use compositor::{Compositor, Context, EventResult, Layer};

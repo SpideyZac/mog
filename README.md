@@ -32,6 +32,7 @@ mog .
 **The rest**
 
 - An Obsidian style graph of your project
+- A marker for drawing anywhere on the screen, with a pen, a marker, an eraser and text
 - An AI meter that guesses how AI generated your file is
 - Your LAN IP, displayed like it got leaked
 - The mogling, a little face with feelings about your errors
@@ -406,6 +407,7 @@ The selecting versions are named `select_*`, like `select_word_left` and `select
 | ``ctrl+` `` ``alt+` `` | `terminal.toggle` | Toggle terminal |
 | `ctrl+shift+m` `alt+m` | `problems.list` | Problems |
 | `alt+g` | `graph.toggle` | Project graph |
+| `alt+d` | `annotate.toggle` | Draw on the screen |
 
 ### AI
 
@@ -438,6 +440,7 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `config.reload` | Reload the config |
 | `theme.next` | Next theme |
 | `flair.toggle` | Toggle all flair |
+| `annotate.clear` | Wipe the drawing |
 | `audio.toggle_music` | Toggle music |
 | `audio.toggle_effects` | Toggle sound effects |
 | `copilot.sign_in` | Sign in to Copilot |
@@ -511,6 +514,21 @@ In the key list, `enter` on a command waits for new keys. `backspace` unbinds it
 | `up` `down` `pageup` `pagedown` | Scroll |
 | `ctrl+backspace` | Clear the input |
 | `esc` | Back to the editor |
+
+**Drawing** (`alt+d`)
+
+| keys | |
+| --- | --- |
+| left drag | Draw with the current tool |
+| right drag | Erase |
+| `p` `m` `e` `t` | Pen, marker, eraser, text |
+| `1` to `8` | Pick a color |
+| `u` `ctrl+z` | Undo |
+| `c` | Clear everything |
+| `esc` | Stop typing text, then stop drawing |
+
+The drawing stays on screen after you stop, until you clear it. The toolbar at the top is
+clickable too.
 
 **Project graph**
 

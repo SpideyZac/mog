@@ -29,9 +29,9 @@ use mog_lsp::{
 };
 use mog_term::TerminalPanel;
 use mog_tui::{
-    ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState, EditorView,
-    EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind, SearchBar,
-    SettingsPanel, SplitState, StatusLine, Tabs, Theme, Ui, UiEvent,
+    Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
+    EditorView, EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups, PromptKind,
+    SearchBar, SettingsPanel, SplitState, StatusLine, Tabs, Theme, Ui, UiEvent,
     completion::{self, CompletionState},
     ghost, input,
     menu::{self, MenuAction, MenuItem},
@@ -217,6 +217,7 @@ impl App {
         compositor.push(Box::new(SettingsPanel::new()));
         compositor.push(Box::new(GraphView::new()));
         compositor.push(Box::new(ContextMenu::new()));
+        compositor.push(Box::new(Annotations::new()));
 
         let mut editor = Editor::new(clipboard::open());
         editor.set_options(settings::options(&config));
@@ -1612,6 +1613,16 @@ impl App {
                     self.ui.open(Overlay::Graph);
                 }
             }
+            "annotate.toggle" => {
+                self.ui.annotate.toggle();
+                if self.ui.annotate.active {
+                    self.editor.set_status(
+                        "drawing: left drag draws, right drag erases, 1 to 8 pick a color, esc \
+                         when done",
+                    );
+                }
+            }
+            "annotate.clear" => self.ui.annotate.clear(),
             "terminal.toggle" => {
                 let focused = self.ui.terminal_open && self.ui.focus == Focus::Terminal;
                 self.ui.terminal_open = !focused;

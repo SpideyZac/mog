@@ -11,8 +11,8 @@ use ratatui::{
 };
 
 use crate::{
-    chat::ChatState, completion::CompletionState, ghost::Ghost, menu::MenuState,
-    search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
+    annotate::AnnotateState, chat::ChatState, completion::CompletionState, ghost::Ghost,
+    menu::MenuState, search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -298,6 +298,8 @@ pub struct Ui {
     ///
     /// A missing chord removes every binding of the command.
     pub rebind: Option<(String, Option<String>)>,
+    /// The drawing on top of the screen.
+    pub annotate: AnnotateState,
 }
 
 impl Ui {

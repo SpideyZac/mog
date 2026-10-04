@@ -91,6 +91,7 @@
 - [x] Sound effects and music that gets tense when the build breaks
 - [x] Spectrum bars for all desktop audio
 - [x] Aura points, a RAM download and an FBI agent counter
+- [x] Draw on the screen
 
 ## Social
 
