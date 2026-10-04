@@ -18,12 +18,14 @@ pub mod ai;
 pub mod audio;
 pub mod lsp;
 pub mod save;
+pub mod terminal;
 pub mod ui;
 
 pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
 pub use audio::AudioConfig;
 pub use lsp::ServerConfig;
 pub use save::{SettingValue, save_setting};
+pub use terminal::TerminalConfig;
 pub use ui::UiConfig;
 
 /// The environment variable that overrides the config directory.
@@ -92,6 +94,8 @@ pub struct Config {
     pub ai: AiConfig,
     /// Sound effects and music.
     pub audio: AudioConfig,
+    /// The built in terminal.
+    pub terminal: TerminalConfig,
 }
 
 /// Settings for editing behavior.

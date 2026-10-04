@@ -30,6 +30,9 @@ const MINIMAP_MIN_EDITOR: u16 = 70;
 /// The height of the tab bar.
 const TABS_HEIGHT: u16 = 1;
 
+/// The fewest rows the editor keeps when the terminal panel is open.
+const TERMINAL_MIN_EDITOR: u16 = 6;
+
 /// The part of the screen that takes keyboard input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
@@ -42,6 +45,8 @@ pub enum Focus {
     Search,
     /// The AI chat input.
     Chat,
+    /// The terminal panel.
+    Terminal,
 }
 
 /// One of the two editor panes.
@@ -199,6 +204,8 @@ pub struct Layout {
     pub minimap: Rect,
     /// The AI chat panel, empty when hidden.
     pub chat: Rect,
+    /// The terminal panel under the editor, empty when hidden.
+    pub terminal: Rect,
     /// The status line.
     pub status: Rect,
 }
@@ -266,6 +273,10 @@ pub struct Ui {
     pub ghost: Option<(usize, u64, usize, String)>,
     /// The split, if the editor is split.
     pub split: Option<SplitState>,
+    /// Whether the terminal panel is shown.
+    pub terminal_open: bool,
+    /// Bytes waiting to be sent to the terminal, like pasted text.
+    pub terminal_input: Vec<u8>,
 }
 
 impl Ui {
@@ -360,9 +371,23 @@ impl Ui {
             width: chat_width,
             ..rest
         };
-        let right = Rect {
+        let above = Rect {
             width: rest.width - chat_width,
             ..rest
+        };
+        let terminal_height = if self.terminal_open {
+            (above.height * 2 / 5).min(above.height.saturating_sub(TERMINAL_MIN_EDITOR))
+        } else {
+            0
+        };
+        let terminal = Rect {
+            y: above.bottom() - terminal_height,
+            height: terminal_height,
+            ..above
+        };
+        let right = Rect {
+            height: above.height - terminal_height,
+            ..above
         };
         let tabs_height = if self.config.ui.tabs {
             TABS_HEIGHT.min(right.height)
@@ -414,6 +439,7 @@ impl Ui {
             split,
             minimap,
             chat,
+            terminal,
             status,
         }
     }
@@ -451,5 +477,19 @@ mod tests {
         let layout = ui.layout(Rect::new(0, 0, 80, 24));
         assert_eq!(layout.editor, Rect::new(0, 0, 80, 23));
         assert!(layout.explorer.is_empty());
+    }
+
+    /// The terminal panel takes the bottom of the editor column.
+    #[test]
+    fn layout_with_terminal() {
+        let mut ui = Ui {
+            terminal_open: true,
+            ..Ui::default()
+        };
+        ui.config.ui.tabs = false;
+        ui.config.ui.minimap = false;
+        let layout = ui.layout(Rect::new(0, 0, 80, 41));
+        assert_eq!(layout.terminal, Rect::new(0, 24, 80, 16));
+        assert_eq!(layout.editor, Rect::new(0, 0, 80, 24));
     }
 }

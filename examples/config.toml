@@ -56,3 +56,8 @@ enabled = false
 sound_effects = false
 music = false
 volume = 50
+
+[terminal]
+# empty picks powershell on windows and $SHELL elsewhere
+shell = ""
+args = []
