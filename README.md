@@ -17,7 +17,7 @@ You need a recent stable Rust toolchain.
 
 ```sh
 cargo build --release
-./target/release/mog [file]
+./target/release/mog [file or folder]
 ```
 
 ## License

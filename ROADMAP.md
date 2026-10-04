@@ -16,7 +16,7 @@
 ## Everyday editing
 
 - [ ] Syntax highlighting (tree-sitter)
-- [ ] File tree
+- [x] File tree
 - [ ] Fuzzy file finder
 - [ ] Command palette
 - [ ] Search and replace

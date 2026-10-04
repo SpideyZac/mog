@@ -9,7 +9,7 @@ See `ROADMAP.md` for what is done and what is next. Update it whenever a roadmap
 ## Commands
 
 - Build: `cargo build`
-- Run: `cargo run -- [file]`
+- Run: `cargo run -- [file or folder]`
 - Check everything (must pass before every commit):
   - `cargo +nightly fmt --all --check`
   - `cargo clippy --workspace --all-targets -- -D warnings`
