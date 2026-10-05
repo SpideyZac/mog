@@ -32,6 +32,9 @@ const PICKER_HEIGHT: u16 = 22;
 /// The width of text prompts.
 const PROMPT_WIDTH: u16 = 64;
 
+/// The command the plugin picker asks the app to run once something is picked.
+pub const PLUGIN_PICKED_COMMAND: &str = "ui.plugin_picked";
+
 /// The command the project symbol picker asks the app to run when the query changes.
 pub const SYMBOL_SEARCH_COMMAND: &str = "lsp.workspace_symbols.search";
 
@@ -102,6 +105,7 @@ impl Popups {
                     | Overlay::Symbols
                     | Overlay::WorkspaceSymbols
                     | Overlay::Tasks
+                    | Overlay::PluginPick
             )
         )
     }
@@ -289,6 +293,11 @@ impl Popups {
                 self.problems = rows.iter().map(|(_, _, at)| at.clone()).collect();
                 rows.into_iter().map(|(_, item, _)| item).collect()
             }
+            Some(Overlay::PluginPick) => ui
+                .plugin_pick
+                .as_ref()
+                .map(|(_, items)| items.iter().map(PickerItem::new).collect())
+                .unwrap_or_default(),
             Some(Overlay::Tasks) => ui
                 .tasks
                 .iter()
@@ -387,6 +396,10 @@ impl Popups {
             Some(Overlay::Tasks) => {
                 cx.ui.picked_task = Some(index);
                 cx.ui.request(Command::Custom("task.start".into()));
+            }
+            Some(Overlay::PluginPick) => {
+                cx.ui.plugin_picked = Some(index);
+                cx.ui.request(Command::Custom(PLUGIN_PICKED_COMMAND.into()));
             }
             Some(Overlay::Finder) => {
                 let Some(path) = self.files.get(index) else {
@@ -511,7 +524,14 @@ impl Layer for Popups {
             self.picker.set_items(Self::symbol_items(cx.ui));
         }
         let theme = cx.theme;
+        let plugin_title = cx
+            .ui
+            .plugin_pick
+            .as_ref()
+            .map(|(title, _)| title.clone())
+            .unwrap_or_default();
         let (title, placeholder) = match cx.ui.overlay {
+            Some(Overlay::PluginPick) => (plugin_title.as_str(), "type to filter..."),
             Some(Overlay::Palette) => ("\u{2318} command palette", "type a command..."),
             Some(Overlay::Finder) => ("\u{2315} find a file", "type part of a file name..."),
             Some(Overlay::Keys) if cx.ui.legacy_keys => (

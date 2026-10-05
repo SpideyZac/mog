@@ -118,6 +118,8 @@ pub enum Overlay {
     Tasks,
     /// The output of the task that ran last.
     Output,
+    /// A list a plugin asked the user to pick from.
+    PluginPick,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -162,6 +164,8 @@ pub enum PromptKind {
     RecoverSwaps,
     /// The message for a commit of what is staged.
     Commit,
+    /// A line of text a plugin asked for.
+    Plugin,
 }
 
 /// The signature of the call around the cursor.
@@ -340,6 +344,10 @@ pub struct Ui {
     pub debug: DebugState,
     /// Text plugins put in the status line, as `(plugin, text)`.
     pub plugin_segments: Vec<(String, String)>,
+    /// The title and items of the list a plugin asked the user to pick from.
+    pub plugin_pick: Option<(String, Vec<String>)>,
+    /// The item picked from that list, for the app to pass on.
+    pub plugin_picked: Option<usize>,
     /// The lines with a breakpoint in each file, counted from 0.
     pub breakpoints: BTreeMap<PathBuf, BTreeSet<usize>>,
     /// Status line pieces added by layers this frame.
