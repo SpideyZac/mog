@@ -36,7 +36,9 @@ mog .
 - Claude chat and explain selection. Copilot ghost text.
 - Run build and test tasks with their errors in the problems list, and debug with any debug
   adapter (lldb-dap and debugpy work out of the box)
-- Plugins in any language, talking JSON-RPC over stdio
+- Plugins in any language, talking JSON-RPC over stdio, with SDKs for Python, Node and Rust.
+  They add commands, react to edits and saves, show diagnostics and notes after lines, and
+  provide completion, hover, formatting and code actions
 - Updates itself from signed GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
   to your config
@@ -114,6 +116,7 @@ mog --run <COMMAND>     run a command after starting, can be repeated
 mog --keys              print every key binding and exit
 mog --update            install the newest release and exit
 mog --version
+mog plugin new <NAME>   make a plugin from a template, see mog plugin --help
 ```
 
 `--run` takes any command name from the [command list](#commands), like
@@ -439,16 +442,33 @@ Click a frame to look at it.
 
 ### `[plugins]`
 
-Plugins are programs in any language that add commands to mog, talking JSON-RPC over stdio. They
-can edit files, open them, run any mog command and put text in the status line. See
-[docs/plugins.md](docs/plugins.md) for the protocol and
-[examples/plugins/words.py](examples/plugins/words.py) for a whole plugin.
+Plugins are programs in any language that add to mog, talking JSON-RPC over stdio. They can add
+commands, edit and open files, hear about edits and saves, tidy a file before it is saved, show
+diagnostics, notes after lines and status line text, and provide completion, hover, formatting
+and code actions. See [docs/plugins.md](docs/plugins.md) for the protocol, and
+[examples/plugins/todo](examples/plugins/todo) for a plugin built on the Python SDK.
+
+Plugin folders, each with a `plugin.toml`, are found in the `plugins` folder next to your
+config, and start when they are needed:
+
+```sh
+mog plugin new hello          # a python plugin, --language node for javascript
+mog plugin install <folder or git url>
+mog plugin list
+mog plugin doctor             # starts each plugin and shows what it offers
+mog plugin remove hello
+```
+
+A config entry can also run any program as a plugin, or change one from the plugins folder:
 
 | key | default | |
 | --- | --- | --- |
-| `command` | | The program to run |
+| `command` | | The program to run, or one to use instead of the manifest's |
 | `args` | `[]` | Its arguments, like the script path |
-| `enabled` | `true` | Start it with mog |
+| `path` | | A plugin folder outside the plugins folder |
+| `enabled` | `true` | Run it at all |
+| `timeout` | `30` | Seconds a command may take |
+| `settings` | `{}` | Handed to the plugin when it starts |
 
 ```toml
 [plugins.words]
@@ -456,7 +476,9 @@ command = "python"
 args = ["/path/to/mog/examples/plugins/words.py"]
 ```
 
-Only your own config can add plugins, a project config cannot.
+Only your own config can add plugins, a project config cannot. Plugins run with your
+permissions, so only install ones you trust. One that crashes is restarted a few times, and
+`plugins.log` shows what each one printed.
 
 ### `[ai]`
 
@@ -700,6 +722,8 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `copilot.sign_in` | Sign in to Copilot |
 | `copilot.sign_out` | Sign out of Copilot |
 | `copilot.status` | Show Copilot status |
+| `plugins.restart` | Restart every plugin |
+| `plugins.log` | Show the plugins, whether they run and what they printed |
 | `help.release_notes` | What's new, from the GitHub release |
 | `update.check` | Look for a new release |
 | `update.install` | Install the new release |
