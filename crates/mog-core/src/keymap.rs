@@ -234,6 +234,55 @@ impl KeyChord {
         }
     }
 
+    /// Returns why a terminal without the kitty keyboard protocol cannot send this chord, if it
+    /// cannot.
+    ///
+    /// Old style terminals send control chords as single bytes, so some chords look exactly like
+    /// other keys and shift is lost on control letters.
+    pub fn legacy_problem(&self) -> Option<&'static str> {
+        let Modifiers { ctrl, alt, shift } = self.mods;
+        match self.key {
+            Key::Char('i') if ctrl && !shift => Some("it looks the same as tab"),
+            Key::Char('m') if ctrl && !shift => Some("it looks the same as enter"),
+            Key::Char('[') if ctrl => Some("it looks the same as esc"),
+            Key::Char('h') if ctrl && !shift => Some("many terminals send it for backspace"),
+            Key::Char('`') if ctrl => Some("it looks the same as ctrl+space"),
+            Key::Char(ch) if ctrl && shift && ch.is_alphabetic() => {
+                Some("shift is lost, it arrives as ctrl plus the letter")
+            }
+            Key::Char(ch)
+                if ctrl && !ch.is_ascii_alphabetic() && !"@\\]^_/ 2345678".contains(ch) =>
+            {
+                Some("most terminals cannot send ctrl with this key")
+            }
+            Key::Enter | Key::Tab | Key::Esc if ctrl || shift && !matches!(self.key, Key::Tab) => {
+                Some("it looks the same as the key without modifiers")
+            }
+            Key::Backspace if ctrl || shift => Some("it looks the same as backspace or ctrl+h"),
+            Key::Char(' ') if shift && !ctrl && !alt => Some("it looks the same as space"),
+            _ => None,
+        }
+    }
+
+    /// Returns the chord an old style terminal really meant when it sends control digits.
+    ///
+    /// Those terminals send `ctrl+\`, `ctrl+]`, `ctrl+^` and `ctrl+/` as the bytes that
+    /// crossterm reads as `ctrl+4` to `ctrl+7`.
+    pub fn from_legacy(self) -> Self {
+        let mapped = match self.key {
+            Key::Char('4') => '\\',
+            Key::Char('5') => ']',
+            Key::Char('6') => '^',
+            Key::Char('7') => '/',
+            _ => return self,
+        };
+        if self.mods.ctrl && !self.mods.shift {
+            Self::new(Key::Char(mapped), self.mods)
+        } else {
+            self
+        }
+    }
+
     /// Returns the plain chord that types the char, if this was typed with `AltGr`.
     pub fn without_alt_gr(self) -> Self {
         match self.key {
@@ -443,6 +492,46 @@ mod tests {
         }
         let brace: KeyChord = "ctrl+alt+{".parse().expect("valid chord");
         assert_eq!(brace.typed_char(), None);
+    }
+
+    /// Chords old terminals mangle are spotted and the rest are not.
+    #[test]
+    fn spots_legacy_problems() {
+        for text in [
+            "ctrl+shift+p",
+            "ctrl+i",
+            "ctrl+`",
+            "ctrl+,",
+            "ctrl+.",
+            "shift+enter",
+            "ctrl+backspace",
+        ] {
+            let chord: KeyChord = text.parse().expect("valid chord");
+            assert!(chord.legacy_problem().is_some(), "{text}");
+        }
+        for text in [
+            "ctrl+s",
+            "ctrl+/",
+            "ctrl+\\",
+            "alt+e",
+            "shift+tab",
+            "f12",
+            "ctrl+space",
+        ] {
+            let chord: KeyChord = text.parse().expect("valid chord");
+            assert!(chord.legacy_problem().is_none(), "{text}");
+        }
+    }
+
+    /// Control digits from old terminals become the keys that sent them.
+    #[test]
+    fn maps_legacy_control_digits() {
+        let four: KeyChord = "ctrl+4".parse().expect("valid chord");
+        assert_eq!(four.from_legacy(), "ctrl+\\".parse().expect("valid chord"));
+        let seven: KeyChord = "ctrl+7".parse().expect("valid chord");
+        assert_eq!(seven.from_legacy(), "ctrl+/".parse().expect("valid chord"));
+        let s: KeyChord = "ctrl+s".parse().expect("valid chord");
+        assert_eq!(s.from_legacy(), s);
     }
 
     /// Bindings can be listed and looked up by command.
