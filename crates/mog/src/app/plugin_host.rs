@@ -317,8 +317,20 @@ impl App {
     pub(super) fn handle_plugin(&mut self, update: PluginUpdate) {
         match update {
             PluginUpdate::Event(PluginEvent::Ready { plugin, hello }) => {
+                // a plugin started by a file's language missed that file getting focus
+                let catch_up = hello.events.contains("opened");
                 self.plugins.ready(&plugin, hello);
                 self.refresh_commands();
+                if catch_up && let Some(running) = self.plugins.get(&plugin) {
+                    let path = self.editor.document().path();
+                    running.event(
+                        "opened",
+                        json!({
+                            "path": path.map(|path| path.to_string_lossy()),
+                            "language": language(path),
+                        }),
+                    );
+                }
             }
             PluginUpdate::Event(PluginEvent::Notification {
                 plugin,

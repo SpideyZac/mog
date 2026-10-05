@@ -1378,10 +1378,18 @@ mod tests {
         let dir = temp_dir();
         let file = dir.join("notes.txt");
         fs::write(&file, "first  \nTODO: water the mog\nlast\n").expect("write");
-        let folder = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples/plugins/todo")
-            .canonicalize()
-            .expect("the example exists");
+        // a copy that waits for a text file, to check language activation catches up on it
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/todo");
+        let folder = dir.join("todo-plugin");
+        fs::create_dir_all(&folder).expect("plugin folder");
+        for name in ["todo.py", "mog_plugin.py", "plugin.toml"] {
+            let text = fs::read_to_string(example.join(name)).expect("the example exists");
+            let text = text.replace(
+                "activation = [\"startup\"]",
+                "activation = [\"language:txt\"]",
+            );
+            fs::write(folder.join(name), text).expect("copy");
+        }
         let mut config = Config::default();
         config.flair.enabled = false;
         config.updates.check = false;
@@ -1403,7 +1411,10 @@ mod tests {
                 .iter()
                 .any(|info| info.name == "plugin.todo.list")
         );
-        plugins_until(&mut app, |app| app.plugins.wants("before_save")).await;
+        assert!(
+            app.plugins.get("todo").is_none(),
+            "it waits for a text file"
+        );
         app.editor.open(&file).expect("open");
         app.watch_focus();
         plugins_until(&mut app, |app| {
