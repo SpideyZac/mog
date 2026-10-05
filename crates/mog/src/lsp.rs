@@ -330,7 +330,8 @@ impl LanguageServers {
             }
         }
         for document in documents {
-            let Some(path) = document.path() else {
+            // servers choke on huge files and sending one every pause would stall mog
+            let Some(path) = document.path().filter(|_| !document.is_large()) else {
                 continue;
             };
             let Some(name) = self.server_for(path).map(str::to_owned) else {

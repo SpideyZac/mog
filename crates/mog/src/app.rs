@@ -538,7 +538,8 @@ impl App {
         };
         let mut wanted = HashSet::new();
         for (index, document) in self.editor.documents().iter().enumerate() {
-            if !document.is_modified() {
+            // writing a huge file every second would stall typing
+            if !document.is_modified() || document.is_large() {
                 continue;
             }
             let key = document.path().map_or_else(
@@ -1262,12 +1263,18 @@ impl App {
 
     /// Notices a new focused file or changed problem counts and tells the flair about it.
     fn watch_focus(&mut self) {
-        let document = self.editor.document();
-        let path = document.path().map(ToOwned::to_owned);
+        let path = self.editor.document().path().map(ToOwned::to_owned);
         if path != self.last_focus {
             self.last_focus = path;
             self.ui.events.push(UiEvent::Opened);
+            if self.editor.document().is_large() {
+                self.editor.set_status(
+                    "big file, so syntax colors, git, language servers and crash recovery are off \
+                     for it",
+                );
+            }
         }
+        let document = self.editor.document();
         let count = |severity| {
             document
                 .diagnostics()
@@ -1289,11 +1296,11 @@ impl App {
     /// Asks git about open files and the cursor line.
     fn sync_git(&mut self) {
         for document in self.editor.documents() {
-            if let Some(path) = document.path() {
+            if let Some(path) = document.path().filter(|_| !document.is_large()) {
                 self.git.ensure_base(path);
             }
         }
-        if !self.ui.config.ui.git_blame {
+        if !self.ui.config.ui.git_blame || self.editor.document().is_large() {
             return;
         }
         let document = self.editor.document();
@@ -1729,7 +1736,10 @@ impl App {
     /// Asks the AI for a ghost suggestion at the cursor once typing pauses, or right away with
     /// several suggestions if the user `invoked` it.
     fn suggest_ghost(&self, invoked: bool) {
-        if !self.ui.config.ai.ghost_text || !self.assistant.can_suggest() {
+        if !self.ui.config.ai.ghost_text
+            || !self.assistant.can_suggest()
+            || self.editor.document().is_large()
+        {
             return;
         }
         let document = self.editor.document();
@@ -1991,7 +2001,11 @@ impl App {
             return;
         }
         let document = self.editor.document();
-        let Some(path) = document.path().map(ToOwned::to_owned) else {
+        let Some(path) = document
+            .path()
+            .filter(|_| !document.is_large())
+            .map(ToOwned::to_owned)
+        else {
             return;
         };
         let key = (path.clone(), document.version());
