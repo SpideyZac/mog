@@ -19,12 +19,12 @@ use crossterm::{
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
 };
 use futures::{StreamExt, future};
-use lsp_types::{PublishDiagnosticsParams, Range as LspRange};
+use lsp_types::{Position as LspPosition, PublishDiagnosticsParams, Range as LspRange};
 use mog_ai::{CompletionFile, CompletionRequest, CopilotEvent, CopilotStatus, DeviceCode};
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{
-    Config, ProjectFile, SettingValue, ThemeConfig, config_path, project, project_config_path,
-    save_setting, theme::COLOR_NAMES,
+    Config, Install, ProjectFile, SettingValue, ThemeConfig, config_path, project,
+    project_config_path, save_setting, theme::COLOR_NAMES,
 };
 use mog_core::{
     Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
@@ -41,11 +41,12 @@ use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
     EditorView, EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups,
-    ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel, SplitState,
-    StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
+    ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel, SignatureHint,
+    SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
     completion::{self, CompletionState},
     ghost, input,
     menu::{self, MenuAction, MenuItem},
+    popups::SYMBOL_SEARCH_COMMAND,
     project_search as project_search_panel,
     release_notes::{self, ReleaseNotes},
     search::{self, Toggle},
@@ -168,6 +169,8 @@ pub struct App {
     pending_diagnostics: Vec<PublishDiagnosticsParams>,
     /// The code actions offered last, picked by index from the menu.
     code_actions: Vec<CodeAction>,
+    /// The file and version inlay hints and semantic tokens were last asked for.
+    marks_requested: Option<(PathBuf, u64)>,
     /// The AI providers and their pending replies.
     assistant: Assistant,
     /// A Copilot sign in waiting for the user to confirm the code popup.
@@ -314,6 +317,7 @@ impl App {
             last_edit: Instant::now(),
             pending_diagnostics: Vec::new(),
             code_actions: Vec::new(),
+            marks_requested: None,
             assistant: Assistant::new(providers),
             copilot_code: None,
             git,
@@ -585,7 +589,10 @@ impl App {
                 for params in mem::take(&mut self.pending_diagnostics) {
                     lsp::apply_diagnostics(&mut self.editor, params);
                 }
+                self.request_marks();
+                self.offer_install();
             }
+            self.sync_signature();
             self.sync_git();
             self.watch_focus();
             self.play_sounds();
@@ -670,6 +677,7 @@ impl App {
         tokio::pin!(deadline);
         loop {
             self.sync_language_servers();
+            self.request_marks();
             self.sync_git();
             tokio::select! {
                 Some(update) = self.git.update() => git::apply(&mut self.ui, update),
@@ -1171,6 +1179,18 @@ impl App {
             }
             PromptKind::SaveTheme => {
                 self.save_theme(text);
+                return;
+            }
+            PromptKind::InstallServer(command) => {
+                if matches!(text, "y" | "yes") {
+                    self.ui.terminal_open = true;
+                    self.ui.focus = Focus::Terminal;
+                    self.ui.terminal_input.extend_from_slice(command.as_bytes());
+                    self.ui.terminal_input.push(b'\r');
+                    self.editor.set_status(
+                        "installing, run Code: Restart language servers once it is done",
+                    );
+                }
                 return;
             }
             PromptKind::CopilotSignIn => Ok(()),
@@ -1685,6 +1705,145 @@ impl App {
         });
     }
 
+    /// Asks for inlay hints and semantic tokens of the focused file, once per version.
+    fn request_marks(&mut self) {
+        let settings = &self.ui.config.ui;
+        let want_hints = settings.inlay_hints;
+        let want_tokens = settings.semantic_highlighting && settings.syntax_highlighting;
+        if !want_hints && !want_tokens {
+            return;
+        }
+        let document = self.editor.document();
+        let Some(path) = document.path().map(ToOwned::to_owned) else {
+            return;
+        };
+        let key = (path.clone(), document.version());
+        if self.marks_requested.as_ref() == Some(&key) {
+            return;
+        }
+        // until the handshake is done the server has not said what it can do
+        let Some(client) = self
+            .lsp
+            .client_for(&path)
+            .filter(|client| client.capabilities().is_some())
+        else {
+            return;
+        };
+        self.marks_requested = Some(key);
+        let hints = want_hints && client.supports("inlayHintProvider");
+        let tokens = want_tokens && client.supports("semanticTokensProvider");
+        if !hints && !tokens {
+            return;
+        }
+        let text = document.text();
+        let end = convert::char_to_position(text, text.len_chars());
+        let range = LspRange::new(LspPosition::new(0, 0), end);
+        let version = document.version();
+        let sender = self.lsp_sender.clone();
+        tokio::spawn(async move {
+            let hints = if hints {
+                client.inlay_hints(&path, range).await.ok()
+            } else {
+                None
+            };
+            let tokens = if tokens {
+                client.semantic_tokens(&path).await.ok()
+            } else {
+                None
+            };
+            let _ = sender.send(LspReply::Marks {
+                path,
+                version,
+                hints,
+                tokens,
+            });
+        });
+    }
+
+    /// Asks for the signature of the call around the cursor.
+    fn request_signature(&mut self) {
+        self.sync_language_servers();
+        let document = self.editor.document();
+        let Some(path) = document.path().map(ToOwned::to_owned) else {
+            return;
+        };
+        let Some(client) = self.lsp.client_for(&path) else {
+            return;
+        };
+        let head = document.selection().head;
+        let line = document.text().char_to_line(head);
+        let position = convert::char_to_position(document.text(), head);
+        let sender = self.lsp_sender.clone();
+        tokio::spawn(async move {
+            let signature = client.signature_help(&path, position).await.ok().flatten();
+            let _ = sender.send(LspReply::Signature(signature, line));
+        });
+    }
+
+    /// Hides the signature once the cursor leaves the line of the call.
+    fn sync_signature(&mut self) {
+        let document = self.editor.document();
+        let line = document.text().char_to_line(document.selection().head);
+        if self
+            .ui
+            .signature
+            .as_ref()
+            .is_some_and(|signature| signature.line != line)
+        {
+            self.ui.signature = None;
+        }
+    }
+
+    /// Asks for the symbols of the focused file, or of the whole project matching `query`.
+    fn request_symbols(&mut self, query: Option<String>) {
+        self.sync_language_servers();
+        let path = self.editor.document().path().map(ToOwned::to_owned);
+        if query.is_none() && path.is_none() {
+            self.editor
+                .set_status("save the file first so a language server can see it");
+            return;
+        }
+        let Some(client) = self.lsp.client_for_or_any(path.as_deref()) else {
+            self.editor.set_status("no language server is running");
+            return;
+        };
+        let sender = self.lsp_sender.clone();
+        tokio::spawn(async move {
+            let symbols = match (&query, &path) {
+                (Some(query), _) => client.workspace_symbols(query).await,
+                (None, Some(path)) => client.document_symbols(path).await,
+                (None, None) => Ok(Vec::new()),
+            };
+            let reply = match symbols {
+                Ok(symbols) => LspReply::Symbols { query, symbols },
+                Err(err) => LspReply::Nothing(format!("could not get symbols: {err}")),
+            };
+            let _ = sender.send(reply);
+        });
+    }
+
+    /// Offers to install a language server that was not found, if one was and nothing else is
+    /// asking.
+    fn offer_install(&mut self) {
+        if self.ui.overlay.is_some() {
+            return;
+        }
+        let Some((program, install)) = self.lsp.take_missing() else {
+            return;
+        };
+        match install {
+            Install::Run(command) => self.ui.ask(
+                PromptKind::InstallServer(command.to_owned()),
+                format!("install {program}?"),
+                "",
+                format!("y runs `{command}` in the terminal"),
+            ),
+            Install::Manual(how) => self
+                .editor
+                .set_status(format!("{program} is not installed: {how}")),
+        }
+    }
+
     /// Asks the language server to rename the symbol at the cursor to `new_name`.
     fn request_rename(&mut self, new_name: String) {
         self.sync_language_servers();
@@ -1806,6 +1965,67 @@ impl App {
                 let at = self.ui.cursor_screen.unwrap_or_default();
                 menu::open_menu(&mut self.ui, Position::new(at.x, at.y + 1), items);
             }
+            LspReply::Marks {
+                path,
+                version,
+                hints,
+                tokens,
+            } => {
+                let Some(document) = self
+                    .editor
+                    .documents_mut()
+                    .iter_mut()
+                    .find(|document| document.path() == Some(path.as_path()))
+                else {
+                    return;
+                };
+                // marks for an older version would land on the wrong text
+                if document.version() != version {
+                    return;
+                }
+                if let Some(hints) = hints {
+                    let hints = lsp::to_hints(document, hints);
+                    document.set_inlay_hints(hints);
+                }
+                if let Some(tokens) = tokens {
+                    let tokens = lsp::to_tokens(document, tokens);
+                    document.set_semantic_tokens(tokens);
+                }
+            }
+            LspReply::Signature(signature, line) => {
+                let cursor = self.editor.document();
+                let cursor_line = cursor.text().char_to_line(cursor.selection().head);
+                self.ui.signature =
+                    signature
+                        .filter(|_| line == cursor_line)
+                        .map(|found| SignatureHint {
+                            label: found.label,
+                            active: found.active,
+                            documentation: found.documentation,
+                            line,
+                        });
+            }
+            LspReply::Symbols { query, symbols } => {
+                let workspace = query.is_some();
+                // answers to an older query are stale once more was typed
+                if query.is_some_and(|query| query != self.ui.symbol_query) {
+                    return;
+                }
+                if !workspace && symbols.is_empty() {
+                    self.editor.set_status("no symbols in this file");
+                    return;
+                }
+                self.ui.symbols = symbols.into_iter().map(lsp::to_symbol_entry).collect();
+                self.ui.symbols_version += 1;
+                let overlay = if workspace {
+                    Overlay::WorkspaceSymbols
+                } else {
+                    Overlay::Symbols
+                };
+                if self.ui.overlay != Some(overlay) {
+                    self.ui.open(overlay);
+                }
+            }
             LspReply::Nothing(message) => self.editor.set_status(message),
         }
     }
@@ -1858,6 +2078,14 @@ impl App {
                 self.editor.set_status(format!("{server}: {text}"));
             }
             LspEvent::ShowDocument { uri, external, .. } => self.show_document(&uri, external),
+            LspEvent::Notification { method, .. }
+                if matches!(
+                    method.as_str(),
+                    "workspace/semanticTokens/refresh" | "workspace/inlayHint/refresh"
+                ) =>
+            {
+                self.marks_requested = None;
+            }
             LspEvent::Notification { .. } => {}
             LspEvent::Exited { server, reason } => {
                 if self.lsp.exited(&server) {
@@ -1919,6 +2147,11 @@ impl App {
             if let Some(UiEvent::Typed(ch)) = self.ui.events.last().cloned() {
                 self.auto_complete(ch);
                 self.suggest_ghost(false);
+                match ch {
+                    '(' | ',' => self.request_signature(),
+                    ')' => self.ui.signature = None,
+                    _ => {}
+                }
             }
         }
         match outcome {
@@ -2092,6 +2325,22 @@ impl App {
                     self.apply_rename(edits);
                     self.editor.set_status(title);
                 }
+            }
+            "lsp.signature" => self.request_signature(),
+            "lsp.symbols" => self.request_symbols(None),
+            "lsp.workspace_symbols" => {
+                self.ui.symbol_query.clear();
+                self.ui.symbols.clear();
+                self.ui.symbols_version += 1;
+                self.ui.open(Overlay::WorkspaceSymbols);
+                self.request_symbols(Some(String::new()));
+            }
+            SYMBOL_SEARCH_COMMAND => self.request_symbols(Some(self.ui.symbol_query.clone())),
+            "lsp.restart" => {
+                self.lsp.restart();
+                self.marks_requested = None;
+                self.editor
+                    .set_status("language servers restart with the next file that needs one");
             }
             "lsp.rename" => {
                 let document = self.editor.document();

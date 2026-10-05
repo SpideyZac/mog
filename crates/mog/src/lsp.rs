@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -10,13 +11,19 @@ use lsp_types::{
     CompletionItem as LspItem, CompletionItemKind, CompletionTextEdit, Diagnostic as LspDiagnostic,
     DiagnosticSeverity, Position, PublishDiagnosticsParams, Range as LspRange, TextEdit,
 };
-use mog_config::ServerConfig;
-use mog_core::{Change, Diagnostic, Document, Editor, Severity};
+use mog_config::{Install, ServerConfig, install_hint};
+use mog_core::{
+    Change, Diagnostic, Document, Editor, InlayHint, SemanticToken, Severity, TokenKind,
+};
 use mog_lsp::{
     Client, LspEvent, convert,
     features::{self, CodeAction, FileEdits},
+    symbols::{self, Signature, Symbol},
 };
-use mog_tui::completion::{CompletionItem, ItemKind};
+use mog_tui::{
+    SymbolEntry,
+    completion::{CompletionItem, ItemKind},
+};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -46,6 +53,27 @@ pub enum LspReply {
     References(Vec<(PathBuf, Position)>),
     /// Code actions as titles with their edits.
     Actions(Vec<CodeAction>),
+    /// Inlay hints and semantic tokens for a file at a document version, each missing if the
+    /// server cannot give them.
+    Marks {
+        /// The file they are for.
+        path: PathBuf,
+        /// The document version they are for.
+        version: u64,
+        /// The inlay hints.
+        hints: Option<Vec<symbols::InlayHint>>,
+        /// The semantic tokens.
+        tokens: Option<Vec<symbols::SemanticToken>>,
+    },
+    /// The signature of the call around the cursor, for the line the cursor was on.
+    Signature(Option<Signature>, usize),
+    /// Symbols of the focused file, or of the whole project for `query` when it is set.
+    Symbols {
+        /// What the project was searched for, `None` for the symbols of one file.
+        query: Option<String>,
+        /// What was found.
+        symbols: Vec<Symbol>,
+    },
     /// A request found nothing or failed, with a message for the status line.
     Nothing(String),
 }
@@ -98,6 +126,104 @@ pub fn to_item(item: LspItem) -> CompletionItem {
     }
 }
 
+/// Converts a symbol from the server to a picker entry.
+pub fn to_symbol_entry(symbol: Symbol) -> SymbolEntry {
+    SymbolEntry {
+        kind: symbols::kind_name(symbol.kind).to_owned(),
+        name: symbol.name,
+        detail: symbol.detail.lines().next().unwrap_or_default().to_owned(),
+        depth: symbol.depth,
+        path: symbol.path,
+        line: usize::try_from(symbol.position.line).unwrap_or(0),
+        column: usize::try_from(symbol.position.character).unwrap_or(0),
+    }
+}
+
+/// Returns the identifier that ends at char `pos` of `document`, like a variable name.
+fn word_before(document: &Document, pos: usize) -> String {
+    let text = document.text();
+    let start = (0..pos)
+        .rev()
+        .take_while(|&at| {
+            text.get_char(at)
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+        })
+        .last()
+        .unwrap_or(pos);
+    text.slice(start..pos).to_string()
+}
+
+/// Converts server inlay hints to hints on lines of `document`.
+///
+/// Hints are shown at the end of the line instead of next to what they are about, so type hints
+/// like `: i32` get the name they belong to in front and parameter names are left out.
+pub fn to_hints(document: &Document, hints: Vec<symbols::InlayHint>) -> Vec<(usize, InlayHint)> {
+    let text = document.text();
+    hints
+        .into_iter()
+        .filter(|hint| !hint.parameter)
+        .map(|hint| {
+            let pos = convert::position_to_char(text, hint.position);
+            let line = text.char_to_line(pos);
+            let trimmed = hint.label.trim();
+            let label = if trimmed.starts_with(':') {
+                format!("{}{trimmed}", word_before(document, pos))
+            } else {
+                trimmed.to_owned()
+            };
+            let col = pos - text.line_to_char(line);
+            (line, InlayHint { col, label })
+        })
+        .collect()
+}
+
+/// Returns what a token type `name` with `modifiers` means to mog, `None` for ones it ignores.
+pub fn token_kind(name: &str, modifiers: &[String]) -> Option<TokenKind> {
+    let has = |modifier: &str| modifiers.iter().any(|other| other == modifier);
+    Some(match name {
+        "namespace" => TokenKind::Namespace,
+        "type" | "class" | "enum" | "interface" | "struct" | "typeParameter" | "builtinType"
+        | "typeAlias" | "trait" => TokenKind::Type,
+        "function" | "method" => TokenKind::Function,
+        "macro" | "decorator" | "attribute" | "derive" => TokenKind::Macro,
+        "property" => TokenKind::Property,
+        "enumMember" => TokenKind::EnumMember,
+        "variable" if has("readonly") && has("static") => TokenKind::Constant,
+        "constant" | "static" => TokenKind::Constant,
+        "variable" => TokenKind::Variable,
+        "parameter" => TokenKind::Parameter,
+        "keyword" | "modifier" | "selfKeyword" | "builtinAttribute" => TokenKind::Keyword,
+        "string" | "regexp" => TokenKind::String,
+        "number" => TokenKind::Number,
+        "comment" => TokenKind::Comment,
+        "operator" => TokenKind::Operator,
+        _ => return None,
+    })
+}
+
+/// Converts server semantic tokens to tokens on lines of `document`.
+pub fn to_tokens(
+    document: &Document,
+    tokens: Vec<symbols::SemanticToken>,
+) -> Vec<(usize, SemanticToken)> {
+    let text = document.text();
+    tokens
+        .into_iter()
+        .filter_map(|token| {
+            let kind = token_kind(&token.kind, &token.modifiers)?;
+            let line = usize::try_from(token.line).ok()?;
+            if line >= text.len_lines() {
+                return None;
+            }
+            let start = text.line_to_char(line);
+            let at = |units| convert::position_to_char(text, Position::new(token.line, units));
+            let from = at(token.start) - start;
+            let to = at(token.start + token.length) - start;
+            (to > from).then_some((line, SemanticToken { from, to, kind }))
+        })
+        .collect()
+}
+
 /// Converts server text edits to changes on `document`.
 pub fn to_changes(document: &Document, edits: &[TextEdit]) -> Vec<Change> {
     let text = document.text();
@@ -119,6 +245,8 @@ pub struct LanguageServers {
     clients: HashMap<String, Client>,
     /// Servers that failed to start, so they are not retried on every file.
     failed: HashSet<String>,
+    /// Programs that were not found, with how to install them, waiting to be offered.
+    missing: Vec<(String, Install)>,
     /// The last document version each server was told about, by path.
     synced: HashMap<PathBuf, u64>,
     /// Where server events go.
@@ -138,6 +266,7 @@ impl LanguageServers {
             configs,
             clients: HashMap::new(),
             failed: HashSet::new(),
+            missing: Vec::new(),
             synced: HashMap::new(),
             events,
             root,
@@ -151,6 +280,29 @@ impl LanguageServers {
             .iter()
             .find(|(_, config)| config.extensions.iter().any(|ext| ext == extension))
             .map(|(name, _)| name.as_str())
+    }
+
+    /// Returns the server for `path` if it runs, or else any running server.
+    pub fn client_for_or_any(&self, path: Option<&Path>) -> Option<Client> {
+        path.and_then(|path| self.client_for(path)).or_else(|| {
+            self.clients
+                .values()
+                .find(|client| client.is_running())
+                .cloned()
+        })
+    }
+
+    /// Takes a missing server program and how to install it, if one was found missing.
+    pub fn take_missing(&mut self) -> Option<(String, Install)> {
+        self.missing.pop()
+    }
+
+    /// Stops every server so each starts again for the next file that needs it, giving servers
+    /// that failed another try.
+    pub fn restart(&mut self) {
+        self.clients.clear();
+        self.failed.clear();
+        self.synced.clear();
     }
 
     /// Returns the running server for `path`, if there is one.
@@ -233,7 +385,19 @@ impl LanguageServers {
             }
             Err(err) => {
                 self.failed.insert(name.to_owned());
-                Err(Some(format!("could not start {}: {err}", config.command)))
+                let hint = install_hint(&config.command);
+                let message = match hint {
+                    Some(Install::Run(how) | Install::Manual(how))
+                        if err.kind() == ErrorKind::NotFound =>
+                    {
+                        format!("{} is not installed: {how}", config.command)
+                    }
+                    _ => format!("could not start {}: {err}", config.command),
+                };
+                if let Some(install) = hint.filter(|_| err.kind() == ErrorKind::NotFound) {
+                    self.missing.push((config.command.clone(), install));
+                }
+                Err(Some(message))
             }
         }
     }
