@@ -102,6 +102,8 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("copilot.sign_in", "Copilot: Sign in"),
     ("copilot.sign_out", "Copilot: Sign out"),
     ("copilot.status", "Copilot: Status"),
+    ("plugins.restart", "Plugins: Restart all plugins"),
+    ("plugins.log", "Plugins: Show plugins and their logs"),
 ];
 
 /// Builds the palette entries with the chords bound to each command in `keymap`.
