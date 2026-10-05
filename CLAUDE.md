@@ -32,6 +32,8 @@ Cargo workspace, one crate per concern under `crates/`:
   critters, etc. go here.
 - `mog-lsp`: language server client.
 - `mog-ai`: AI providers (Claude, Copilot) behind one trait.
+- `mog-dap`: debug adapter client.
+- `mog-plugin`: the plugin host, JSON-RPC over stdio.
 
 Subsystems never touch the terminal. Everything flows through the event loop in `mog`
 (`crates/mog/src/app.rs`), and only `mog-tui` draws.
@@ -51,6 +53,11 @@ Subsystems never touch the terminal. Everything flows through the event loop in 
 - AI backend: implement `mog_ai::AiProvider` and build it in `settings::ai_providers`.
 - Config: add a field with a default in `mog-config`, and keep `examples/config.toml` valid (a
   test parses it).
+- Plugin protocol: `mog-plugin` speaks it, `crates/mog/src/plugins.rs` routes it. Keep
+  `docs/plugins.md` and `examples/plugins/words.py` in step with it.
+- Debugger: `mog-dap` is the client, `crates/mog/src/debug.rs` runs sessions, built in adapters
+  are in `mog-config/src/tasks.rs`. Tasks and their output parsing live in
+  `crates/mog/src/tasks.rs` and `mog-core/src/problems.rs`.
 
 ## Git rules
 

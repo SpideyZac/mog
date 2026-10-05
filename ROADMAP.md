@@ -146,4 +146,4 @@
 
 ## Extensions
 
-- [ ] Plugin API
+- [x] Plugin API, programs in any language over JSON-RPC

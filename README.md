@@ -36,6 +36,7 @@ mog .
 - Claude chat, explain selection and ghost text. Copilot ghost text.
 - Run build and test tasks with their errors in the problems list, and debug with any debug
   adapter (lldb-dap and debugpy work out of the box)
+- Plugins in any language, talking JSON-RPC over stdio
 - Updates itself from signed GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
   to your config
@@ -434,6 +435,27 @@ cwd = "${root}"
 `f9` sets a breakpoint on the cursor line. When the program stops, the line is marked, and the
 debug panel (`ctrl+shift+d`) shows the call stack, the variables and what the program printed.
 Click a frame to look at it.
+
+### `[plugins]`
+
+Plugins are programs in any language that add commands to mog, talking JSON-RPC over stdio. They
+can edit files, open them, run any mog command and put text in the status line. See
+[docs/plugins.md](docs/plugins.md) for the protocol and
+[examples/plugins/words.py](examples/plugins/words.py) for a whole plugin.
+
+| key | default | |
+| --- | --- | --- |
+| `command` | | The program to run |
+| `args` | `[]` | Its arguments, like the script path |
+| `enabled` | `true` | Start it with mog |
+
+```toml
+[plugins.words]
+command = "python"
+args = ["/path/to/mog/examples/plugins/words.py"]
+```
+
+Only your own config can add plugins, a project config cannot.
 
 ### `[ai]`
 

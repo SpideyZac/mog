@@ -129,3 +129,9 @@ request = "launch"
 
 [debug.python.arguments]
 program = "${file}"
+
+# plugins are programs that add commands, see docs/plugins.md. only this file can add them.
+[plugins.words]
+enabled = false
+command = "python"
+args = ["examples/plugins/words.py"]
