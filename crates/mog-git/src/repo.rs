@@ -127,6 +127,17 @@ fn normalize(path: &Path) -> PathBuf {
     path.components().collect()
 }
 
+/// Resolves symlinks in `path`, going through its parent when the file does not exist yet.
+fn resolve(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok().or_else(|| {
+        Some(
+            fs::canonicalize(path.parent()?)
+                .ok()?
+                .join(path.file_name()?),
+        )
+    })
+}
+
 /// A git repository on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repo {
@@ -376,7 +387,15 @@ impl Repo {
 
     /// Returns `path` relative to the root with `/` separators.
     fn relative(&self, path: &Path) -> Option<String> {
-        let relative = normalize(path).strip_prefix(&self.root).ok()?.to_owned();
+        let path = normalize(path);
+        let relative = match path.strip_prefix(&self.root) {
+            Ok(relative) => relative.to_owned(),
+            // git hands back the real root, so a path through a symlink like macOS /var misses
+            Err(_) => resolve(&path)?
+                .strip_prefix(fs::canonicalize(&self.root).ok()?)
+                .ok()?
+                .to_owned(),
+        };
         let parts: Vec<String> = relative
             .components()
             .map(|part| part.as_os_str().to_string_lossy().into_owned())
@@ -475,6 +494,8 @@ fn run(dir: &Path, args: &[&str], input: Option<&str>) -> Option<String> {
 #[cfg(test)]
 /// Tests for repository helpers.
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::{
         env, fs,
         path::{Path, PathBuf},
@@ -526,6 +547,32 @@ mod tests {
         repo.unstage(&file).expect("unstaged");
         assert_eq!(repo.changes()[0].staged, None);
         assert!(repo.commit("nothing").is_err());
+        let _ = fs::remove_dir_all(Path::new(repo.root()));
+    }
+
+    /// A file reached through a symlinked folder still maps into the repository.
+    #[cfg(unix)]
+    #[test]
+    fn finds_files_through_a_symlink() {
+        let Some((repo, file)) = temp_repo("link") else {
+            return;
+        };
+        let link = env::temp_dir().join(format!("mog-git-link-alias-{}", process::id()));
+        let _ = fs::remove_file(&link);
+        symlink(repo.root(), &link).expect("symlink");
+        let aliased = link.join(file.file_name().expect("name"));
+        assert_eq!(
+            repo.index_text(&aliased).as_deref(),
+            Some(
+                "a
+b
+c
+d
+e
+"
+            )
+        );
+        let _ = fs::remove_file(&link);
         let _ = fs::remove_dir_all(Path::new(repo.root()));
     }
 
