@@ -218,10 +218,15 @@ impl App {
     /// Creates a new app, opening the file or folder named in `args` if there is one.
     pub fn new(args: Args) -> Self {
         let mut problems = Vec::new();
-        let mut config = Config::load().unwrap_or_else(|err| {
+        let config = Config::load().unwrap_or_else(|err| {
             problems.push(err.to_string());
             Config::default()
         });
+        Self::with_config(args, config, problems)
+    }
+
+    /// Creates a new app from `config`, showing `problems` found while loading it.
+    fn with_config(args: Args, mut config: Config, mut problems: Vec<String>) -> Self {
         let (keymap, key_problems) = settings::keymap(&config);
         problems.extend(key_problems);
         let (theme, theme_problem) = settings::theme(&config);
@@ -2239,5 +2244,151 @@ async fn changed(watcher: Option<&FolderWatcher>) {
     match watcher {
         Some(watcher) => watcher.changed().await,
         None => future::pending().await,
+    }
+}
+
+#[cfg(test)]
+/// Scripted tests that drive the whole app through terminal events.
+mod tests {
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+        process,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    use clap::Parser;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use mog_config::Config;
+    use mog_core::{Key, KeyChord};
+
+    use super::App;
+    use crate::cli::Args;
+
+    /// Counts temp folders so parallel tests never share one.
+    static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
+
+    /// Makes an empty temp folder for one test.
+    fn temp_dir() -> PathBuf {
+        let index = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
+        let dir = env::temp_dir().join(format!("mog-app-test-{}-{index}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    /// Starts the app on `path` with a quiet config that has no flair, sound or updates.
+    fn start(path: &Path) -> App {
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.ui.git_blame = false;
+        let args = Args::parse_from([Path::new("mog"), path]);
+        App::with_config(args, config, Vec::new())
+    }
+
+    /// Returns the terminal event for pressing `chord`, like `ctrl+s` or `x`.
+    fn press(chord: &str) -> Event {
+        let chord: KeyChord = chord.parse().expect("valid chord");
+        let code = match chord.key {
+            Key::Char(ch) if chord.mods.shift && !chord.mods.ctrl => {
+                KeyCode::Char(ch.to_ascii_uppercase())
+            }
+            Key::Char(ch) => KeyCode::Char(ch),
+            Key::Enter => KeyCode::Enter,
+            Key::Backspace => KeyCode::Backspace,
+            Key::Esc => KeyCode::Esc,
+            other => panic!("press does not know {other:?}"),
+        };
+        let mut mods = KeyModifiers::empty();
+        mods.set(KeyModifiers::CONTROL, chord.mods.ctrl);
+        mods.set(KeyModifiers::ALT, chord.mods.alt);
+        mods.set(KeyModifiers::SHIFT, chord.mods.shift);
+        Event::Key(KeyEvent::new(code, mods))
+    }
+
+    /// Feeds `text` to `app` one key at a time, with `\n` pressing enter.
+    fn type_text(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            let event = match ch {
+                '\n' => press("enter"),
+                ch => Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::empty())),
+            };
+            app.handle_event(event);
+            app.run_requests();
+        }
+    }
+
+    /// Opening a file, typing, saving and quitting leaves the edit on disk.
+    #[tokio::test]
+    async fn open_edit_save_quit() {
+        let dir = temp_dir();
+        let path = dir.join("notes.txt");
+        fs::write(&path, "world\n").expect("write");
+        let mut app = start(&path);
+        assert_eq!(app.editor.document().path(), Some(path.as_path()));
+        type_text(&mut app, "hello\n");
+        app.handle_event(press("ctrl+s"));
+        assert_eq!(fs::read_to_string(&path).expect("read"), "hello\nworld\n");
+        app.handle_event(press("ctrl+q"));
+        assert!(app.quit);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Quitting with unsaved changes asks for a second press first.
+    #[tokio::test]
+    async fn quit_guards_unsaved_changes() {
+        let dir = temp_dir();
+        let path = dir.join("draft.txt");
+        fs::write(&path, "").expect("write");
+        let mut app = start(&path);
+        type_text(&mut app, "unsaved");
+        app.handle_event(press("ctrl+q"));
+        assert!(!app.quit, "the first press should only warn");
+        app.handle_event(press("ctrl+q"));
+        assert!(app.quit);
+        assert_eq!(fs::read_to_string(&path).expect("read"), "");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Undo and redo go through the keymap and back to the same text.
+    #[tokio::test]
+    async fn undo_and_redo() {
+        let dir = temp_dir();
+        let path = dir.join("undo.txt");
+        fs::write(&path, "").expect("write");
+        let mut app = start(&path);
+        type_text(&mut app, "abc");
+        app.handle_event(press("ctrl+z"));
+        assert_eq!(app.editor.document().text().to_string(), "");
+        app.handle_event(press("ctrl+y"));
+        assert_eq!(app.editor.document().text().to_string(), "abc");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The command palette opens over the file and typing filters it.
+    #[tokio::test]
+    async fn palette_runs_a_command() {
+        let dir = temp_dir();
+        let path = dir.join("palette.txt");
+        fs::write(&path, "one\ntwo\nthree\n").expect("write");
+        let mut app = start(&path);
+        app.handle_event(press("ctrl+shift+p"));
+        // popups fill their list when they are first drawn
+        app.snapshot("80x24", Duration::ZERO, &[])
+            .await
+            .expect("snapshot");
+        type_text(&mut app, "select all");
+        app.handle_event(press("enter"));
+        app.run_requests();
+        let selection = app.editor.document().selection();
+        assert_eq!((selection.from(), selection.to()), (0, 14));
+        let screen = app
+            .snapshot("60x10", Duration::ZERO, &[])
+            .await
+            .expect("snapshot");
+        assert!(screen.contains("palette.txt"), "{screen}");
+        let _ = fs::remove_dir_all(dir);
     }
 }
