@@ -141,7 +141,7 @@
 - [x] Scripted event loop tests (open, edit, save, quit)
 - [x] Benchmark a 100 MB file and a very long single line
 - [x] Tree-sitter parsing off the UI thread
-- [ ] Incremental tree-sitter parsing, it still parses the whole file in the background
+- [x] Incremental tree-sitter parsing and highlighting of only what changed
 - [x] Profile idle CPU use of audio, flair ticks and the resource monitor
 
 ## Extensions
