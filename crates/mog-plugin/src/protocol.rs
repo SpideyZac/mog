@@ -42,6 +42,25 @@ pub const REQUESTS: &[&str] = &[
     "actions",
     "ui/pick",
     "ui/prompt",
+    "ui/layout",
+];
+
+/// Every notification a plugin can send to mog.
+pub const NOTIFICATIONS: &[&str] = &[
+    "actions",
+    "status",
+    "notify",
+    "log",
+    "segment",
+    "progress",
+    "diagnostics",
+    "decorations",
+    "output",
+    "draw",
+    "clear",
+    "cursor",
+    "capture",
+    "timer",
 ];
 
 /// Every action a plugin can ask for.
@@ -467,6 +486,7 @@ pub fn initialize_params(root: &str, settings: &Value) -> Value {
         "capabilities": {
             "events": EVENTS,
             "requests": REQUESTS,
+            "notifications": NOTIFICATIONS,
             "actions": ACTIONS,
             "providers": PROVIDERS,
         },

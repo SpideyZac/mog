@@ -7,6 +7,7 @@ use std::{
 };
 
 use crossterm::{
+    cursor::SetCursorStyle,
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -17,10 +18,14 @@ use crossterm::{
         supports_keyboard_enhancement,
     },
 };
+use mog_tui::{CursorShape, CursorStyle};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 /// Whether the kitty keyboard protocol is on, so [`restore`] turns it off again.
 static KEYS_ENHANCED: AtomicBool = AtomicBool::new(false);
+
+/// Whether a plugin changed the cursor shape, so [`restore`] puts the usual one back.
+static CURSOR_STYLED: AtomicBool = AtomicBool::new(false);
 
 /// The terminal type the editor draws to.
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
@@ -59,9 +64,28 @@ pub fn restore() -> io::Result<()> {
     if KEYS_ENHANCED.swap(false, Ordering::Relaxed) {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
+    if CURSOR_STYLED.swap(false, Ordering::Relaxed) {
+        let _ = execute!(stdout(), SetCursorStyle::DefaultUserShape);
+    }
     let _ = execute!(stdout(), DisableBracketedPaste);
     execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen)?;
     disable_raw_mode()
+}
+
+/// Returns the terminal command that gives the cursor `style`.
+pub fn cursor_style(style: CursorStyle) -> SetCursorStyle {
+    if style != CursorStyle::default() {
+        CURSOR_STYLED.store(true, Ordering::Relaxed);
+    }
+    match (style.shape, style.blink) {
+        (CursorShape::Default, _) => SetCursorStyle::DefaultUserShape,
+        (CursorShape::Block, true) => SetCursorStyle::BlinkingBlock,
+        (CursorShape::Block, false) => SetCursorStyle::SteadyBlock,
+        (CursorShape::Bar, true) => SetCursorStyle::BlinkingBar,
+        (CursorShape::Bar, false) => SetCursorStyle::SteadyBar,
+        (CursorShape::Underline, true) => SetCursorStyle::BlinkingUnderScore,
+        (CursorShape::Underline, false) => SetCursorStyle::SteadyUnderScore,
+    }
 }
 
 /// Returns whether the kitty keyboard protocol is on, so every chord reaches mog.

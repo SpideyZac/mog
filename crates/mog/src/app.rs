@@ -28,10 +28,10 @@ use mog_flair::{GraphView, builtin::screensaver};
 use mog_lsp::{LspEvent, convert, features::CodeAction};
 use mog_term::TerminalPanel;
 use mog_tui::{
-    Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, DebugPanel,
-    EditorView, EventResult, Explorer, Focus, GitPanel, Minimap, OutputPanel, Overlay, Popups,
-    ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel, StatusLine, Tabs,
-    Theme, ThemeEditor, Ui, UiEvent, input,
+    Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CursorStyle,
+    DebugPanel, EditorView, EventResult, Explorer, Focus, GitPanel, Minimap, OutputPanel, Overlay,
+    PluginWidgets, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar,
+    SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent, input,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -51,7 +51,7 @@ use crate::{
     session::{Session, State, Swap},
     settings::{self, ProjectStatus},
     tasks::{Runner, Task},
-    terminal::Tui,
+    terminal::{self, Tui},
     update::{Release, Updater},
     watch::FolderWatcher,
 };
@@ -203,6 +203,8 @@ pub struct App {
     discord_status: Option<Status>,
     /// The screen size at the last draw, used to place mouse events.
     screen: Rect,
+    /// The cursor look last sent to the terminal.
+    cursor_style: CursorStyle,
     /// When the last key or mouse event came in, to know when the screensaver is up.
     last_input: Instant,
     /// Finds and installs new releases.
@@ -318,6 +320,7 @@ impl App {
         ui.flairs = flair.describe();
         ui.explorer_footer = flair.sidebar_height();
         compositor.push(Box::new(flair));
+        compositor.push(Box::new(PluginWidgets::new()));
         compositor.push(Box::new(StatusLine::new()));
         compositor.push(Box::new(CompletionMenu::new()));
         compositor.push(Box::new(Popups::new()));
@@ -378,6 +381,7 @@ impl App {
             discord: None,
             discord_status: None,
             screen: Rect::default(),
+            cursor_style: CursorStyle::default(),
             last_input: Instant::now(),
             updater: Updater::new(),
             update: None,
@@ -479,6 +483,7 @@ impl App {
             self.ui.idle = self.last_input.elapsed() >= IDLE_AFTER;
             self.draw(terminal)?;
             let animating = self.compositor.is_animating();
+            let next_timer = self.next_plugin_timer();
             let next_frame = last_tick + self.frame_time();
             tokio::select! {
                 event = events.next() => match event {
@@ -501,6 +506,7 @@ impl App {
                 }
                 () = changed(self.watcher.as_ref()) => self.files_changed = true,
                 () = time::sleep_until(idle_at.into()), if typing => {}
+                () = time::sleep_until(next_timer.unwrap_or(idle_at).into()), if next_timer.is_some() => {}
                 _ = housekeeping.tick() => self.housekeeping(),
                 () = time::sleep_until(next_frame.into()), if animating => {
                     let now = Instant::now();
@@ -601,6 +607,10 @@ impl App {
             cursor = self.compositor.render(frame, &mut cx);
         })?;
         let backend = terminal.backend_mut();
+        if self.ui.cursor_style != self.cursor_style {
+            self.cursor_style = self.ui.cursor_style;
+            queue!(backend, terminal::cursor_style(self.cursor_style))?;
+        }
         if let Some(cursor) = cursor {
             queue!(backend, MoveTo(cursor.x, cursor.y), Show)?;
         }
@@ -671,9 +681,16 @@ impl App {
         }
     }
 
-    /// Offers a key to the layers, then runs its bound command if none of them took it.
+    /// Offers a key to the plugins that take keys, then to the editor.
     fn handle_key(&mut self, chord: KeyChord) {
         self.ui.events.push(UiEvent::Activity);
+        if !self.plugin_takes_key(chord) {
+            self.editor_key(chord);
+        }
+    }
+
+    /// Offers a key to the layers, then runs its bound command if none of them took it.
+    fn editor_key(&mut self, chord: KeyChord) {
         let mut cx = Context {
             editor: &mut self.editor,
             theme: &self.theme,

@@ -12,6 +12,7 @@ use std::{
 
 use futures::future;
 use mog_config::{PluginConfig, config_dir};
+use mog_core::KeyChord;
 use mog_plugin::{
     Action, DEFAULT_TIMEOUT, Hello, Manifest, Plugin, PluginCommand, PluginEvent, Spec, discover,
 };
@@ -49,6 +50,15 @@ pub enum PluginUpdate {
         version: u64,
         /// Each plugin's answer as `(plugin, result)`.
         answers: Vec<(String, Result<Value, String>)>,
+    },
+    /// A plugin that takes keys answered what to do with one.
+    Key {
+        /// The plugin that took the key.
+        plugin: String,
+        /// The key.
+        chord: KeyChord,
+        /// Its answer, or why there is none.
+        answer: Result<Value, String>,
     },
 }
 

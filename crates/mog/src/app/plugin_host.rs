@@ -19,7 +19,7 @@ use mog_plugin::{
     protocol::{parse_action, parse_selections},
 };
 use mog_tui::{
-    CommandInfo, Overlay, PluginSegment, PromptKind,
+    CommandInfo, CursorStyle, Overlay, PluginSegment, PromptKind,
     completion::{CompletionItem, ItemKind},
     picker::PickerItem,
 };
@@ -30,6 +30,10 @@ use crate::{
     commands,
     plugins::{PluginUpdate, ask_providers, split_command},
 };
+
+mod screen;
+
+use screen::ScreenState;
 
 /// How long plugins get to change a file before it is saved.
 const BEFORE_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -64,6 +68,8 @@ pub struct PluginState {
     decorations: HashMap<PathBuf, FileDecorations>,
     /// Code actions plugins offered, as `(plugin, actions)`, by menu index.
     pub code_actions: Vec<(String, Vec<Action>)>,
+    /// What plugins put on the screen and which keys they take.
+    screen: ScreenState,
 }
 
 /// Reads a severity name.
@@ -211,6 +217,9 @@ impl App {
     pub(super) fn restart_plugins(&mut self) {
         let problems = self.plugins.restart_all();
         self.ui.plugin_segments.clear();
+        self.ui.plugin_widgets.clear();
+        self.ui.cursor_style = CursorStyle::default();
+        self.plugin_state.screen = ScreenState::default();
         self.refresh_commands();
         self.editor.set_status(if problems.is_empty() {
             "plugins restarted".to_owned()
@@ -277,6 +286,15 @@ impl App {
     /// Returns what the editor looks like, for a plugin.
     pub(super) fn plugin_context(&self) -> Value {
         let document = self.editor.document();
+        let mut context = self.cursor_context();
+        // a huge file would be slow to copy and to send, editor/text can read parts of it
+        context["text"] = json!((!document.is_large()).then(|| document.text().to_string()));
+        context
+    }
+
+    /// Returns where the cursor is and which file it is in, without the text.
+    fn cursor_context(&self) -> Value {
+        let document = self.editor.document();
         let text = document.text();
         let selection = document.selection();
         let line = text.char_to_line(selection.head);
@@ -289,9 +307,8 @@ impl App {
             "root": self.ui.root.to_string_lossy(),
             "path": document.path().map(|path| path.to_string_lossy()),
             "language": language(document.path()),
-            // a huge file would be slow to copy and to send, editor/text can read parts of it
-            "text": (!document.is_large()).then(|| text.to_string()),
             "length": text.len_chars(),
+            "lines": text.len_lines(),
             "version": document.version(),
             "selection": { "anchor": selection.anchor, "head": selection.head },
             "selections": selections,
@@ -363,6 +380,11 @@ impl App {
                 version,
                 answers,
             } => self.finish_before_save(&path, version, answers),
+            PluginUpdate::Key {
+                plugin,
+                chord,
+                answer,
+            } => self.finish_key(&plugin, chord, answer),
         }
     }
 
@@ -398,6 +420,7 @@ impl App {
         for decorations in self.plugin_state.decorations.values_mut() {
             decorations.remove(plugin);
         }
+        self.clear_plugin_screen(plugin);
         self.sync_decorations();
         let source = format!("plugin:{plugin}");
         for document in self.editor.documents_mut() {
@@ -409,6 +432,12 @@ impl App {
 
     /// Handles a notification a plugin sent.
     fn plugin_notification(&mut self, plugin: &str, method: &str, params: &Value) {
+        if let Some(result) = self.screen_notification(plugin, method, params) {
+            if let Err(err) = result {
+                self.plugins.log(plugin, format!("{method}: {err}"));
+            }
+            return;
+        }
         match method {
             "actions" => {
                 let applied = parse_actions(params).and_then(|actions| self.apply_actions(actions));
@@ -638,6 +667,7 @@ impl App {
     fn answer_plugin(&mut self, plugin: String, id: Value, method: &str, params: &Value) {
         let result = match method {
             "editor/context" => Ok(self.plugin_context()),
+            "ui/layout" => Ok(self.screen_layout()),
             "editor/text" => self.read_text(params),
             "editor/documents" => Ok(self.list_documents()),
             "editor/diagnostics" => self.list_diagnostics(params),
@@ -1074,6 +1104,7 @@ impl App {
     /// Sends plugins what changed since the last frame: edits, closed files, where the cursor
     /// rests and whether the user went idle. Also restarts plugins that crashed a while ago.
     pub(super) fn sync_plugin_events(&mut self, typing: bool) {
+        self.sync_plugin_screen();
         let problems = self.plugins.restart_due();
         if !problems.is_empty() {
             self.editor.set_status(problems.join("; "));
