@@ -246,7 +246,7 @@ class Vim:
         if token in ("<redo>", "<pagedown>", "<pageup>"):
             self.keys = ""
             self.show_keys()
-            name = {"<redo>": "redo", "<pagedown>": "page_down", "<pageup>": "page_up"}[token]
+            name = {"<redo>": "redo", "<pagedown>": "move_page_down", "<pageup>": "move_page_up"}[token]
             return [command(name)]
         self.keys += token
         parsed = self.parse(self.keys)
