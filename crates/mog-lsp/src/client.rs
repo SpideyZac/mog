@@ -481,7 +481,10 @@ fn initialize_params(root: &Path, settings: &Value) -> Value {
         ],
         "formats": ["relative"],
     });
-    params["capabilities"]["workspace"]["symbol"] = json!({ "dynamicRegistration": false });
+    let workspace = &mut params["capabilities"]["workspace"];
+    workspace["symbol"] = json!({ "dynamicRegistration": false });
+    workspace["semanticTokens"] = json!({ "refreshSupport": true });
+    workspace["inlayHint"] = json!({ "refreshSupport": true });
     params
 }
 
@@ -641,6 +644,14 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                                 settings_section(&self.settings, item["section"].as_str()).clone()
                             })
                             .collect()
+                    }
+                    "workspace/semanticTokens/refresh" | "workspace/inlayHint/refresh" => {
+                        let _ = self.events.send(LspEvent::Notification {
+                            server: self.name.clone(),
+                            method: method.clone(),
+                            params,
+                        });
+                        Value::Null
                     }
                     "window/showDocument" => {
                         let _ = self.events.send(LspEvent::ShowDocument {

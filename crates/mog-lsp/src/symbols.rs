@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use lsp_types::{
-    DocumentSymbol, DocumentSymbolResponse, InlayHint as LspInlayHint, InlayHintLabel, Location,
-    OneOf, ParameterLabel, Position, Range, SemanticToken as Packed, SemanticTokensResult,
-    SignatureHelp, SymbolKind, WorkspaceSymbolResponse,
+    DocumentSymbol, DocumentSymbolResponse, InlayHint as LspInlayHint, InlayHintKind,
+    InlayHintLabel, Location, OneOf, ParameterLabel, Position, Range, SemanticToken as Packed,
+    SemanticTokensResult, SignatureHelp, SymbolKind, WorkspaceSymbolResponse,
 };
 use serde_json::{Value, json};
 
@@ -22,6 +22,8 @@ pub struct InlayHint {
     pub position: Position,
     /// The note text.
     pub label: String,
+    /// Whether it names a parameter at a call, instead of showing a type.
+    pub parameter: bool,
 }
 
 /// The signature of the call around the cursor.
@@ -262,6 +264,7 @@ impl Client {
                 InlayHint {
                     position: hint.position,
                     label,
+                    parameter: hint.kind == Some(InlayHintKind::PARAMETER),
                 }
             })
             .collect())
