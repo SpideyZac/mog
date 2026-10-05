@@ -66,6 +66,7 @@ for plugins.
   `examples/plugins` is a copy of `sdk/python/mog_plugin.py`, a test checks they match.
 - Plugin screen and keys: widgets are drawn by `mog_tui::PluginWidgets`, and
   `crates/mog/src/app/plugin_host/screen.rs` handles `draw`, `capture`, `cursor` and `timer`.
+- Releases: `docs/releasing.md`, templates in `packaging/`, workflows in `.github/workflows`.
 - Debugger: `mog-dap` is the client, `crates/mog/src/debug.rs` runs sessions, built in adapters
   are in `mog-config/src/tasks.rs`. Tasks and their output parsing live in
   `crates/mog/src/tasks.rs` and `mog-core/src/problems.rs`.

@@ -1,5 +1,8 @@
 # Packaging
 
+See [docs/releasing.md](../docs/releasing.md) for the whole release process and a step by step
+setup of each package manager.
+
 Every release renders these templates with `render.sh` and attaches the results to the GitHub
 release. The `packages` job in `.github/workflows/release.yml` also publishes each one whose
 secret is set, and skips the rest.

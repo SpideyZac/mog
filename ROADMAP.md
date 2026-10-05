@@ -134,6 +134,7 @@
 - [x] winget
 - [x] AUR package
 - [x] `cargo-binstall` metadata
+- [x] Guide to releasing and publishing every package
 
 ## Quality
 

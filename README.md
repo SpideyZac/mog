@@ -73,6 +73,7 @@ cargo binstall --git https://github.com/SpideyZac/mog mog  # anywhere with cargo
 Or grab a build for Windows, macOS or Linux from
 [releases](https://github.com/SpideyZac/mog/releases), unpack it and put `mog` somewhere on your
 `PATH`. Package manager installs are updated by the package manager, mog leaves them alone.
+[docs/releasing.md](docs/releasing.md) explains how releases and the packages are made.
 
 mog updates itself. When a new release is out it downloads in the background, checks its
 [minisign](https://jedisct1.github.io/minisign/) signature against the key built into mog and is
