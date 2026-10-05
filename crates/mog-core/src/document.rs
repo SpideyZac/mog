@@ -11,6 +11,7 @@ use ropey::Rope;
 use crate::{
     diagnostic::Diagnostic,
     history::{History, Step},
+    marks::{InlayHint, LineMarks, SemanticToken},
     range::Range,
     transaction::Transaction,
 };
@@ -75,6 +76,10 @@ pub struct Document {
     diagnostics: Vec<Diagnostic>,
     /// Extra cursors besides the main selection.
     cursors: Vec<Range>,
+    /// Notes a language server wants shown after lines.
+    inlay_hints: LineMarks<InlayHint>,
+    /// What a language server says each run of text is.
+    semantic_tokens: LineMarks<SemanticToken>,
 }
 
 impl Document {
@@ -213,6 +218,26 @@ impl Document {
     pub fn set_diagnostics(&mut self, mut diagnostics: Vec<Diagnostic>) {
         diagnostics.sort_by_key(|diagnostic| (diagnostic.from, diagnostic.to));
         self.diagnostics = diagnostics;
+    }
+
+    /// Returns the inlay hints of `line`, or none if it changed since they were worked out.
+    pub fn inlay_hints(&self, line: usize) -> &[InlayHint] {
+        self.inlay_hints.on_line(&self.text, line)
+    }
+
+    /// Replaces the inlay hints, given as `(line, hint)` for the current text.
+    pub fn set_inlay_hints(&mut self, hints: Vec<(usize, InlayHint)>) {
+        self.inlay_hints = LineMarks::new(&self.text, hints);
+    }
+
+    /// Returns the semantic tokens of `line`, or none if it changed since they were worked out.
+    pub fn semantic_tokens(&self, line: usize) -> &[SemanticToken] {
+        self.semantic_tokens.on_line(&self.text, line)
+    }
+
+    /// Replaces the semantic tokens, given as `(line, token)` for the current text.
+    pub fn set_semantic_tokens(&mut self, tokens: Vec<(usize, SemanticToken)>) {
+        self.semantic_tokens = LineMarks::new(&self.text, tokens);
     }
 
     /// Applies `tx`, records it for undo and moves the selection to `after`.
