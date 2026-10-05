@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    fs,
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -43,6 +44,30 @@ impl FileStatus {
             _ => Self::Modified,
         })
     }
+}
+
+/// A changed file, with what is staged and what is not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileChange {
+    /// The file, as an absolute path.
+    pub path: PathBuf,
+    /// The change staged for the next commit, if any.
+    pub staged: Option<FileStatus>,
+    /// The change in the working tree that is not staged, if any.
+    pub unstaged: Option<FileStatus>,
+}
+
+/// Returns what one letter of a `git status --porcelain` code means.
+fn status_letter(letter: char) -> Option<FileStatus> {
+    Some(match letter {
+        'M' | 'T' => FileStatus::Modified,
+        'A' => FileStatus::Added,
+        'D' => FileStatus::Deleted,
+        'R' | 'C' => FileStatus::Renamed,
+        'U' => FileStatus::Conflicted,
+        '?' => FileStatus::Untracked,
+        _ => return None,
+    })
 }
 
 /// Who last changed a line and when.
@@ -172,6 +197,156 @@ impl Repo {
         statuses
     }
 
+    /// Returns every changed file with its staged and unstaged parts, sorted by path.
+    pub fn changes(&self) -> Vec<FileChange> {
+        let Some(output) = self.git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        else {
+            return Vec::new();
+        };
+        let mut changes = Vec::new();
+        let mut entries = output.split('\0');
+        while let Some(entry) = entries.next() {
+            if entry.len() < 4 {
+                continue;
+            }
+            let (code, path) = entry.split_at(3);
+            let mut letters = code.chars();
+            let (x, y) = (letters.next().unwrap_or(' '), letters.next().unwrap_or(' '));
+            if matches!(x, 'R' | 'C') {
+                entries.next();
+            }
+            let conflicted = FileStatus::from_code(code) == Some(FileStatus::Conflicted);
+            let (staged, unstaged) = if conflicted {
+                (None, Some(FileStatus::Conflicted))
+            } else if x == '?' {
+                (None, Some(FileStatus::Untracked))
+            } else {
+                (status_letter(x), status_letter(y))
+            };
+            changes.push(FileChange {
+                path: normalize(&self.root.join(path)),
+                staged,
+                unstaged,
+            });
+        }
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        changes
+    }
+
+    /// Returns the text of `path` staged in the index, or `None` if it is not in the index.
+    pub fn index_text(&self, path: &Path) -> Option<String> {
+        let relative = self.relative(path)?;
+        self.git(&["show", &format!(":{relative}")])
+    }
+
+    /// Returns the diff of `path` as `git diff` prints it, of what is staged if `staged` is set.
+    ///
+    /// A file git does not know yet comes back as all added.
+    pub fn diff(&self, path: &Path, staged: bool) -> String {
+        let Some(relative) = self.relative(path) else {
+            return String::new();
+        };
+        let mut args = vec!["diff", "--no-color", "--no-ext-diff"];
+        if staged {
+            args.push("--cached");
+        }
+        args.extend(["--", &relative]);
+        let diff = self.git(&args).unwrap_or_default();
+        if !diff.is_empty() || staged {
+            return diff;
+        }
+        // untracked files have no diff, so show them as all new
+        match fs::read_to_string(path) {
+            Ok(text) => {
+                let mut out = format!(
+                    "new file {relative}\n@@ -0,0 +1,{} @@\n",
+                    text.lines().count()
+                );
+                for line in text.lines() {
+                    out.push('+');
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                out
+            }
+            Err(_) => String::new(),
+        }
+    }
+
+    /// Stages all of `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns what git said if it failed.
+    pub fn stage(&self, path: &Path) -> Result<(), String> {
+        let relative = self
+            .relative(path)
+            .ok_or("the file is outside the repository")?;
+        self.git_checked(&["add", "--", &relative], None).map(drop)
+    }
+
+    /// Stages every change in the working tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns what git said if it failed.
+    pub fn stage_all(&self) -> Result<(), String> {
+        self.git_checked(&["add", "--all"], None).map(drop)
+    }
+
+    /// Takes all of `path` out of the next commit, keeping the changes in the working tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns what git said if it failed.
+    pub fn unstage(&self, path: &Path) -> Result<(), String> {
+        let relative = self
+            .relative(path)
+            .ok_or("the file is outside the repository")?;
+        if self.git(&["rev-parse", "--verify", "-q", "HEAD"]).is_some() {
+            self.git_checked(&["reset", "-q", "HEAD", "--", &relative], None)
+        } else {
+            // before the first commit there is no HEAD to reset to
+            self.git_checked(&["rm", "--cached", "-q", "--", &relative], None)
+        }
+        .map(drop)
+    }
+
+    /// Puts `text` in the index as the staged content of `path`, without touching the file.
+    ///
+    /// This is how single hunks are staged and unstaged.
+    ///
+    /// # Errors
+    ///
+    /// Returns what git said if it failed.
+    pub fn set_index_text(&self, path: &Path, text: &str) -> Result<(), String> {
+        let relative = self
+            .relative(path)
+            .ok_or("the file is outside the repository")?;
+        let id = self.git_checked(&["hash-object", "-w", "--stdin"], Some(text))?;
+        let mode = self
+            .git(&["ls-files", "-s", "--", &relative])
+            .and_then(|line| line.split_whitespace().next().map(str::to_owned))
+            .unwrap_or_else(|| "100644".into());
+        let info = format!("{mode},{},{relative}", id.trim());
+        self.git_checked(&["update-index", "--add", "--cacheinfo", &info], None)
+            .map(drop)
+    }
+
+    /// Commits what is staged with `message` and returns the short id of the new commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns what git said if it failed, like when nothing is staged.
+    pub fn commit(&self, message: &str) -> Result<String, String> {
+        self.git_checked(&["commit", "-q", "-F", "-"], Some(message))?;
+        Ok(self
+            .git(&["rev-parse", "--short", "HEAD"])
+            .unwrap_or_default()
+            .trim()
+            .to_owned())
+    }
+
     /// Returns the text of `path` in the last commit, or `None` if it is not committed.
     pub fn head_text(&self, path: &Path) -> Option<String> {
         let relative = self.relative(path)?;
@@ -212,6 +387,42 @@ impl Repo {
     /// Runs git in the root with `args`.
     fn git(&self, args: &[&str]) -> Option<String> {
         run(&self.root, args, None)
+    }
+
+    /// Runs git in the root with `args` and `input`, returning what it printed or what it
+    /// complained about.
+    fn git_checked(&self, args: &[&str], input: Option<&str>) -> Result<String, String> {
+        let mut child = Command::new("git")
+            .args(args)
+            .current_dir(&self.root)
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("could not run git: {err}"))?;
+        if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+            stdin
+                .write_all(text.as_bytes())
+                .map_err(|err| err.to_string())?;
+        }
+        let output = child.wait_with_output().map_err(|err| err.to_string())?;
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let message = stderr
+            .lines()
+            .chain(stdout.lines())
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("git failed")
+            .to_owned();
+        Err(message)
     }
 }
 
@@ -264,7 +475,59 @@ fn run(dir: &Path, args: &[&str], input: Option<&str>) -> Option<String> {
 #[cfg(test)]
 /// Tests for repository helpers.
 mod tests {
-    use super::{Blame, FileStatus, parse_blame, relative_time};
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+        process,
+    };
+
+    use super::{Blame, FileStatus, Repo, parse_blame, relative_time, run};
+    use crate::diff::{apply_hunk, hunks};
+
+    /// Makes a fresh repository with one committed file, or `None` without git.
+    fn temp_repo(name: &str) -> Option<(Repo, PathBuf)> {
+        let dir = env::temp_dir().join(format!("mog-git-{name}-{}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).ok()?;
+        run(&dir, &["init", "-q"], None)?;
+        run(&dir, &["config", "user.email", "mog@example.com"], None)?;
+        run(&dir, &["config", "user.name", "mog"], None)?;
+        run(&dir, &["config", "core.autocrlf", "false"], None)?;
+        let file = dir.join("notes.txt");
+        fs::write(&file, "a\nb\nc\nd\ne\n").ok()?;
+        run(&dir, &["add", "."], None)?;
+        run(&dir, &["commit", "-q", "-m", "first"], None)?;
+        Some((Repo::discover(&dir)?, file))
+    }
+
+    /// One hunk can be staged and committed while the other stays in the working tree.
+    #[test]
+    fn stages_one_hunk_and_commits() {
+        let Some((repo, file)) = temp_repo("hunk") else {
+            return;
+        };
+        let changed = "a\nB\nc\nd\nE\n";
+        fs::write(&file, changed).expect("write");
+        let index = repo.index_text(&file).expect("in the index");
+        let found = hunks(&index, changed);
+        assert_eq!(found.len(), 2);
+        repo.set_index_text(&file, &apply_hunk(&index, changed, &found[0]))
+            .expect("staged");
+        let changes = repo.changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].staged, Some(FileStatus::Modified));
+        assert_eq!(changes[0].unstaged, Some(FileStatus::Modified));
+        assert!(repo.diff(&file, true).contains("+B"));
+        assert!(!repo.diff(&file, true).contains("+E"));
+        let id = repo.commit("stage one").expect("committed");
+        assert!(!id.is_empty());
+        assert_eq!(repo.head_text(&file).as_deref(), Some("a\nB\nc\nd\ne\n"));
+        repo.stage(&file).expect("staged");
+        repo.unstage(&file).expect("unstaged");
+        assert_eq!(repo.changes()[0].staged, None);
+        assert!(repo.commit("nothing").is_err());
+        let _ = fs::remove_dir_all(Path::new(repo.root()));
+    }
 
     /// Porcelain codes map to statuses.
     #[test]

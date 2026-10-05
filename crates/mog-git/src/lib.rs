@@ -6,5 +6,5 @@
 pub mod diff;
 pub mod repo;
 
-pub use diff::{LineChange, line_changes};
-pub use repo::{Blame, FileStatus, Repo};
+pub use diff::{Hunk, LineChange, apply_hunk, hunks, line_changes, map_line, revert_hunk};
+pub use repo::{Blame, FileChange, FileStatus, Repo};
