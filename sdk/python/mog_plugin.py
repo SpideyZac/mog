@@ -107,6 +107,18 @@ def output(text, title="plugin"):
     return {"type": "output", "title": title, "text": text}
 
 
+def span(text, fg=None, bg=None, bold=False, italic=False, underline=False):
+    """A piece of a widget row in one style. Colors are theme color names or hex codes."""
+    piece = {"text": text}
+    for key, value in (("fg", fg), ("bg", bg)):
+        if value is not None:
+            piece[key] = value
+    for key, value in (("bold", bold), ("italic", italic), ("underline", underline)):
+        if value:
+            piece[key] = True
+    return piece
+
+
 class Plugin:
     """A mog plugin. Register handlers with the decorators, then call run()."""
 
@@ -118,6 +130,10 @@ class Plugin:
         self._events = {}
         self._providers = {}
         self._waiting = []
+        self._key = None
+        self._timers = {}
+        self._early = []
+        self._ready = False
         self._next_id = 0
         self._cancelled = set()
         self.root = None
@@ -158,6 +174,24 @@ class Plugin:
 
         def register(handler):
             self._providers[provider] = (handler, languages)
+            return handler
+
+        return register
+
+    def on_key(self, handler):
+        """Registers the handler for keys this plugin takes, see capture(). It gets (key, char,
+        context): the key like "shift+g", the char it types or None, and where the cursor is.
+        It returns a list of actions, None when it used the key and has nothing to do, False to
+        let the editor have the key, or a dict like {"actions": [...], "capture": {...}}."""
+        self._key = handler
+        return handler
+
+    def every(self, ms, id="timer"):
+        """Registers a handler mog calls every ms milliseconds, with no arguments."""
+
+        def register(handler):
+            self._timers[id] = handler
+            self.timer(id, ms)
             return handler
 
         return register
@@ -207,8 +241,13 @@ class Plugin:
         raise MogError("mog went away")
 
     def notify(self, method, params=None):
-        """Sends mog a notification, like "segment" or "diagnostics"."""
-        self._write({"method": method, "params": params or {}})
+        """Sends mog a notification, like "segment" or "diagnostics". Ones sent before mog
+        said hello go out right after."""
+        message = {"method": method, "params": params or {}}
+        if self._ready:
+            self._write(message)
+        else:
+            self._early.append(message)
 
     def actions(self, actions):
         """Asks mog to do actions now, without waiting for a command."""
@@ -246,6 +285,40 @@ class Plugin:
         text and an optional color."""
         self.notify("decorations", {"path": path, "decorations": list(decorations)})
 
+    def draw(self, id, lines=None, frames=None, anchor="top_left", x=0, y=0, **options):
+        """Puts a widget on the screen, or replaces the one with this id. lines is a list of
+        rows, each a string or a list of span(). frames is a list of such lists to cycle
+        through at fps. Other options: fps, flair, transparent, clickable, fg, bg, z, motion
+        (a dict with dx, dy and edge), restart. Anchors are top_left, top_right, bottom_left,
+        bottom_right, center, cursor and screen."""
+        params = {"id": id, "anchor": anchor, "x": x, "y": y}
+        if frames is not None:
+            params["frames"] = frames
+        else:
+            params["lines"] = lines or []
+        params.update(options)
+        self.notify("draw", params)
+
+    def clear(self, id=None):
+        """Removes the widget with this id, or every widget of this plugin."""
+        self.notify("clear", {} if id is None else {"id": id})
+
+    def cursor(self, shape="default", blink=False):
+        """Sets the cursor shape: default, block, bar or underline."""
+        self.notify("cursor", {"shape": shape, "blink": blink})
+
+    def capture(self, keys=None, except_keys=None):
+        """Takes keys before the editor does, handing them to on_key(). keys is "all", a list
+        like ["esc"], or None to take none. except_keys are left alone when taking all."""
+        params = {"keys": keys}
+        if except_keys:
+            params["except"] = list(except_keys)
+        self.notify("capture", params)
+
+    def timer(self, id, ms):
+        """Starts a timer that sends the "timer" event every ms milliseconds, 0 stops it."""
+        self.notify("timer", {"id": id, "every": ms})
+
     # running
 
     def _hello(self, params):
@@ -265,6 +338,15 @@ class Plugin:
         params = message.get("params") or {}
         if method == "initialize":
             return self._hello(params)
+        if method == "key":
+            if self._key is None:
+                return {"handled": False}
+            answer = self._key(params.get("key"), params.get("char"), params)
+            if answer is False:
+                return {"handled": False}
+            if isinstance(answer, dict):
+                return answer
+            return {"actions": answer or []}
         if method == "command":
             handler = self._commands.get(params.get("command"))
             if handler is None:
@@ -298,9 +380,17 @@ class Plugin:
                     self._cancelled.discard(message["id"])
                 else:
                     self._write(reply)
+                if method == "initialize":
+                    self._ready = True
+                    for early in self._early:
+                        self._write(early)
+                    self._early = []
             elif method == "event":
                 params = message.get("params") or {}
                 handler = self._events.get(params.get("kind"))
+                if params.get("kind") == "timer" and params.get("id") in self._timers:
+                    timer = self._timers[params["id"]]
+                    handler = lambda _params: timer()  # noqa: E731
                 if handler:
                     try:
                         handler(params)

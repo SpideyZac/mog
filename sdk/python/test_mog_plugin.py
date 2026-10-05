@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from mog_plugin import Plugin, change, status  # noqa: E402
+from mog_plugin import Plugin, change, command, span, status  # noqa: E402
 
 
 def frame(message):
@@ -38,6 +38,10 @@ script = b"".join(
         {"method": "$/cancelRequest", "params": {"id": 5}},
         {"id": 5, "method": "provide/hover", "params": {}},
         {"method": "event", "params": {"kind": "saved", "path": "a"}},
+        {"id": 6, "method": "key", "params": {"key": "j", "char": "j"}},
+        {"id": 7, "method": "key", "params": {"key": "i", "char": "i"}},
+        {"id": 8, "method": "key", "params": {"key": "x", "char": "x"}},
+        {"method": "event", "params": {"kind": "timer", "id": "blink"}},
         {"method": "shutdown"},
     ]
 )
@@ -67,7 +71,40 @@ def hover(params):
     return {"text": "hi"}
 
 
+@plugin.on_key
+def on_key(key, char, context):
+    if key == "j":
+        return [command("move_down")]
+    if key == "i":
+        return {"capture": {"keys": ["esc"]}}
+    return False
+
+
+ticks = []
+
+
+@plugin.every(500, id="blink")
+def blink():
+    ticks.append(1)
+    plugin.draw("eye", [[span("o", fg="red", bold=True), "_o"]], anchor="cursor", y=1)
+
+
+# sent before mog said hello, so it waits until after the answer
+plugin.capture("all", except_keys=["ctrl+s"])
+
 plugin.run()
+messages = unframe(out.getvalue())
+notes = [m for m in messages if "method" in m]
+assert "id" in messages[0], "the hello answer goes first"
+assert notes[0] == {
+    "jsonrpc": "2.0",
+    "method": "timer",
+    "params": {"id": "blink", "every": 500},
+}
+assert notes[1]["params"] == {"keys": "all", "except": ["ctrl+s"]}
+assert notes[-1]["method"] == "draw"
+assert notes[-1]["params"]["lines"] == [[{"text": "o", "fg": "red", "bold": True}, "_o"]]
+assert ticks == [1]
 replies = {m["id"]: m for m in unframe(out.getvalue()) if "method" not in m}
 hello = replies[0]["result"]
 assert hello["protocolVersion"] == 2
@@ -80,4 +117,7 @@ assert replies[3]["result"]["text"] == "hi"
 assert "no command" in replies[4]["error"]["message"]
 assert 5 not in replies, "a cancelled request gets no answer"
 assert saved == ["a"]
+assert replies[6]["result"] == {"actions": [command("move_down")]}
+assert replies[7]["result"] == {"capture": {"keys": ["esc"]}}
+assert replies[8]["result"] == {"handled": False}
 print("python sdk ok")
