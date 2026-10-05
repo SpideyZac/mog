@@ -112,6 +112,27 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # the updater refuses archives without a signature from this key, see RELEASE_KEY
+      - name: Sign archives
+        shell: bash
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+        run: |
+          if [ -z "$MINISIGN_KEY" ]; then
+            echo "the MINISIGN_KEY secret is missing, refusing to publish unsigned archives"
+            exit 1
+          fi
+          sudo apt-get update && sudo apt-get install -y minisign
+          key=$(mktemp)
+          printf '%s\n' "$MINISIGN_KEY" > "$key"
+          for archive in dist/*.zip dist/*.tar.gz; do
+            [ -e "$archive" ] || continue
+            name=$(basename "$archive")
+            minisign -S -s "$key" -m "$archive" -t "timestamp:$(date +%s) file:$name" < /dev/null
+          done
+          rm -f "$key"
+          ls dist
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
