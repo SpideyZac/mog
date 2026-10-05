@@ -126,7 +126,7 @@ is not, mog says how to install it and, where one command does it, offers to run
 the built in terminal. Run `Code: Restart language servers` once it is done.
 
 Besides diagnostics, completion, hover, go to definition, references, rename, formatting and code
-actions, mog shows inferred types at the end of lines (inlay hints), colors from the server on top
+actions, mog shows inferred types and parameter names in the code (inlay hints), colors from the server on top
 of the syntax colors (semantic tokens), the signature of the call you are typing, and an outline
 of the file and project wide symbol search.
 
@@ -230,7 +230,7 @@ API keys are never read from or written to the config file.
 | `rainbow_brackets` | `true` | Color nested brackets by depth |
 | `syntax_highlighting` | `true` | Syntax colors |
 | `semantic_highlighting` | `true` | Colors from the language server on top, so parameters, macros and types stand out |
-| `inlay_hints` | `true` | Inferred types and parameter names from the language server, shown at the end of the line |
+| `inlay_hints` | `true` | Inferred types and parameter names from the language server, shown in the code like VS Code |
 | `minimap` | `true` | Zoomed out view of the file on the right |
 | `error_lens` | `true` | Write diagnostics at the end of their line |
 | `git_gutter` | `true` | Mark changed lines next to the line numbers |

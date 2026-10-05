@@ -139,42 +139,22 @@ pub fn to_symbol_entry(symbol: Symbol) -> SymbolEntry {
     }
 }
 
-/// Returns the identifier that ends at char `pos` of `document`, like a variable name.
-fn word_before(document: &Document, pos: usize) -> String {
-    let text = document.text();
-    let start = (0..pos)
-        .rev()
-        .take_while(|&at| {
-            text.get_char(at)
-                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-        })
-        .last()
-        .unwrap_or(pos);
-    text.slice(start..pos).to_string()
-}
-
-/// Converts server inlay hints to hints on lines of `document`.
-///
-/// Hints are shown at the end of the line instead of next to what they are about, so type hints
-/// like `: i32` get the name they belong to in front and parameter names are left out.
+/// Converts server inlay hints to hints on lines of `document`, in the order they appear.
 pub fn to_hints(document: &Document, hints: Vec<symbols::InlayHint>) -> Vec<(usize, InlayHint)> {
     let text = document.text();
-    hints
+    let mut found: Vec<(usize, InlayHint)> = hints
         .into_iter()
-        .filter(|hint| !hint.parameter)
         .map(|hint| {
             let pos = convert::position_to_char(text, hint.position);
             let line = text.char_to_line(pos);
-            let trimmed = hint.label.trim();
-            let label = if trimmed.starts_with(':') {
-                format!("{}{trimmed}", word_before(document, pos))
-            } else {
-                trimmed.to_owned()
-            };
             let col = pos - text.line_to_char(line);
+            // hints are drawn in the text, so a line break in one would tear the line apart
+            let label = hint.label.replace(['\n', '\r'], " ");
             (line, InlayHint { col, label })
         })
-        .collect()
+        .collect();
+    found.sort_by_key(|(line, hint)| (*line, hint.col));
+    found
 }
 
 /// Returns what a token type `name` with `modifiers` means to mog, `None` for ones it ignores.

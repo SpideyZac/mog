@@ -29,7 +29,7 @@ rainbow_brackets = true
 syntax_highlighting = true
 # colors from the language server on top of the syntax colors
 semantic_highlighting = true
-# inferred types and parameter names at the end of lines
+# inferred types and parameter names shown in the code
 inlay_hints = true
 minimap = true
 error_lens = true
