@@ -26,12 +26,17 @@ mog .
 - Tree-sitter highlighting for over thirty languages, including code inside Vue, HTML and
   Markdown blocks
 - LSP: diagnostics with error lens, completion, hover, go to definition, references, rename,
-  formatting, code actions
+  formatting, code actions, inlay hints, semantic colors, signature help, an outline and project
+  wide symbol search
+- Picks up where you left off: opening a folder brings back its files, split and cursors, undo
+  history survives restarts, and unsaved work is kept on disk so a crash or a closed terminal
+  does not lose it
 - Git gutter, branch in the status line, file colors and inline blame
 - Claude chat, explain selection and ghost text. Copilot ghost text.
 - Updates itself from GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
   to your config
+- A serious mode that turns all the fun off, a reduced motion setting, and `NO_COLOR` support
 
 **The rest**
 

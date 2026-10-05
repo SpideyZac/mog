@@ -40,9 +40,9 @@
 - [x] Scroll back and restart the terminal
 - [x] Kitty keyboard protocol with a fallback for older terminals
 - [x] Mark keys the terminal can't send in the key list
-- [ ] Restore open tabs, splits and cursors between sessions
-- [ ] Swap files to recover unsaved buffers after a crash
-- [ ] Persistent undo history
+- [x] Restore open tabs, splits and cursors between sessions
+- [x] Swap files to recover unsaved buffers after a crash
+- [x] Persistent undo history
 - [ ] Run and build tasks with output in the problems list
 - [ ] Debugger (DAP)
 
