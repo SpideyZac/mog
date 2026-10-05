@@ -3,6 +3,7 @@
 pub mod client;
 pub mod convert;
 pub mod features;
+pub mod symbols;
 pub mod transport;
 
 pub use client::{Client, LspError, LspEvent};

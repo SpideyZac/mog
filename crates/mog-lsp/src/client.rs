@@ -6,6 +6,7 @@ use std::{
     io::{self, ErrorKind},
     path::{Path, PathBuf},
     process::{self, Stdio},
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -133,6 +134,8 @@ pub struct Client {
     name: String,
     /// The queue of messages for the server.
     outgoing: UnboundedSender<Outgoing>,
+    /// What the server said it can do, once the handshake is done.
+    capabilities: Arc<OnceLock<Value>>,
 }
 
 impl Client {
@@ -213,8 +216,10 @@ impl Client {
     {
         let name = name.into();
         let (outgoing, queue) = mpsc::unbounded_channel();
+        let capabilities = Arc::new(OnceLock::new());
         let connection = Connection {
             name: name.clone(),
+            capabilities: Arc::clone(&capabilities),
             writer: BufWriter::new(writer),
             events,
             pending: HashMap::new(),
@@ -223,12 +228,24 @@ impl Client {
         };
         let params = initialize_params(root, settings);
         let handle = tokio::spawn(connection.run(reader, queue, params));
-        (Self { name, outgoing }, handle)
+        (
+            Self {
+                name,
+                outgoing,
+                capabilities,
+            },
+            handle,
+        )
     }
 
     /// Returns the name of the server.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the capabilities the server answered the handshake with, once it has.
+    pub fn capabilities(&self) -> Option<&Value> {
+        self.capabilities.get()
     }
 
     /// Returns `true` while the connection to the server is open.
@@ -438,7 +455,34 @@ fn initialize_params(root: &Path, settings: &Value) -> Value {
         },
         ..InitializeParams::default()
     };
-    serde_json::to_value(params).unwrap_or(Value::Null)
+    let mut params = serde_json::to_value(params).unwrap_or(Value::Null);
+    // these are plain json since the typed versions take far more lines to say the same
+    let text_document = &mut params["capabilities"]["textDocument"];
+    text_document["inlayHint"] = json!({ "dynamicRegistration": false });
+    text_document["signatureHelp"] = json!({
+        "signatureInformation": {
+            "documentationFormat": ["plaintext", "markdown"],
+            "parameterInformation": { "labelOffsetSupport": true },
+            "activeParameterSupport": true,
+        },
+    });
+    text_document["documentSymbol"] = json!({ "hierarchicalDocumentSymbolSupport": true });
+    text_document["semanticTokens"] = json!({
+        "requests": { "full": true },
+        "tokenTypes": [
+            "namespace", "type", "class", "enum", "interface", "struct", "typeParameter",
+            "parameter", "variable", "property", "enumMember", "event", "function", "method",
+            "macro", "keyword", "modifier", "comment", "string", "number", "regexp", "operator",
+            "decorator",
+        ],
+        "tokenModifiers": [
+            "declaration", "definition", "readonly", "static", "deprecated", "abstract",
+            "async", "modification", "documentation", "defaultLibrary",
+        ],
+        "formats": ["relative"],
+    });
+    params["capabilities"]["workspace"]["symbol"] = json!({ "dynamicRegistration": false });
+    params
 }
 
 /// The background half of a [`Client`] that owns the pipes.
@@ -455,6 +499,8 @@ struct Connection<W> {
     next_id: u64,
     /// The settings handed out when the server asks for its configuration.
     settings: Value,
+    /// Where the capabilities from the handshake are kept for the client.
+    capabilities: Arc<OnceLock<Value>>,
 }
 
 impl<W: AsyncWrite + Unpin> Connection<W> {
@@ -519,7 +565,11 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
         .await?;
         loop {
             match incoming.recv().await {
-                Some(Message::Response { id, .. }) if id == json!(INITIALIZE_ID) => break,
+                Some(Message::Response { id, result }) if id == json!(INITIALIZE_ID) => {
+                    let capabilities = result.ok().map(|mut result| result["capabilities"].take());
+                    let _ = self.capabilities.set(capabilities.unwrap_or(Value::Null));
+                    break;
+                }
                 Some(message) => self.receive(message).await?,
                 None => return Err(ErrorKind::UnexpectedEof.into()),
             }
