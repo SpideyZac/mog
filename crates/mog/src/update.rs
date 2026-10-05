@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use minisign_verify::{PublicKey, Signature};
 use mog_config::config_dir;
 use reqwest::Client;
 use serde::Deserialize;
@@ -22,6 +23,12 @@ const LATEST_URL: &str = "https://api.github.com/repos/SpideyZac/mog/releases/la
 
 /// Where GitHub answers with a release by tag, with the tag appended.
 const TAG_URL: &str = "https://api.github.com/repos/SpideyZac/mog/releases/tags/";
+
+/// The minisign key every release archive must be signed with.
+///
+/// The secret half lives only in the release workflow, so a release uploaded by anyone else does
+/// not install even if its checksum matches.
+const RELEASE_KEY: &str = "RWQEyQrj2l2VtRVkLbwHBkVxhMbDdbOGc7wHR8hjR27Ry+epMjmzedE0";
 
 /// The version of this build.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -261,6 +268,27 @@ fn verify(data: &[u8], sums: &str) -> Result<(), String> {
     }
 }
 
+/// Checks that `signature` signs `data` with `key` and names the archive `name`.
+///
+/// Checking the name stops an old signed archive from being passed off as a newer release.
+fn verify_signature(data: &[u8], signature: &str, name: &str, key: &str) -> Result<(), String> {
+    let key = PublicKey::from_base64(key).map_err(|err| format!("bad release key: {err}"))?;
+    let signature =
+        Signature::decode(signature).map_err(|err| format!("bad release signature: {err}"))?;
+    key.verify(data, &signature, false)
+        .map_err(|_| "the download is not signed by the mog release key".to_owned())?;
+    let file = format!("file:{name}");
+    if signature
+        .trusted_comment()
+        .split(char::is_whitespace)
+        .any(|field| field == file)
+    {
+        Ok(())
+    } else {
+        Err("the signature is for a different download".into())
+    }
+}
+
 /// Returns the `mog` program inside a release zip.
 #[cfg(windows)]
 fn extract(archive: &[u8]) -> Result<Vec<u8>, String> {
@@ -351,9 +379,19 @@ async fn install(client: &Client, release: Release) -> Result<Release, String> {
     let sums_url = release
         .asset_url(&format!("{name}.sha256"))
         .ok_or("the release has no checksum, not installing it")?;
+    let signature_url = release
+        .asset_url(&format!("{name}.minisig"))
+        .ok_or("the release is not signed, not installing it")?;
     let archive = download(client, url).await?;
     let sums = download(client, sums_url).await?;
+    let signature = download(client, signature_url).await?;
     verify(&archive, &String::from_utf8_lossy(&sums))?;
+    verify_signature(
+        &archive,
+        &String::from_utf8_lossy(&signature),
+        &name,
+        RELEASE_KEY,
+    )?;
     task::spawn_blocking(move || {
         let binary = extract(&archive)?;
         let temp = env::temp_dir().join(format!("mog-update-{}{EXE_SUFFIX}", process::id()));
@@ -404,7 +442,20 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
-    use super::{Release, archive_name, extract, is_cargo_build, is_newer, verify};
+    use super::{
+        RELEASE_KEY, Release, archive_name, extract, is_cargo_build, is_newer, verify,
+        verify_signature,
+    };
+
+    /// A throwaway public key whose secret half signed [`TEST_SIGNATURE`].
+    const TEST_KEY: &str = "RWQev5a1U21teaH2yAvHt4DhJEW4gsX7AhqPJ0jPYD1I/SxsiUwrNrYt";
+
+    /// A signature of `mog` for an archive called `mog-v1.0.0-test.zip`.
+    const TEST_SIGNATURE: &str = "untrusted comment: signature from rsign secret key
+RUQev5a1U21teYNTMr6HhOVZx2tYd6ia93JtumTA4kOgKIz6x9sEzmOfpHvNHUSSltT3Gjz5kk94qO81qN7D32a0g2UexA8ekAY=
+trusted comment: timestamp:1\tfile:mog-v1.0.0-test.zip
+38QKpoVAi5dRnkxv1i5xYXLnikSi20fpRBayv3aPD731mMevOFp64FXx6gcQKmKzKOR7L8XGE41T3kiaCQBvCA==
+";
 
     /// Versions compare by number and ignore the `v` and suffixes.
     #[test]
@@ -448,6 +499,17 @@ mod tests {
         assert!(verify(data, &format!("{hash}  mog.zip\n")).is_ok());
         assert!(verify(data, &format!("{}  mog.zip", "0".repeat(64))).is_err());
         assert!(verify(data, "").is_err());
+    }
+
+    /// Downloads only pass when signed by the key for the archive they claim to be.
+    #[test]
+    fn verifies_signatures() {
+        let name = "mog-v1.0.0-test.zip";
+        assert!(verify_signature(b"mog", TEST_SIGNATURE, name, TEST_KEY).is_ok());
+        assert!(verify_signature(b"mug", TEST_SIGNATURE, name, TEST_KEY).is_err());
+        assert!(verify_signature(b"mog", TEST_SIGNATURE, "mog-v0.1.0-test.zip", TEST_KEY).is_err());
+        assert!(verify_signature(b"mog", TEST_SIGNATURE, name, RELEASE_KEY).is_err());
+        assert!(verify_signature(b"mog", "nonsense", name, TEST_KEY).is_err());
     }
 
     /// Builds in a cargo target folder are spotted.

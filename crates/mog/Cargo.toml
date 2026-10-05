@@ -16,6 +16,7 @@ clap.workspace = true
 mog-ai.workspace = true
 mog-audio.workspace = true
 lsp-types.workspace = true
+minisign-verify.workspace = true
 mog-config.workspace = true
 crossterm.workspace = true
 discord-rich-presence.workspace = true
