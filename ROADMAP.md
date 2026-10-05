@@ -38,6 +38,13 @@
 - [x] Splits
 - [x] Built in terminal (`ctrl+backtick`)
 - [x] Scroll back and restart the terminal
+- [ ] Kitty keyboard protocol with a fallback for older terminals
+- [ ] Mark keys the terminal can't send in the key list
+- [ ] Restore open tabs, splits and cursors between sessions
+- [ ] Swap files to recover unsaved buffers after a crash
+- [ ] Persistent undo history
+- [ ] Run and build tasks with output in the problems list
+- [ ] Debugger (DAP)
 
 ## Look and feel
 
@@ -51,6 +58,9 @@
 - [x] Indent guides, rainbow brackets and matching bracket
 - [x] Error lens
 - [x] File icons
+- [ ] Serious mode preset that turns off all flair
+- [ ] Reduced motion setting for sparks, combo counter and matrix rain
+- [ ] Respect `NO_COLOR`
 
 ## Git
 
@@ -58,6 +68,9 @@
 - [x] Branch in the status line
 - [x] File status colors in the explorer
 - [x] Inline blame for the cursor line
+- [ ] Stage and unstage hunks
+- [ ] Diff view
+- [ ] Commit from the editor
 
 ## Language servers
 
@@ -70,6 +83,11 @@
 - [x] Formatting
 - [x] Code actions
 - [x] Per project language server settings
+- [ ] Inlay hints
+- [ ] Signature help
+- [ ] Document and workspace symbols (outline and go to symbol)
+- [ ] Semantic tokens
+- [ ] Suggest installing a language server that isn't on `PATH`
 
 ## AI
 
@@ -108,3 +126,23 @@
 
 - [x] Auto update from GitHub releases
 - [x] Release notes popup
+- [ ] Signed releases with a public key pinned in the binary
+
+## Distribution
+
+- [ ] Homebrew
+- [ ] winget
+- [ ] AUR package
+- [ ] `cargo-binstall` metadata
+
+## Quality
+
+- [ ] Snapshot tests for `mog-tui` with `TestBackend` and `insta`
+- [ ] Scripted event loop tests (open, edit, save, quit)
+- [ ] Benchmark a 100 MB file and a very long single line
+- [ ] Make sure tree-sitter parsing is incremental and off the UI thread
+- [ ] Profile idle CPU use of audio, flair ticks and the resource monitor
+
+## Extensions
+
+- [ ] Plugin API
