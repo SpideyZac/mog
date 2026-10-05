@@ -124,7 +124,11 @@ fn missing_python_dll(adapter: &Path) -> Option<String> {
     if output.status.success() {
         return None;
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    dll_from_error(&String::from_utf8_lossy(&output.stderr))
+}
+
+/// Reads the Python DLL name out of lldb's `unable to find 'python311.dll'` error.
+fn dll_from_error(stderr: &str) -> Option<String> {
     let start = stderr.find("unable to find '")? + "unable to find '".len();
     let name = stderr[start..].split('\'').next()?;
     (name.starts_with("python") && name.ends_with(".dll")).then(|| name.to_owned())
@@ -429,7 +433,15 @@ mod tests {
     use mog_config::DebugConfig;
     use serde_json::json;
 
-    use super::{pick, substitute, variables};
+    use super::{dll_from_error, pick, substitute, variables};
+
+    /// The DLL lldb misses is read from its error.
+    #[test]
+    fn reads_missing_dll() {
+        let stderr = "error: unable to find 'python311.dll'.\nPLEASE submit a bug report";
+        assert_eq!(dll_from_error(stderr).as_deref(), Some("python311.dll"));
+        assert_eq!(dll_from_error("error: unable to find 'liblldb.dll'."), None);
+    }
 
     /// Debuggers are picked by the extension of the file.
     #[test]
