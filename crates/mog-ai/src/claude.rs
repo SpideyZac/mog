@@ -2,7 +2,10 @@
 //!
 //! Claude only chats. Inline suggestions come from Copilot, which is built for them.
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 use reqwest::{Client, Response, StatusCode, header::RETRY_AFTER};
 use serde_json::{Value, json};
@@ -47,6 +50,8 @@ pub struct Claude {
     api_key: String,
     /// The model id.
     model: String,
+    /// Whether requests ask for server side fallbacks, turned off if the API stops knowing them.
+    fallbacks: AtomicBool,
 }
 
 impl Claude {
@@ -71,6 +76,7 @@ impl Claude {
             url: url.into(),
             api_key: api_key.into(),
             model: model.into(),
+            fallbacks: AtomicBool::new(true),
         }
     }
 
@@ -78,15 +84,22 @@ impl Claude {
     async fn post(&self, body: &Value) -> Result<Response, AiError> {
         let mut attempt = 1;
         loop {
-            let sent = self
+            let fallbacks = self.fallbacks.load(Ordering::Relaxed);
+            let mut request = self
                 .http
                 .post(&self.url)
                 .header("x-api-key", &self.api_key)
-                .header("anthropic-version", API_VERSION)
-                .header("anthropic-beta", FALLBACK_BETA)
-                .json(body)
-                .send()
-                .await;
+                .header("anthropic-version", API_VERSION);
+            let sent = if fallbacks {
+                request = request.header("anthropic-beta", FALLBACK_BETA);
+                request.json(body).send().await
+            } else {
+                let mut body = body.clone();
+                if let Some(fields) = body.as_object_mut() {
+                    fields.remove("fallbacks");
+                }
+                request.json(&body).send().await
+            };
             let wait = match sent {
                 Ok(response) if response.status().is_success() => return Ok(response),
                 Ok(response) => {
@@ -98,6 +111,11 @@ impl Claude {
                         .and_then(|value| value.trim().parse::<u64>().ok())
                         .map(Duration::from_secs);
                     let text = response.text().await.unwrap_or_default();
+                    // fallbacks are a beta, so if the api stops knowing them chat goes on without
+                    if fallbacks && status == StatusCode::BAD_REQUEST && mentions_fallbacks(&text) {
+                        self.fallbacks.store(false, Ordering::Relaxed);
+                        continue;
+                    }
                     if !is_retryable(status) || attempt >= MAX_ATTEMPTS {
                         return Err(AiError::Api(error_message(status, &text)));
                     }
@@ -136,6 +154,12 @@ impl Claude {
 fn is_retryable(status: StatusCode) -> bool {
     // 529 is the API saying it is overloaded
     matches!(status.as_u16(), 408 | 409 | 429) || status.is_server_error()
+}
+
+/// Returns whether an error body complains about the fallback beta or its field.
+fn mentions_fallbacks(body: &str) -> bool {
+    let body = body.to_ascii_lowercase();
+    body.contains("fallback") || body.contains(FALLBACK_BETA)
 }
 
 /// Returns how long to wait before try number `attempt + 1`.
@@ -395,6 +419,48 @@ mod tests {
             error_message(StatusCode::FORBIDDEN, ""),
             "403 Forbidden: Forbidden"
         );
+    }
+
+    /// An API that no longer knows the fallback beta gets the request again without it.
+    #[tokio::test]
+    async fn drops_unknown_fallbacks() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!(
+            "http://{}/v1/messages",
+            listener.local_addr().expect("addr")
+        );
+        let stop = json!({ "type": "message_stop" });
+        let delta = json!({ "type": "content_block_delta", "delta": { "type": "text_delta", "text": "ok" } });
+        let stream = format!("data: {delta}\n\ndata: {stop}\n\n");
+        tokio::spawn(async move {
+            let rejected = "{\"type\":\"error\",\"error\":{\"message\":\"fallbacks: Extra inputs are not permitted\"}}";
+            let answers = [
+                format!(
+                    "HTTP/1.1 400 Bad Request\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{rejected}",
+                    rejected.len()
+                ),
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{stream}",
+                    stream.len()
+                ),
+            ];
+            for (index, answer) in answers.into_iter().enumerate() {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                let mut request = vec![0; 1 << 16];
+                let read = socket.read(&mut request).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..read]).to_lowercase();
+                // the retry leaves out both the header and the field
+                assert_eq!(request.contains("fallback"), index == 0, "{request}");
+                let _ = socket.write_all(answer.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        let claude = Claude::with_url(url, "key", "model");
+        let reply = claude
+            .chat("system", &[user("hi")], &|_: &str| {})
+            .await
+            .expect("reply");
+        assert_eq!(reply, "ok");
     }
 
     /// Busy and broken servers are retried, bad requests are not.
