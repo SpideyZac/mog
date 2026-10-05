@@ -232,6 +232,22 @@ fn is_cargo_build(path: &Path) -> bool {
         .any(|part| part == Component::Normal("target".as_ref()))
 }
 
+/// Returns the package manager that put `path` there, if one did.
+fn package_manager(path: &Path) -> Option<&'static str> {
+    let text = path.to_string_lossy().replace('\\', "/").to_lowercase();
+    if text.contains("/cellar/") || text.contains("/homebrew/") || text.contains("/linuxbrew/") {
+        Some("homebrew, update it with brew upgrade mog")
+    } else if text.contains("/winget/packages/") || text.contains("/winget/links/") {
+        Some("winget, update it with winget upgrade mog")
+    } else if text.starts_with("/usr/bin/") {
+        Some("your package manager, update it there")
+    } else if text.contains("/scoop/") {
+        Some("scoop, update it with scoop update mog")
+    } else {
+        None
+    }
+}
+
 /// Returns why the running mog cannot replace itself, if it cannot.
 pub fn cannot_install() -> Option<String> {
     if cfg!(debug_assertions) {
@@ -241,6 +257,10 @@ pub fn cannot_install() -> Option<String> {
         return Some("this build does not know its platform".into());
     }
     let exe = env::current_exe().ok()?;
+    // a package manager would fight over a binary that changes under it
+    if let Some(manager) = package_manager(&exe) {
+        return Some(format!("this mog came from {manager}"));
+    }
     is_cargo_build(&exe)
         .then(|| "this mog was built by cargo, update it with git pull and cargo build".into())
 }
@@ -443,8 +463,8 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::{
-        RELEASE_KEY, Release, archive_name, extract, is_cargo_build, is_newer, verify,
-        verify_signature,
+        RELEASE_KEY, Release, archive_name, extract, is_cargo_build, is_newer, package_manager,
+        verify, verify_signature,
     };
 
     /// A throwaway public key whose secret half signed [`TEST_SIGNATURE`].
@@ -510,6 +530,20 @@ trusted comment: timestamp:1\tfile:mog-v1.0.0-test.zip
         assert!(verify_signature(b"mog", TEST_SIGNATURE, "mog-v0.1.0-test.zip", TEST_KEY).is_err());
         assert!(verify_signature(b"mog", TEST_SIGNATURE, name, RELEASE_KEY).is_err());
         assert!(verify_signature(b"mog", "nonsense", name, TEST_KEY).is_err());
+    }
+
+    /// Installs from package managers are left to them.
+    #[test]
+    fn spots_package_managers() {
+        assert!(package_manager(Path::new("/opt/homebrew/Cellar/mog/0.3.0/bin/mog")).is_some());
+        assert!(package_manager(Path::new("/usr/bin/mog")).is_some());
+        assert!(
+            package_manager(Path::new(
+                r"C:\Users\me\AppData\Local\Microsoft\WinGet\Packages\SpideyZac.mog\mog.exe"
+            ))
+            .is_some()
+        );
+        assert!(package_manager(Path::new("/home/me/.local/bin/mog")).is_none());
     }
 
     /// Builds in a cargo target folder are spotted.
