@@ -338,6 +338,8 @@ pub struct Ui {
     pub task_problems: Vec<TaskProblem>,
     /// What the debugger is doing.
     pub debug: DebugState,
+    /// Text plugins put in the status line, as `(plugin, text)`.
+    pub plugin_segments: Vec<(String, String)>,
     /// The lines with a breakpoint in each file, counted from 0.
     pub breakpoints: BTreeMap<PathBuf, BTreeSet<usize>>,
     /// Status line pieces added by layers this frame.

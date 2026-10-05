@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
-    ui::{CopilotState, Layout, Side, Ui},
+    ui::{CopilotState, Layout, Segment, Side, Ui},
 };
 
 /// The number of rows the status line takes.
@@ -95,7 +95,14 @@ impl Layer for StatusLine {
             .saturating_sub(message.width().min(total / 2) + 1);
         let mut flair_left = Vec::new();
         let mut flair_right = Vec::new();
-        for segment in &cx.ui.segments {
+        // plugins asked for their text on purpose, so it goes ahead of flair
+        let plugins: Vec<Segment> = cx
+            .ui
+            .plugin_segments
+            .iter()
+            .map(|(_, text)| Segment::new(text.clone(), theme.status, Side::Right))
+            .collect();
+        for segment in plugins.iter().chain(&cx.ui.segments) {
             let spans: Vec<Span<'_>> = segment
                 .parts
                 .iter()
