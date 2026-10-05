@@ -56,9 +56,16 @@ Grab a build for Windows, macOS or Linux from
 [releases](https://github.com/SpideyZac/mog/releases), unpack it and put `mog` somewhere on your
 `PATH`.
 
-mog updates itself. When a new release is out it downloads in the background, checks it against
-the release checksum and is ready the next time you start mog, which then shows what changed. Turn
-that off in [`[updates]`](#updates), or update by hand with `mog --update`.
+mog updates itself. When a new release is out it downloads in the background, checks its
+[minisign](https://jedisct1.github.io/minisign/) signature against the key built into mog and is
+ready the next time you start mog, which then shows what changed. Turn that off in
+[`[updates]`](#updates), or update by hand with `mog --update`.
+
+To check a download yourself:
+
+```sh
+minisign -Vm mog-<version>-<target>.zip -P RWQEyQrj2l2VtRVkLbwHBkVxhMbDdbOGc7wHR8hjR27Ry+epMjmzedE0
+```
 
 ### Building it yourself
 

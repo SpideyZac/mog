@@ -126,7 +126,7 @@
 
 - [x] Auto update from GitHub releases
 - [x] Release notes popup
-- [ ] Signed releases with a public key pinned in the binary
+- [x] Signed releases with a public key pinned in the binary
 
 ## Distribution
 
