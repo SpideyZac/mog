@@ -1,0 +1,13 @@
+PackageIdentifier: SpideyZac.mog
+PackageVersion: {{version}}
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: mog-v{{version}}-x86_64-pc-windows-msvc\mog.exe
+    PortableCommandAlias: mog
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/SpideyZac/mog/releases/download/v{{version}}/mog-v{{version}}-x86_64-pc-windows-msvc.zip
+    InstallerSha256: {{x86_64-pc-windows-msvc-upper}}
+ManifestType: installer
+ManifestVersion: 1.6.0

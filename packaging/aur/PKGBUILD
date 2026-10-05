@@ -1,0 +1,23 @@
+# rendered by packaging/render.sh for each release, then pushed to the mog-bin AUR package
+pkgname=mog-bin
+pkgver={{version}}
+pkgrel=1
+pkgdesc="Modeless terminal code editor that mogs other editors"
+arch=('x86_64' 'aarch64')
+url="https://github.com/SpideyZac/mog"
+license=('Apache-2.0')
+depends=('alsa-lib' 'gcc-libs' 'glibc')
+provides=('mog')
+conflicts=('mog')
+source_x86_64=("https://github.com/SpideyZac/mog/releases/download/v${pkgver}/mog-v${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("https://github.com/SpideyZac/mog/releases/download/v${pkgver}/mog-v${pkgver}-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('{{x86_64-unknown-linux-gnu}}')
+sha256sums_aarch64=('{{aarch64-unknown-linux-gnu}}')
+
+package() {
+  cd "mog-v${pkgver}-${CARCH}-unknown-linux-gnu"
+  install -Dm755 mog "${pkgdir}/usr/bin/mog"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -Dm644 examples/config.toml "${pkgdir}/usr/share/doc/${pkgname}/config.toml"
+}

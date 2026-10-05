@@ -1,0 +1,20 @@
+PackageIdentifier: SpideyZac.mog
+PackageVersion: {{version}}
+PackageLocale: en-US
+Publisher: SpideyZac
+PublisherUrl: https://github.com/SpideyZac
+PackageName: mog
+PackageUrl: https://github.com/SpideyZac/mog
+License: Apache-2.0
+LicenseUrl: https://github.com/SpideyZac/mog/blob/master/LICENSE
+ShortDescription: A modeless terminal code editor that mogs other editors.
+Description: Normal keybindings, full mouse support, language servers, Claude and Copilot, a debugger, and a lot of silly flair you can turn off.
+Moniker: mog
+Tags:
+  - editor
+  - terminal
+  - text-editor
+  - tui
+ReleaseNotesUrl: https://github.com/SpideyZac/mog/releases/tag/v{{version}}
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
