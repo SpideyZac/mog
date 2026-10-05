@@ -3677,7 +3677,7 @@ mod tests {
     use clap::Parser;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig};
-    use mog_core::{Key, KeyChord};
+    use mog_core::{Command, Key, KeyChord};
     use mog_tui::{Context, PromptKind};
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::{json, to_string};
@@ -4168,12 +4168,111 @@ mod tests {
     /// Feeds the app plugin updates until `done` says to stop.
     async fn plugins_until(app: &mut App, done: impl Fn(&App) -> bool) {
         while !done(app) {
-            let update = time::timeout(Duration::from_secs(20), app.plugins.update())
-                .await
-                .expect("the plugin answered in time")
-                .expect("an update");
+            let Ok(update) = time::timeout(Duration::from_secs(20), app.plugins.update()).await
+            else {
+                panic!(
+                    "the plugin did not answer in time:\n{}",
+                    app.plugins.report()
+                );
+            };
+            let update = update.expect("an update");
             app.handle_plugin(update);
         }
+    }
+
+    /// Waits for a reply to a language feature request, answering plugins meanwhile.
+    async fn feature_reply(app: &mut App) {
+        loop {
+            let deadline = time::sleep(Duration::from_secs(20));
+            tokio::select! {
+                Some(reply) = app.lsp_replies.recv() => {
+                    app.handle_lsp_reply(reply);
+                    return;
+                }
+                Some(update) = app.plugins.update() => app.handle_plugin(update),
+                () = deadline => panic!("no reply in time"),
+            }
+        }
+    }
+
+    /// The protocol 2 example plugin marks notes, completes, offers a code action, explains on
+    /// hover and tidies the file before it is saved.
+    #[tokio::test]
+    async fn runs_the_todo_plugin() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let file = dir.join("notes.txt");
+        fs::write(&file, "first  \nTODO: water the mog\nlast\n").expect("write");
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/plugins/todo")
+            .canonicalize()
+            .expect("the example exists");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.plugins.insert(
+            "todo".into(),
+            PluginConfig {
+                path: Some(folder),
+                command: python.into(),
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        // the manifest lists the command before the plugin even answers
+        assert!(
+            app.ui
+                .commands
+                .iter()
+                .any(|info| info.name == "plugin.todo.list")
+        );
+        plugins_until(&mut app, |app| app.plugins.wants("before_save")).await;
+        app.editor.open(&file).expect("open");
+        app.watch_focus();
+        plugins_until(&mut app, |app| {
+            !app.editor.document().diagnostics().is_empty() && !app.ui.plugin_segments.is_empty()
+        })
+        .await;
+        assert_eq!(
+            app.editor.document().diagnostics()[0].message,
+            "water the mog"
+        );
+        assert_eq!(app.ui.plugin_segments[0].text, "1 todo");
+        assert!(app.ui.plugin_decorations[&file].contains_key(&1));
+        // completion comes from the plugin with no language server around
+        let end = app.editor.document().text().len_chars();
+        app.editor.select(end, end);
+        app.execute_command(Command::InsertText("FI".into()));
+        app.request_completion(true);
+        feature_reply(&mut app).await;
+        let completion = app.ui.completion.as_ref().expect("completions");
+        assert!(completion.items.iter().any(|item| item.label == "FIXME"));
+        app.ui.completion = None;
+        app.execute_command(Command::Undo);
+        // hover and a code action on the note line
+        let note = app.editor.document().text().line_to_char(1) + 2;
+        app.editor.select(note, note);
+        app.request_feature("hover");
+        feature_reply(&mut app).await;
+        assert!(
+            app.ui
+                .hover
+                .as_ref()
+                .is_some_and(|(text, _)| text.contains("note"))
+        );
+        app.request_feature("actions");
+        feature_reply(&mut app).await;
+        app.execute_command(Command::Custom("plugins.action.0".into()));
+        assert_eq!(app.editor.document().text().to_string(), "first  \nlast\n");
+        // saving waits for the plugin to trim the trailing spaces
+        app.execute_command(Command::Save);
+        plugins_until(&mut app, |app| !app.editor.document().is_modified()).await;
+        assert_eq!(fs::read_to_string(&file).expect("saved"), "first\nlast\n");
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// The example plugin adds commands that count, edit and insert, and fills the status line.

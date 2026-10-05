@@ -1,0 +1,14 @@
+name = "todo"
+version = "1.0.0"
+description = "Marks TODO and FIXME notes, lists them, removes them and tidies trailing spaces on save."
+protocol = 2
+command = "python3"
+args = ["${plugin_dir}/todo.py"]
+activation = ["startup"]
+timeout = 10
+
+[[commands]]
+name = "list"
+title = "Todo: List the notes in this file"
+keys = ["alt+shift+t"]
+menu = true
