@@ -78,6 +78,9 @@ struct RawManifest {
     protocol: u32,
     /// The program to run.
     command: String,
+    /// The program to run on Windows, where it often has another name, like `python` for
+    /// `python3`.
+    command_windows: Option<String>,
     /// Its arguments.
     #[serde(default)]
     args: Vec<String>,
@@ -165,7 +168,10 @@ impl Manifest {
             version: raw.version,
             description: raw.description,
             protocol: raw.protocol,
-            command: fill(&raw.command),
+            command: fill(match (&raw.command_windows, cfg!(windows)) {
+                (Some(command), true) => command,
+                _ => &raw.command,
+            }),
             args: raw.args.iter().map(|arg| fill(arg)).collect(),
             activation: raw
                 .activation
