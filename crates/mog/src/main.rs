@@ -9,6 +9,7 @@ mod debug;
 mod discord;
 mod git;
 mod lsp;
+mod plugin_cli;
 mod plugins;
 mod session;
 mod settings;
@@ -22,7 +23,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use app::App;
 use clap::Parser;
-use cli::Args;
+use cli::{Args, Tool};
 use mog_config::Config;
 
 /// Runs the editor.
@@ -33,6 +34,9 @@ use mog_config::Config;
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(Tool::Plugin { action }) = args.tool {
+        return plugin_cli::run(action).await;
+    }
     if args.keys {
         let config = Config::load().unwrap_or_default();
         let (keymap, _) = settings::keymap(&config);

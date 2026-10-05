@@ -2,12 +2,15 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// A terminal code editor that mogs other editors.
 #[derive(Debug, Parser)]
-#[command(version, about)]
+#[command(version, about, args_conflicts_with_subcommands = true)]
 pub struct Args {
+    /// A tool to run instead of the editor.
+    #[command(subcommand)]
+    pub tool: Option<Tool>,
     /// The file or folder to open. A folder is shown in the file explorer.
     pub path: Option<PathBuf>,
     /// Runs a command after starting, like `--run explorer.toggle`. Can be repeated.
@@ -28,4 +31,54 @@ pub struct Args {
     /// Commands a snapshot runs after waiting, then waits again before drawing.
     #[arg(long, hide = true, value_name = "COMMAND")]
     pub snapshot_run: Vec<String>,
+}
+
+/// Tools that run instead of the editor.
+#[derive(Debug, Subcommand)]
+pub enum Tool {
+    /// Manages plugins.
+    Plugin {
+        /// What to do.
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+}
+
+/// What `mog plugin` does.
+#[derive(Debug, Subcommand)]
+pub enum PluginAction {
+    /// Lists the plugins in the plugins folder and the config.
+    List,
+    /// Creates a new plugin in the plugins folder from a template.
+    New {
+        /// The plugin name, which namespaces its commands.
+        name: String,
+        /// The language to write it in.
+        #[arg(long, value_enum, default_value_t = Language::Python)]
+        language: Language,
+    },
+    /// Copies a plugin folder, or clones a git repository, into the plugins folder.
+    Install {
+        /// A folder with a plugin.toml, or a git url.
+        source: String,
+    },
+    /// Deletes a plugin from the plugins folder.
+    Remove {
+        /// The plugin name.
+        name: String,
+    },
+    /// Starts plugins and checks they answer, showing what they offer.
+    Doctor {
+        /// Only this plugin.
+        name: Option<String>,
+    },
+}
+
+/// A language a new plugin can be written in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Language {
+    /// Python 3 with the single file Python SDK.
+    Python,
+    /// Node with the single file JavaScript SDK.
+    Node,
 }

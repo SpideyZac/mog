@@ -188,7 +188,11 @@ pub fn plugin_dir() -> Option<PathBuf> {
 }
 
 /// Works out how to run the plugin called `name` from its config and manifest.
-fn resolve(
+///
+/// # Errors
+///
+/// Returns why the plugin cannot run, like a broken manifest or no command.
+pub fn resolve(
     name: &str,
     config: Option<&PluginConfig>,
     manifest: Option<Manifest>,
