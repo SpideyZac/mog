@@ -20,6 +20,7 @@ use mog_lsp::{
     features::{self, CodeAction, FileEdits},
     symbols::{self, Signature, Symbol},
 };
+use mog_plugin::Action;
 use mog_tui::{
     SymbolEntry,
     completion::{CompletionItem, ItemKind},
@@ -51,8 +52,18 @@ pub enum LspReply {
     Rename(FileEdits),
     /// Places a symbol is used.
     References(Vec<(PathBuf, Position)>),
-    /// Code actions as titles with their edits.
-    Actions(Vec<CodeAction>),
+    /// Code actions from the language server as titles with their edits, and from plugins as
+    /// `(title, plugin, actions)`.
+    Actions(Vec<CodeAction>, Vec<(String, String, Vec<Action>)>),
+    /// Changes to the focused document at `version`, like from a formatter plugin.
+    Changes {
+        /// The document version they were worked out for.
+        version: u64,
+        /// The changes.
+        changes: Vec<Change>,
+        /// What to say once they are applied.
+        what: String,
+    },
     /// Inlay hints and semantic tokens for a file at a document version, each missing if the
     /// server cannot give them.
     Marks {

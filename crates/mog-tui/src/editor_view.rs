@@ -408,6 +408,7 @@ impl Layer for EditorView {
             .as_ref()
             .filter(|(file, line, _)| Some(file.as_path()) == path && *line == cursor_line)
             .map(|(_, _, text)| text.as_str());
+        let decorations = path.and_then(|path| cx.ui.plugin_decorations.get(path));
         let mut change = self.cache.changes.iter().peekable();
         let mut span_index = 0;
         let number_width = lines.to_string().len();
@@ -731,9 +732,19 @@ impl Layer for EditorView {
                     let message = d.message.lines().next().unwrap_or_default();
                     Some((format!("\u{25cf} {message}"), severity_style(d.severity)))
                 }
-                _ => blame
-                    .filter(|_| is_cursor_line && settings.git_blame)
-                    .map(|blame| (blame.to_owned(), theme.blame)),
+                _ => decorations
+                    .and_then(|decorations| decorations.get(&line))
+                    .map(|(text, color)| {
+                        (
+                            text.clone(),
+                            theme.color_style(color.as_deref(), theme.inlay_hint),
+                        )
+                    })
+                    .or_else(|| {
+                        blame
+                            .filter(|_| is_cursor_line && settings.git_blame)
+                            .map(|blame| (blame.to_owned(), theme.blame))
+                    }),
             };
             if let Some((message, style)) = inline {
                 let cell = col + INLINE_GAP;

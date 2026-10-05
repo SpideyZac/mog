@@ -22,7 +22,7 @@ pub const STATUS_HEIGHT: u16 = 1;
 #[derive(Debug, Default)]
 pub struct StatusLine {
     /// Where the clickable parts were drawn, as `(start, end, command)`.
-    hits: Vec<(u16, u16, &'static str)>,
+    hits: Vec<(u16, u16, String)>,
 }
 
 impl StatusLine {
@@ -100,7 +100,16 @@ impl Layer for StatusLine {
             .ui
             .plugin_segments
             .iter()
-            .map(|(_, text)| Segment::new(text.clone(), theme.status, Side::Right))
+            .map(|segment| {
+                let style = theme.color_style(segment.color.as_deref(), theme.status);
+                Segment::new(segment.text.clone(), style, Side::Right)
+            })
+            .collect();
+        let clickable: Vec<(&str, &str)> = cx
+            .ui
+            .plugin_segments
+            .iter()
+            .filter_map(|segment| Some((segment.text.as_str(), segment.command.as_deref()?)))
             .collect();
         for segment in plugins.iter().chain(&cx.ui.segments) {
             let spans: Vec<Span<'_>> = segment
@@ -127,7 +136,8 @@ impl Layer for StatusLine {
         left.push(Span::styled(message, theme.status_message));
         self.hits.clear();
         // the badge opens the palette, problem counts open the problem list
-        self.hits.push((area.x, area.x + 5, "command_palette"));
+        self.hits
+            .push((area.x, area.x + 5, "command_palette".into()));
         let right_width = u16::try_from(width(&right)).unwrap_or(0);
         let mut x = area.right().saturating_sub(right_width);
         for span in &right {
@@ -135,17 +145,21 @@ impl Layer for StatusLine {
             let text = span.content.as_ref();
             if text.starts_with('E') || text.starts_with('W') {
                 if text[1..].trim().parse::<usize>().is_ok() {
-                    self.hits.push((x, x + span_width, "problems.list"));
+                    self.hits.push((x, x + span_width, "problems.list".into()));
                 }
             } else if text.starts_with("Ln ") {
-                self.hits.push((x, x + span_width, "goto.prompt"));
+                self.hits.push((x, x + span_width, "goto.prompt".into()));
             } else if text.starts_with("copilot") {
                 let command = if cx.ui.copilot == Some(CopilotState::SignedOut) {
                     "copilot.sign_in"
                 } else {
                     "copilot.status"
                 };
-                self.hits.push((x, x + span_width, command));
+                self.hits.push((x, x + span_width, command.into()));
+            } else if let Some((_, command)) =
+                clickable.iter().find(|(segment, _)| *segment == text)
+            {
+                self.hits.push((x, x + span_width, (*command).to_owned()));
             }
             x += span_width;
         }

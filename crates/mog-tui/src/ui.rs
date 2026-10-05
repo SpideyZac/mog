@@ -16,8 +16,9 @@ use ratatui::{
 use crate::{
     annotate::AnnotateState, chat::ChatState, completion::CompletionState, debug_panel::DebugState,
     ghost::Ghost, git_panel::GitPanelState, menu::MenuState, output::OutputState,
-    project_search::ProjectSearchState, release_notes::ReleaseNotes, search::SearchState,
-    settings::SettingKey, status_line::STATUS_HEIGHT, theme_editor::ThemeDraft,
+    picker::PickerItem, project_search::ProjectSearchState, release_notes::ReleaseNotes,
+    search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
+    theme_editor::ThemeDraft,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -120,6 +121,19 @@ pub enum Overlay {
     Output,
     /// A list a plugin asked the user to pick from.
     PluginPick,
+}
+
+/// A short text a plugin put in the status line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginSegment {
+    /// The plugin that put it there.
+    pub plugin: String,
+    /// The text.
+    pub text: String,
+    /// A palette color name or hex code, if not the plain status color.
+    pub color: Option<String>,
+    /// A command clicking it runs.
+    pub command: Option<String>,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -342,10 +356,14 @@ pub struct Ui {
     pub task_problems: Vec<TaskProblem>,
     /// What the debugger is doing.
     pub debug: DebugState,
-    /// Text plugins put in the status line, as `(plugin, text)`.
-    pub plugin_segments: Vec<(String, String)>,
+    /// Text plugins put in the status line.
+    pub plugin_segments: Vec<PluginSegment>,
     /// The title and items of the list a plugin asked the user to pick from.
-    pub plugin_pick: Option<(String, Vec<String>)>,
+    pub plugin_pick: Option<(String, Vec<PickerItem>)>,
+    /// Plugin commands in the right click menu, as `(title, command)`.
+    pub plugin_menu: Vec<(String, String)>,
+    /// Text plugins show after lines, by file and line, as `(text, color)`.
+    pub plugin_decorations: HashMap<PathBuf, BTreeMap<usize, (String, Option<String>)>>,
     /// The item picked from that list, for the app to pass on.
     pub plugin_picked: Option<usize>,
     /// The lines with a breakpoint in each file, counted from 0.

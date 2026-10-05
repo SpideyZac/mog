@@ -92,7 +92,7 @@ pub fn open_menu(ui: &mut Ui, at: Position, items: Vec<MenuItem>) {
 
 /// Returns the editor menu.
 pub fn editor_menu(ui: &Ui) -> Vec<MenuItem> {
-    vec![
+    let mut items = vec![
         MenuItem::command("Go to definition", "lsp.definition", ui),
         MenuItem::command("Show hover info", "lsp.hover", ui),
         MenuItem::command("Rename symbol", "lsp.rename", ui),
@@ -106,7 +106,14 @@ pub fn editor_menu(ui: &Ui) -> Vec<MenuItem> {
         MenuItem::command("Toggle comment", "toggle_comment", ui),
         MenuItem::command("Find", "search.find", ui),
         MenuItem::command("Ask the AI to explain", "ai.explain", ui),
-    ]
+    ];
+    if !ui.plugin_menu.is_empty() {
+        items.push(MenuItem::separator());
+        for (title, command) in &ui.plugin_menu {
+            items.push(MenuItem::command(title, command, ui));
+        }
+    }
+    items
 }
 
 /// Draws the open menu and runs what is picked.

@@ -1,9 +1,9 @@
 //! Settings for tasks like building and testing, debuggers and plugins.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 /// A command that builds, tests or runs the project.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -96,15 +96,25 @@ impl Default for DebugConfig {
 }
 
 /// A plugin, a program that adds commands to mog by talking JSON over stdio.
+///
+/// A plugin is either a `command` to run, or a `path` to a folder with a `plugin.toml`.
+/// Plugin folders in the `plugins` folder of the config directory are found on their own, and
+/// an entry with their name can turn them off or give them settings.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PluginConfig {
     /// Whether the plugin runs.
     pub enabled: bool,
-    /// The program to run, like `python`.
+    /// The program to run, like `python`. Leave it empty to use the manifest.
     pub command: String,
     /// The arguments to pass to it, like the script path.
     pub args: Vec<String>,
+    /// A folder with a `plugin.toml` describing the plugin.
+    pub path: Option<PathBuf>,
+    /// Settings handed to the plugin when it starts.
+    pub settings: Value,
+    /// How many seconds a command may take before mog gives up on it.
+    pub timeout: Option<u64>,
 }
 
 impl Default for PluginConfig {
@@ -113,6 +123,9 @@ impl Default for PluginConfig {
             enabled: true,
             command: String::new(),
             args: Vec::new(),
+            path: None,
+            settings: Value::Object(Map::new()),
+            timeout: None,
         }
     }
 }

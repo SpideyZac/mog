@@ -296,7 +296,7 @@ impl Popups {
             Some(Overlay::PluginPick) => ui
                 .plugin_pick
                 .as_ref()
-                .map(|(_, items)| items.iter().map(PickerItem::new).collect())
+                .map(|(_, items)| items.clone())
                 .unwrap_or_default(),
             Some(Overlay::Tasks) => ui
                 .tasks

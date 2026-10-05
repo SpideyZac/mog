@@ -39,14 +39,12 @@ use mog_lsp::{
     LspEvent, convert,
     features::{CodeAction, FileEdits},
 };
-use mog_plugin::{Action, PluginEvent, parse_actions};
 use mog_term::TerminalPanel;
 use mog_tui::{
-    Annotations, ChatPanel, CommandInfo, CompletionMenu, Compositor, Context, ContextMenu,
-    CopilotState, DebugPanel, EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap,
-    OutputPanel, Overlay, Pane, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup,
-    SearchBar, SettingsPanel, SignatureHint, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui,
-    UiEvent,
+    Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
+    DebugPanel, EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap, OutputPanel,
+    Overlay, Pane, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar,
+    SettingsPanel, SignatureHint, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
     completion::{self, CompletionState},
     debug_panel::{self, FrameEntry},
     ghost, git_panel, input,
@@ -79,7 +77,7 @@ use crate::{
     discord::{Presence, Status},
     git::{self, Git, GitUpdate},
     lsp::{self, LanguageServers, LspReply},
-    plugins::{self, PluginUpdate, Plugins},
+    plugins::{self, Plugins},
     session::{Session, SessionFile, State, Swap},
     settings::{self, ProjectStatus},
     tasks::{self, Runner, Task, TaskEvent},
@@ -87,6 +85,10 @@ use crate::{
     update::{self, Release, UpdateEvent, Updater},
     watch::FolderWatcher,
 };
+
+mod plugin_host;
+
+use plugin_host::PluginState;
 
 /// The time between animation frames, about 30 per second.
 const FRAME_TIME: Duration = Duration::from_millis(33);
@@ -105,6 +107,9 @@ const HOUSEKEEPING_TIME: Duration = Duration::from_secs(1);
 
 /// How often git status is refreshed even when no files changed, to catch commits made elsewhere.
 const GIT_REFRESH_TIME: Duration = Duration::from_secs(15);
+
+/// How long a plugin provider may take before mog stops waiting for it.
+const PROVIDER_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// How long a snapshot waits for background work before drawing.
 const SNAPSHOT_SETTLE: Duration = Duration::from_millis(800);
@@ -258,8 +263,8 @@ pub struct App {
     debug_frames: Vec<Frame>,
     /// The running plugins.
     plugins: Plugins,
-    /// A plugin waiting for the user to pick or type something, with its request id.
-    plugin_waiting: Option<(String, Value)>,
+    /// What the app remembers about plugins between frames.
+    plugin_state: PluginState,
     /// Whether the last chat message is a reply still streaming in.
     chat_streaming: bool,
     /// Whether the event loop should stop after the current iteration.
@@ -353,6 +358,7 @@ impl App {
         let watcher = ui.has_explorer.then(|| FolderWatcher::new(&root)).flatten();
         let mut git = Git::new(&root);
         git.refresh();
+        let plugin_root = root.clone();
         let lsp = LanguageServers::new(config.language_servers(), root, lsp_sender);
         if let Some(path) = file
             && let Err(err) = editor.open(&path)
@@ -410,8 +416,8 @@ impl App {
             debugger: Debugger::new(),
             debug_after_task: None,
             debug_frames: Vec::new(),
-            plugins: Plugins::new(),
-            plugin_waiting: None,
+            plugins: Plugins::new(&plugin_root, plugins::plugin_dir()),
+            plugin_state: PluginState::default(),
             chat_streaming: false,
             quit: false,
         };
@@ -916,7 +922,11 @@ impl App {
             if !typing {
                 self.sync_language_servers();
                 for params in mem::take(&mut self.pending_diagnostics) {
+                    let path = convert::uri_to_path(&params.uri);
                     lsp::apply_diagnostics(&mut self.editor, params);
+                    if let Some(path) = path {
+                        self.plugin_diagnostics_changed(&path);
+                    }
                 }
                 self.request_marks();
                 self.offer_install();
@@ -924,6 +934,7 @@ impl App {
             self.sync_signature();
             self.sync_git();
             self.watch_focus();
+            self.sync_plugin_events(typing);
             self.sync_plugin_ui();
             self.sync_breakpoints();
             self.restore_undo();
@@ -1236,6 +1247,7 @@ impl App {
         self.editor.set_options(settings::options(&self.ui.config));
         self.apply_audio_settings();
         self.apply_discord_settings();
+        self.plugin_config_changed();
     }
 
     /// Reads the config file again and applies everything in it.
@@ -1265,6 +1277,8 @@ impl App {
         self.lsp.reconfigure(config.language_servers());
         self.ui.config = config;
         self.editor.set_status("config reloaded");
+        problems.extend(self.plugins.configure(&self.ui.config.plugins));
+        self.refresh_commands();
         self.apply_config();
         if !problems.is_empty() {
             self.editor.set_status(problems.join("; "));
@@ -1351,7 +1365,7 @@ impl App {
     fn watch_focus(&mut self) {
         let path = self.editor.document().path().map(ToOwned::to_owned);
         if path != self.last_focus {
-            self.plugins.event("opened", path.as_deref());
+            self.plugin_focus_changed(path.as_deref());
             self.last_focus = path;
             self.ui.events.push(UiEvent::Opened);
             if self.editor.document().is_large() {
@@ -1396,253 +1410,6 @@ impl App {
             self.git.request_blame(path, line, document.version(), || {
                 document.text().to_string()
             });
-        }
-    }
-
-    /// Starts the plugins from the config.
-    ///
-    /// Not part of [`App::new`] so snapshots and tests do not run other programs.
-    pub fn start_plugins(&mut self) {
-        let problems = self.plugins.start(&self.ui.config.plugins, &self.ui.root);
-        if !problems.is_empty() {
-            self.editor.set_status(problems.join("; "));
-        }
-    }
-
-    /// Rebuilds the palette and key list from the keymap and the plugin commands, binding the
-    /// keys plugins suggest when nothing else uses them.
-    fn refresh_commands(&mut self) {
-        for (name, _, keys) in self.plugins.palette() {
-            for key in keys {
-                let Ok(chord) = key.parse::<KeyChord>() else {
-                    continue;
-                };
-                let configured = self
-                    .ui
-                    .config
-                    .keys
-                    .keys()
-                    .any(|other| other.parse::<KeyChord>().ok() == Some(chord));
-                if self
-                    .keymap
-                    .resolve(&chord)
-                    .is_none_or(|bound| bound.to_string() == name)
-                    && !configured
-                {
-                    self.keymap.bind(chord, Command::Custom(name.clone()));
-                }
-            }
-        }
-        let mut palette = commands::palette(&self.keymap);
-        for (name, title, _) in self.plugins.palette() {
-            let keys = self
-                .keymap
-                .chords_for(&Command::Custom(name.clone()))
-                .iter()
-                .map(ToString::to_string)
-                .collect();
-            palette.push(CommandInfo { name, title, keys });
-        }
-        self.ui.commands = palette;
-        self.ui.bindings = commands::bindings(&self.keymap);
-    }
-
-    /// Returns what the editor looks like, for a plugin command.
-    fn plugin_context(&self) -> Value {
-        let document = self.editor.document();
-        let text = document.text();
-        let selection = document.selection();
-        let line = text.char_to_line(selection.head);
-        json!({
-            "root": self.ui.root.to_string_lossy(),
-            "path": document.path().map(|path| path.to_string_lossy()),
-            "language": document
-                .path()
-                .and_then(|path| path.extension())
-                .map(|ext| ext.to_string_lossy()),
-            // a huge file would be slow to copy and to send
-            "text": (!document.is_large()).then(|| text.to_string()),
-            "selection": { "anchor": selection.anchor, "head": selection.head },
-            "line": line,
-            "column": selection.head - text.line_to_char(line),
-            "modified": document.is_modified(),
-        })
-    }
-
-    /// Acts on something a plugin did or a plugin command that finished.
-    fn handle_plugin(&mut self, update: PluginUpdate) {
-        match update {
-            PluginUpdate::Event(PluginEvent::Ready { plugin, commands }) => {
-                self.plugins.ready(plugin, commands);
-                self.refresh_commands();
-            }
-            PluginUpdate::Event(PluginEvent::Actions { actions, .. })
-            | PluginUpdate::Ran(_, Ok(actions)) => self.apply_actions(actions),
-            PluginUpdate::Event(PluginEvent::Segment { plugin, text }) => {
-                self.ui
-                    .plugin_segments
-                    .retain(|(other, _)| *other != plugin);
-                if !text.is_empty() {
-                    self.ui.plugin_segments.push((plugin, text));
-                }
-            }
-            PluginUpdate::Event(PluginEvent::Exited { plugin, reason }) => {
-                self.plugins.exited(&plugin);
-                self.ui
-                    .plugin_segments
-                    .retain(|(other, _)| *other != plugin);
-                self.refresh_commands();
-                let reason = reason
-                    .map(|reason| format!(": {reason}"))
-                    .unwrap_or_default();
-                self.editor
-                    .set_status(format!("plugin {plugin} stopped{reason}"));
-            }
-            PluginUpdate::Ran(plugin, Err(err)) => {
-                self.editor.set_status(format!("{plugin}: {err}"));
-            }
-            PluginUpdate::Event(PluginEvent::Request {
-                plugin,
-                id,
-                method,
-                params,
-            }) => self.answer_plugin(plugin, id, &method, &params),
-        }
-    }
-
-    /// Answers a question a plugin asked, right away or once the user did what it asks for.
-    fn answer_plugin(&mut self, plugin: String, id: Value, method: &str, params: &Value) {
-        let result = match method {
-            "editor/context" => Ok(self.plugin_context()),
-            "editor/text" => {
-                let wanted = params["path"].as_str().map(PathBuf::from);
-                let open = self.editor.documents().iter().find(|document| {
-                    wanted
-                        .as_deref()
-                        .map_or(document.path() == self.editor.document().path(), |path| {
-                            document.path() == Some(path)
-                        })
-                });
-                match (open, &wanted) {
-                    (Some(document), _) => Ok(json!({ "text": document.text().to_string() })),
-                    (None, Some(path)) => fs::read_to_string(path)
-                        .map(|text| json!({ "text": text }))
-                        .map_err(|err| format!("could not read {}: {err}", path.display())),
-                    (None, None) => Err("no file is open".to_owned()),
-                }
-            }
-            "actions" => {
-                self.apply_actions(parse_actions(params));
-                Ok(json!({}))
-            }
-            "ui/pick" | "ui/prompt"
-                if self.plugin_waiting.is_some() || self.ui.overlay.is_some() =>
-            {
-                Err("mog is already asking something, try again later".to_owned())
-            }
-            "ui/pick" => {
-                let title = params["title"].as_str().unwrap_or("pick one").to_owned();
-                let items: Vec<String> = params["items"]
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .map(|item| {
-                                item.as_str()
-                                    .map_or_else(|| item.to_string(), str::to_owned)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                self.ui.plugin_pick = Some((title, items));
-                self.ui.open(Overlay::PluginPick);
-                self.plugin_waiting = Some((plugin, id));
-                return;
-            }
-            "ui/prompt" => {
-                let title = params["title"].as_str().unwrap_or("type something");
-                let text = params["text"].as_str().unwrap_or_default();
-                let hint = params["hint"]
-                    .as_str()
-                    .unwrap_or("enter to send, esc to cancel");
-                self.ui.ask(PromptKind::Plugin, title, text, hint);
-                self.plugin_waiting = Some((plugin, id));
-                return;
-            }
-            other => Err(format!("mog does not know {other}")),
-        };
-        self.plugins.respond(&plugin, id, result);
-    }
-
-    /// Tells a waiting plugin the user closed the picker or prompt without an answer.
-    fn sync_plugin_ui(&mut self) {
-        let asking = matches!(self.ui.overlay, Some(Overlay::PluginPick))
-            || self
-                .ui
-                .prompt
-                .as_ref()
-                .is_some_and(|prompt| prompt.kind == PromptKind::Plugin);
-        if !asking && let Some((plugin, id)) = self.plugin_waiting.take() {
-            self.plugins.respond(&plugin, id, Ok(Value::Null));
-        }
-    }
-
-    /// Does what a plugin asked for.
-    fn apply_actions(&mut self, actions: Vec<Action>) {
-        for action in actions {
-            match action {
-                Action::Status(text) => self.editor.set_status(text),
-                Action::Insert(text) => self.execute_command(Command::InsertText(text)),
-                Action::Command(name) => match name.parse() {
-                    Ok(command) => self.execute_command(command),
-                    Err(err) => self.editor.set_status(err.to_string()),
-                },
-                Action::Open { path, line } => {
-                    let path = if path.is_absolute() {
-                        path
-                    } else {
-                        self.ui.root.join(path)
-                    };
-                    if let Err(err) = self.editor.open(&path) {
-                        self.editor
-                            .set_status(format!("could not open {}: {err}", path.display()));
-                        continue;
-                    }
-                    if let Some(line) = line {
-                        let text = self.editor.document().text();
-                        let pos = text.line_to_char(line.min(text.len_lines().saturating_sub(1)));
-                        self.editor.select(pos, pos);
-                    }
-                }
-                Action::Edit { path, changes } => {
-                    let focused = self.editor.active();
-                    let target = match &path {
-                        Some(path) => self
-                            .editor
-                            .documents()
-                            .iter()
-                            .position(|document| document.path() == Some(path.as_path())),
-                        None => Some(focused),
-                    };
-                    let Some(target) = target else {
-                        self.editor
-                            .set_status("a plugin tried to edit a file that is not open");
-                        continue;
-                    };
-                    self.editor.focus(target);
-                    let len = self.editor.document().text().len_chars();
-                    let changes = changes
-                        .into_iter()
-                        .map(|edit| Change {
-                            start: edit.start.min(len),
-                            end: edit.end.min(len).max(edit.start.min(len)),
-                            text: edit.text,
-                        })
-                        .collect();
-                    self.editor.apply_changes(changes);
-                    self.editor.focus(focused);
-                }
-            }
         }
     }
 
@@ -1712,6 +1479,7 @@ impl App {
                         .count()
                 };
                 let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+                self.plugin_task_finished(&task.name, code);
                 let outcome = match code {
                     Some(0) => "passed".to_owned(),
                     Some(code) => format!("failed with code {code}"),
@@ -1970,7 +1738,11 @@ impl App {
     /// Acts on a background git answer.
     fn handle_git(&mut self, update: GitUpdate) {
         let GitUpdate::Done(result) = update else {
+            let status = matches!(update, GitUpdate::Status(_) | GitUpdate::Branch(..));
             git::apply(&mut self.ui, update);
+            if status {
+                self.plugin_git_changed();
+            }
             if self.ui.overlay == Some(Overlay::Git) && !self.ui.git_panel.diff_is_current() {
                 self.request_git_diff();
             }
@@ -2259,10 +2031,7 @@ impl App {
                 return;
             }
             PromptKind::Plugin => {
-                if let Some((plugin, id)) = self.plugin_waiting.take() {
-                    self.plugins
-                        .respond(&plugin, id, Ok(json!({ "text": text })));
-                }
+                self.plugin_prompted(text);
                 return;
             }
             PromptKind::Commit => {
@@ -2745,29 +2514,61 @@ impl App {
         }
     }
 
-    /// Asks the language server for completions at the cursor.
+    /// Asks the language server and plugins for completions at the cursor.
     fn request_completion(&mut self, manual: bool) {
         self.sync_language_servers();
         let document = self.editor.document();
-        let Some(path) = document.path().map(ToOwned::to_owned) else {
-            return;
-        };
-        let Some(client) = self.lsp.client_for(&path) else {
+        let path = document.path().map(ToOwned::to_owned);
+        let client = path.as_deref().and_then(|path| self.lsp.client_for(path));
+        let head = document.selection().head;
+        let anchor = completion::word_start(&self.editor, head);
+        let text = document.text();
+        let line = text.char_to_line(head);
+        let params = json!({
+            "path": path.as_ref().map(|path| path.to_string_lossy()),
+            "language": plugin_host::language(path.as_deref()),
+            "version": document.version(),
+            "offset": head,
+            "line": line,
+            "column": head - text.line_to_char(line),
+            "prefix": text.slice(anchor..head).to_string(),
+            "manual": manual,
+        });
+        let plugins = self.ask_plugins("completion", params, PROVIDER_TIMEOUT);
+        if client.is_none() && plugins.is_none() {
             if manual {
                 self.editor.set_status("no language server for this file");
             }
             return;
-        };
-        let head = document.selection().head;
-        let anchor = completion::word_start(&self.editor, head);
-        let position = convert::char_to_position(document.text(), head);
+        }
+        let position = convert::char_to_position(text, head);
         self.completion_request += 1;
         let request = self.completion_request;
         let index = self.editor.active();
         let sender = self.lsp_sender.clone();
         tokio::spawn(async move {
-            let items = client.completion(&path, position).await.unwrap_or_default();
-            let items = items.into_iter().map(lsp::to_item).collect();
+            let from_server = async {
+                match (client, path) {
+                    (Some(client), Some(path)) => client
+                        .completion(&path, position)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(lsp::to_item)
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            };
+            let from_plugins = async {
+                match plugins {
+                    Some(plugins) => plugins.await,
+                    None => Vec::new(),
+                }
+            };
+            let (mut items, answers): (Vec<_>, _) = future::join(from_server, from_plugins).await;
+            for (_, answer) in answers {
+                items.extend(plugin_host::completion_items(&answer));
+            }
             let _ = sender.send(LspReply::Completion {
                 request,
                 document: index,
@@ -2777,56 +2578,128 @@ impl App {
         });
     }
 
-    /// Sends a hover, definition or format request for the focused file.
+    /// Sends a hover, definition, references, code action or format request for the focused
+    /// file, to its language server and to plugins that provide the feature.
     fn request_feature(&mut self, feature: &str) {
         self.sync_language_servers();
         let document = self.editor.document();
-        let Some(path) = document.path().map(ToOwned::to_owned) else {
-            self.editor
-                .set_status("save the file first so a language server can see it");
-            return;
-        };
-        let Some(client) = self.lsp.client_for(&path) else {
-            self.editor.set_status("no language server for this file");
-            return;
-        };
+        let path = document.path().map(ToOwned::to_owned);
+        let client = path.as_deref().and_then(|path| self.lsp.client_for(path));
         let head = document.selection().head;
-        let position = convert::char_to_position(document.text(), head);
         let version = document.version();
+        let text = document.text();
+        let line = text.char_to_line(head);
         let options = self.editor.options();
         let (tab_size, spaces) = (
             u32::try_from(options.tab_width).unwrap_or(4),
             options.insert_spaces,
         );
-        let line = document.text().char_to_line(head);
+        let provider = match feature {
+            "hover" => Some("hover"),
+            "actions" => Some("code_actions"),
+            "format" => Some("formatting"),
+            _ => None,
+        };
+        let plugins = provider.and_then(|provider| {
+            let selection = document.selection();
+            let whole = provider == "formatting" && !document.is_large();
+            let params = json!({
+                "path": path.as_ref().map(|path| path.to_string_lossy()),
+                "language": plugin_host::language(path.as_deref()),
+                "version": version,
+                "offset": head,
+                "line": line,
+                "column": head - text.line_to_char(line),
+                "selection": { "anchor": selection.anchor, "head": selection.head },
+                "text": whole.then(|| text.to_string()),
+                "tab_size": tab_size,
+                "insert_spaces": spaces,
+            });
+            self.ask_plugins(provider, params, PROVIDER_TIMEOUT)
+        });
+        if client.is_none() && plugins.is_none() {
+            self.editor.set_status(if path.is_none() {
+                "save the file first so a language server can see it"
+            } else {
+                "no language server for this file"
+            });
+            return;
+        }
+        let position = convert::char_to_position(text, head);
         let diagnostics = lsp::diagnostics_on_line(document, line);
         let sender = self.lsp_sender.clone();
         let feature = feature.to_owned();
         tokio::spawn(async move {
-            let reply = match feature.as_str() {
-                "hover" => match client.hover(&path, position).await {
-                    Ok(Some(text)) => LspReply::Hover(text, head),
-                    _ => LspReply::Nothing("nothing to say about that".into()),
-                },
-                "definition" => match client.definition(&path, position).await {
-                    Ok(Some((target, at))) => LspReply::Definition(target, at),
-                    _ => LspReply::Nothing("no definition found".into()),
-                },
-                "references" => match client.references(&path, position).await {
-                    Ok(found) if !found.is_empty() => LspReply::References(found),
-                    _ => LspReply::Nothing("no references found".into()),
-                },
-                "actions" => {
-                    let range = LspRange::new(position, position);
-                    match client.code_actions(&path, range, diagnostics).await {
-                        Ok(actions) if !actions.is_empty() => LspReply::Actions(actions),
-                        _ => LspReply::Nothing("no code actions here".into()),
+            let answers = match plugins {
+                Some(plugins) => plugins.await,
+                None => Vec::new(),
+            };
+            let reply = match (feature.as_str(), client, path) {
+                ("hover", client, path) => {
+                    let mut texts: Vec<String> = Vec::new();
+                    if let (Some(client), Some(path)) = (client, path)
+                        && let Ok(Some(text)) = client.hover(&path, position).await
+                    {
+                        texts.push(text);
+                    }
+                    texts.extend(
+                        answers
+                            .iter()
+                            .filter_map(|(_, answer)| answer["text"].as_str().map(str::to_owned))
+                            .filter(|text| !text.is_empty()),
+                    );
+                    if texts.is_empty() {
+                        LspReply::Nothing("nothing to say about that".into())
+                    } else {
+                        LspReply::Hover(texts.join("\n\n"), head)
                     }
                 }
-                _ => match client.formatting(&path, tab_size, spaces).await {
-                    Ok(edits) => LspReply::Format(path, version, edits),
-                    Err(err) => LspReply::Nothing(format!("could not format: {err}")),
-                },
+                ("definition", Some(client), Some(path)) => {
+                    match client.definition(&path, position).await {
+                        Ok(Some((target, at))) => LspReply::Definition(target, at),
+                        _ => LspReply::Nothing("no definition found".into()),
+                    }
+                }
+                ("references", Some(client), Some(path)) => {
+                    match client.references(&path, position).await {
+                        Ok(found) if !found.is_empty() => LspReply::References(found),
+                        _ => LspReply::Nothing("no references found".into()),
+                    }
+                }
+                ("actions", client, path) => {
+                    let mut actions = Vec::new();
+                    if let (Some(client), Some(path)) = (client, path) {
+                        let range = LspRange::new(position, position);
+                        actions = client
+                            .code_actions(&path, range, diagnostics)
+                            .await
+                            .unwrap_or_default();
+                    }
+                    let offered = plugin_host::code_actions(answers);
+                    if actions.is_empty() && offered.is_empty() {
+                        LspReply::Nothing("no code actions here".into())
+                    } else {
+                        LspReply::Actions(actions, offered)
+                    }
+                }
+                ("format", client, path) => {
+                    // a formatter plugin was installed on purpose, so it goes first
+                    if let Some((plugin, changes)) = plugin_host::format_changes(&answers) {
+                        LspReply::Changes {
+                            version,
+                            changes,
+                            what: format!("formatted by {plugin}"),
+                        }
+                    } else if let (Some(client), Some(path)) = (client, path) {
+                        match client.formatting(&path, tab_size, spaces).await {
+                            Ok(edits) => LspReply::Format(path, version, edits),
+                            Err(err) => LspReply::Nothing(format!("could not format: {err}")),
+                        }
+                    } else {
+                        LspReply::Nothing("no formatter answered".into())
+                    }
+                }
+                _ => LspReply::Nothing("no language server for this file".into()),
             };
             let _ = sender.send(reply);
         });
@@ -3085,17 +2958,28 @@ impl App {
                     .collect();
                 self.ui.open(Overlay::References);
             }
-            LspReply::Actions(actions) => {
-                let items = actions
+            LspReply::Actions(actions, offered) => {
+                let from_server = actions.iter().enumerate().map(|(i, (title, _))| MenuItem {
+                    label: title.clone(),
+                    keys: String::new(),
+                    action: Some(MenuAction::Run(Command::Custom(format!("lsp.action.{i}")))),
+                });
+                let from_plugins = offered
                     .iter()
                     .enumerate()
-                    .map(|(i, (title, _))| MenuItem {
+                    .map(|(i, (title, _, _))| MenuItem {
                         label: title.clone(),
                         keys: String::new(),
-                        action: Some(MenuAction::Run(Command::Custom(format!("lsp.action.{i}")))),
-                    })
-                    .collect();
+                        action: Some(MenuAction::Run(Command::Custom(format!(
+                            "plugins.action.{i}"
+                        )))),
+                    });
+                let items = from_server.chain(from_plugins).collect();
                 self.code_actions = actions;
+                self.plugin_state.code_actions = offered
+                    .into_iter()
+                    .map(|(_, plugin, actions)| (plugin, actions))
+                    .collect();
                 let at = self.ui.cursor_screen.unwrap_or_default();
                 menu::open_menu(&mut self.ui, Position::new(at.x, at.y + 1), items);
             }
@@ -3160,6 +3044,19 @@ impl App {
                     self.ui.open(overlay);
                 }
             }
+            LspReply::Changes {
+                version,
+                changes,
+                what,
+            } => {
+                if self.editor.document().version() != version {
+                    return;
+                }
+                match self.editor.try_apply_changes(changes) {
+                    Ok(()) => self.editor.set_status(what),
+                    Err(err) => self.editor.set_status(format!("{what} failed: {err}")),
+                }
+            }
             LspReply::Nothing(message) => self.editor.set_status(message),
         }
     }
@@ -3174,7 +3071,7 @@ impl App {
             return;
         };
         self.lsp.saved(&path);
-        self.plugins.event("saved", Some(&path));
+        self.plugin_saved(&path);
         let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
         if Self::is_config(&path)
             || canonical(&path) == canonical(&project_config_path(&self.ui.root))
@@ -3264,6 +3161,11 @@ impl App {
         };
         if command == Command::Save && self.editor.document().path().is_none() {
             self.ask_save_as();
+            return;
+        }
+        if command == Command::Save && self.before_save() {
+            self.editor
+                .set_status("letting plugins tidy up before saving...");
             return;
         }
         let saving = command == Command::Save;
@@ -3462,6 +3364,15 @@ impl App {
             "lsp.format" => self.request_feature("format"),
             "lsp.references" => self.request_feature("references"),
             "lsp.actions" => self.request_feature("actions"),
+            action if action.starts_with("plugins.action.") => {
+                let index = action["plugins.action.".len()..].parse::<usize>().ok();
+                if let Some((plugin, actions)) =
+                    index.and_then(|i| self.plugin_state.code_actions.get(i).cloned())
+                    && let Err(err) = self.apply_actions(actions)
+                {
+                    self.editor.set_status(format!("{plugin}: {err}"));
+                }
+            }
             action if action.starts_with("lsp.action.") => {
                 let index = action["lsp.action.".len()..].parse::<usize>().ok();
                 if let Some((title, edits)) = index.and_then(|i| self.code_actions.get(i).cloned())
@@ -3497,26 +3408,12 @@ impl App {
             }
             "debug.panel" => self.ui.debug.open = !self.ui.debug.open,
             debug_panel::FRAME_COMMAND => self.show_frame(self.ui.debug.frame),
-            PLUGIN_PICKED_COMMAND => {
-                let picked = self.ui.plugin_picked.take();
-                let item = picked.and_then(|index| {
-                    self.ui
-                        .plugin_pick
-                        .as_ref()
-                        .and_then(|(_, items)| items.get(index).cloned())
-                });
-                if let (Some((plugin, id)), Some(index), Some(item)) =
-                    (self.plugin_waiting.take(), picked, item)
-                {
-                    self.plugins
-                        .respond(&plugin, id, Ok(json!({ "index": index, "item": item })));
-                }
-            }
+            PLUGIN_PICKED_COMMAND => self.plugin_picked(),
             plugin if plugin.starts_with(plugins::PREFIX) => {
-                if !self.plugins.run(plugin, self.plugin_context()) {
-                    self.editor.set_status(format!("{plugin} is not running"));
-                }
+                self.run_plugin_command(plugin, Value::Null);
             }
+            "plugins.restart" => self.restart_plugins(),
+            "plugins.log" => self.show_plugin_log(),
             "task.run" => self.pick_task(),
             "task.start" => {
                 let task = self
@@ -4323,7 +4220,7 @@ mod tests {
         app.editor.open(&file).expect("open");
         app.watch_focus();
         plugins_until(&mut app, |app| !app.ui.plugin_segments.is_empty()).await;
-        assert_eq!(app.ui.plugin_segments[0].1, "3w");
+        assert_eq!(app.ui.plugin_segments[0].text, "3w");
         app.handle_event(press("alt+shift+w"));
         plugins_until(&mut app, |app| {
             app.editor
