@@ -58,8 +58,8 @@
 - [x] Indent guides, rainbow brackets and matching bracket
 - [x] Error lens
 - [x] File icons
-- [ ] Serious mode preset that turns off all flair
-- [ ] Reduced motion setting for sparks, combo counter and matrix rain
+- [x] Serious mode preset that turns off all flair
+- [x] Reduced motion setting for sparks, combo counter and matrix rain
 - [ ] Respect `NO_COLOR`
 
 ## Git

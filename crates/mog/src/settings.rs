@@ -50,7 +50,8 @@ pub fn flair_layer(config: &Config) -> FlairLayer {
     for flair in builtin::all() {
         layer.register(flair);
     }
-    layer.set_hidden(!config.flair.enabled);
+    layer.set_hidden(!config.flair.enabled || config.ui.serious);
+    layer.set_reduced_motion(config.ui.reduced_motion);
     for id in &config.flair.disabled {
         layer.disable(id.clone());
     }

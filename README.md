@@ -209,6 +209,8 @@ API keys are never read from or written to the config file.
 | `git_blame` | `true` | Show who last changed the cursor line |
 | `explorer` | `true` | Open the file explorer when opening a folder |
 | `icons` | `true` | File icons |
+| `serious` | `false` | Serious mode: turns off every flair, sound and music at once |
+| `reduced_motion` | `false` | Hide sparks, the combo counter, critters and matrix rain, and stop things shimmering |
 | `opacity` | `100` | How solid backgrounds are, 0 to 100. Below 100 your terminal shows through mog, if the terminal itself is see through (Windows Terminal opacity or acrylic, kitty `background_opacity`, Alacritty `window.opacity`, ...) |
 
 ### `[updates]`

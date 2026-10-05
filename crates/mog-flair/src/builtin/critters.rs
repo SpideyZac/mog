@@ -128,6 +128,10 @@ impl Flair for Critters {
         "critters"
     }
 
+    fn moves(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "A cat, a duck, a fish and a ghost wander through the blank parts of your code."
     }

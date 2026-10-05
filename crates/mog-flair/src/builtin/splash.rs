@@ -69,6 +69,8 @@ pub struct Splash {
     tagline: &'static str,
     /// The tip picked for this run.
     tip: &'static str,
+    /// Whether the logo holds still for reduced motion.
+    still: bool,
 }
 
 impl Default for Splash {
@@ -78,6 +80,7 @@ impl Default for Splash {
             elapsed: Duration::ZERO,
             tagline: rng.pick(TAGLINES),
             tip: rng.pick(TIPS),
+            still: false,
         }
     }
 }
@@ -113,14 +116,21 @@ impl Flair for Splash {
         Placement::Overlay
     }
 
+    fn set_reduced_motion(&mut self, on: bool) {
+        self.still = on;
+    }
+
     fn tick(&mut self, dt: Duration) {
+        if self.still {
+            return;
+        }
         self.elapsed = (self.elapsed + dt)
             .checked_sub(SHIMMER)
             .unwrap_or(self.elapsed + dt);
     }
 
     fn is_animating(&self) -> bool {
-        true
+        !self.still
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &FlairContext<'_>) {

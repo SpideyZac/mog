@@ -87,6 +87,10 @@ impl Flair for Screensaver {
         "screensaver"
     }
 
+    fn moves(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Matrix rain after three minutes of doing nothing."
     }

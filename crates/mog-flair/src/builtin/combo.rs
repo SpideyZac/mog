@@ -84,6 +84,10 @@ impl Flair for Combo {
         "combo"
     }
 
+    fn moves(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "A combo counter for fast typing, like a fighting game."
     }

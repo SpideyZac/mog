@@ -131,6 +131,14 @@ pub trait Flair {
     /// Returns where the flair is drawn.
     fn placement(&self) -> Placement;
 
+    /// Returns `true` if the flair is mostly flashing or moving, so reduced motion hides it.
+    fn moves(&self) -> bool {
+        false
+    }
+
+    /// Tells the flair whether reduced motion is on, so it can hold still.
+    fn set_reduced_motion(&mut self, _on: bool) {}
+
     /// Reacts to something that happened, like typing or saving.
     fn observe(&mut self, _event: &UiEvent) {}
 

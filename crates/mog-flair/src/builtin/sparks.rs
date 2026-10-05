@@ -89,6 +89,10 @@ impl Flair for Sparks {
         "sparks"
     }
 
+    fn moves(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Power mode. Sparks fly out of the cursor while you type."
     }

@@ -231,6 +231,8 @@ pub fn get(config: &Config, key: &SettingKey) -> SettingValue {
             "git_blame" => ui.git_blame,
             "explorer" => ui.explorer,
             "icons" => ui.icons,
+            "serious" => ui.serious,
+            "reduced_motion" => ui.reduced_motion,
             _ => false,
         }),
         SettingKey::Theme => SettingValue::Text(ui.theme.clone()),
@@ -281,6 +283,8 @@ fn toggle_mut<'a>(config: &'a mut Config, key: &SettingKey) -> Option<&'a mut bo
             "git_blame" => &mut ui.git_blame,
             "explorer" => &mut ui.explorer,
             "icons" => &mut ui.icons,
+            "serious" => &mut ui.serious,
+            "reduced_motion" => &mut ui.reduced_motion,
             _ => return None,
         },
         SettingKey::Editor(name) => match *name {
@@ -401,6 +405,18 @@ fn rows(ui: &Ui) -> Vec<Row> {
         SettingKey::TabWidth,
         "Tab width",
         "How many columns one indentation level takes.",
+    ));
+    rows.push(row(
+        "flair",
+        SettingKey::Ui("serious"),
+        "Serious mode",
+        "Turns off every flair, sound and music at once. For demos and deadlines.",
+    ));
+    rows.push(row(
+        "flair",
+        SettingKey::Ui("reduced_motion"),
+        "Reduced motion",
+        "Hides sparks, combos, critters and matrix rain, and stops shimmering.",
     ));
     rows.push(row(
         "flair",

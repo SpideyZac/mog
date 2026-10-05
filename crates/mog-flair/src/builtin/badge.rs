@@ -38,6 +38,8 @@ pub fn hue_to_color(hue: f32) -> Color {
 pub struct Badge {
     /// How far through the current color cycle the badge is.
     elapsed: Duration,
+    /// Whether the colors hold still for reduced motion.
+    still: bool,
 }
 
 impl Badge {
@@ -60,7 +62,14 @@ impl Flair for Badge {
         Placement::Status(Side::Right)
     }
 
+    fn set_reduced_motion(&mut self, on: bool) {
+        self.still = on;
+    }
+
     fn tick(&mut self, dt: Duration) {
+        if self.still {
+            return;
+        }
         self.elapsed += dt;
         while self.elapsed >= CYCLE {
             self.elapsed -= CYCLE;
@@ -68,7 +77,7 @@ impl Flair for Badge {
     }
 
     fn is_animating(&self) -> bool {
-        true
+        !self.still
     }
 
     fn segment(&mut self, cx: &FlairContext<'_>) -> Option<Segment> {

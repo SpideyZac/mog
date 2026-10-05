@@ -17,6 +17,8 @@ pub struct FlairLayer {
     disabled: HashSet<String>,
     /// Whether all flair is turned off.
     hidden: bool,
+    /// Whether flair that flashes or moves is hidden and the rest holds still.
+    reduced_motion: bool,
 }
 
 impl FlairLayer {
@@ -57,7 +59,7 @@ impl FlairLayer {
     pub fn sidebar_height(&self) -> u16 {
         self.flairs
             .iter()
-            .filter(|flair| self.is_on(flair.id()))
+            .filter(|flair| self.is_on(flair.as_ref()))
             .map(|flair| match flair.placement() {
                 Placement::Sidebar { height } => height,
                 _ => 0,
@@ -65,10 +67,31 @@ impl FlairLayer {
             .sum()
     }
 
-    /// Returns whether the flair called `id` should run.
-    fn is_on(&self, id: &str) -> bool {
-        !self.hidden && !self.disabled.contains(id)
+    /// Turns reduced motion on or off for every flair.
+    pub fn set_reduced_motion(&mut self, on: bool) {
+        if self.reduced_motion != on {
+            self.reduced_motion = on;
+            for flair in &mut self.flairs {
+                flair.set_reduced_motion(on);
+            }
+        }
     }
+
+    /// Returns whether `flair` should run.
+    fn is_on(&self, flair: &dyn Flair) -> bool {
+        is_shown(flair, self.hidden, self.reduced_motion, &self.disabled)
+    }
+}
+
+/// Returns whether `flair` should run with all flair `hidden`, `reduced_motion` and the flairs
+/// in `disabled` turned off.
+fn is_shown(
+    flair: &dyn Flair,
+    hidden: bool,
+    reduced_motion: bool,
+    disabled: &HashSet<String>,
+) -> bool {
+    !(hidden || (reduced_motion && flair.moves()) || disabled.contains(flair.id()))
 }
 
 /// The gap between tab bar pieces.
@@ -110,8 +133,10 @@ impl Layer for FlairLayer {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
         // the settings menu changes the config so follow it every frame
-        self.hidden = !cx.ui.config.flair.enabled;
-        self.disabled = cx.ui.config.flair.disabled.iter().cloned().collect();
+        let config = &cx.ui.config;
+        self.hidden = !config.flair.enabled || config.ui.serious;
+        self.disabled = config.flair.disabled.iter().cloned().collect();
+        self.set_reduced_motion(config.ui.reduced_motion);
         let layout = cx.ui.layout(area);
         let flair_cx = FlairContext {
             editor: cx.editor,
@@ -124,9 +149,9 @@ impl Layer for FlairLayer {
         let footer = layout.explorer_footer;
         let mut footer_wanted = 0;
         let mut footer_y = footer.y;
-        let (hidden, disabled) = (self.hidden, &self.disabled);
+        let (hidden, reduced_motion, disabled) = (self.hidden, self.reduced_motion, &self.disabled);
         for flair in &mut self.flairs {
-            if hidden || disabled.contains(flair.id()) {
+            if !is_shown(flair.as_ref(), hidden, reduced_motion, disabled) {
                 continue;
             }
             for event in &flair_cx.ui.events {
@@ -162,9 +187,9 @@ impl Layer for FlairLayer {
     }
 
     fn tick(&mut self, dt: Duration) {
-        let (hidden, disabled) = (self.hidden, &self.disabled);
+        let (hidden, reduced_motion, disabled) = (self.hidden, self.reduced_motion, &self.disabled);
         for flair in &mut self.flairs {
-            if !hidden && !disabled.contains(flair.id()) {
+            if is_shown(flair.as_ref(), hidden, reduced_motion, disabled) {
                 flair.tick(dt);
             }
         }
@@ -173,17 +198,18 @@ impl Layer for FlairLayer {
     fn is_animating(&self) -> bool {
         self.flairs
             .iter()
-            .any(|flair| self.is_on(flair.id()) && flair.is_animating())
+            .any(|flair| self.is_on(flair.as_ref()) && flair.is_animating())
     }
 }
 
 #[cfg(test)]
 /// Tests for the flair layer.
 mod tests {
-    use mog_tui::{Segment, Side};
+    use mog_tui::{Layer, Segment, Side};
     use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 
-    use super::draw_tab_segments;
+    use super::{FlairLayer, draw_tab_segments};
+    use crate::builtin::{Badge, Sparks};
 
     /// Tab bar pieces hug the right and the ones that do not fit are dropped.
     #[test]
@@ -197,5 +223,18 @@ mod tests {
         draw_tab_segments(area, &mut buf, &segments);
         let row: String = (0..12).map(|x| buf[(x, 0)].symbol().to_owned()).collect();
         assert_eq!(row, "       abc  ");
+    }
+
+    /// Reduced motion hides flair that moves and stills the rest.
+    #[test]
+    fn reduced_motion_hides_moving_flair() {
+        let mut layer = FlairLayer::new();
+        layer.register(Box::new(Sparks::new()));
+        layer.register(Box::new(Badge::new()));
+        assert!(layer.is_animating());
+        layer.set_reduced_motion(true);
+        assert!(!layer.is_animating());
+        assert!(!layer.is_on(layer.flairs[0].as_ref()));
+        assert!(layer.is_on(layer.flairs[1].as_ref()));
     }
 }

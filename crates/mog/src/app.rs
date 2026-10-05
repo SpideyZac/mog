@@ -454,13 +454,14 @@ impl App {
     /// Starts, stops or adjusts sound to match the settings.
     fn apply_audio_settings(&mut self) {
         let settings = &self.ui.config.audio;
-        let wanted = settings.sound_effects || settings.music;
+        let serious = self.ui.config.ui.serious;
+        let wanted = (settings.sound_effects || settings.music) && !serious;
         if wanted && self.audio.is_none() {
             self.audio = Some(Audio::start());
         }
         if let Some(audio) = &self.audio {
             audio.set_volume(settings.volume);
-            audio.set_music(settings.music);
+            audio.set_music(settings.music && !serious);
         }
     }
 
@@ -523,7 +524,7 @@ impl App {
         let Some(audio) = &self.audio else {
             return;
         };
-        let effects = self.ui.config.audio.sound_effects;
+        let effects = self.ui.config.audio.sound_effects && !self.ui.config.ui.serious;
         for event in &self.ui.events {
             let sfx = match event {
                 UiEvent::Typed(_) => Some(Sfx::Key),
@@ -696,8 +697,11 @@ impl App {
 
     /// Returns `true` while the matrix screensaver covers the screen.
     fn screensaver_showing(&self) -> bool {
-        let flair = &self.ui.config.flair;
+        let config = &self.ui.config;
+        let flair = &config.flair;
         flair.enabled
+            && !config.ui.serious
+            && !config.ui.reduced_motion
             && !flair.disabled.iter().any(|id| id == "screensaver")
             && self.last_input.elapsed() >= screensaver::IDLE_TIME
     }

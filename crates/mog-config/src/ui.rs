@@ -37,6 +37,10 @@ pub struct UiConfig {
     /// How solid backgrounds are, from 0 to 100. Below 100 the terminal shows through, if it
     /// is see through itself.
     pub opacity: u8,
+    /// Whether serious mode is on, which turns off every flair, sound and music.
+    pub serious: bool,
+    /// Whether flashing and moving flair like sparks and matrix rain stays still or hidden.
+    pub reduced_motion: bool,
 }
 
 impl Default for UiConfig {
@@ -57,6 +61,8 @@ impl Default for UiConfig {
             explorer: true,
             icons: true,
             opacity: 100,
+            serious: false,
+            reduced_motion: false,
         }
     }
 }
