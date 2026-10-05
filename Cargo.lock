@@ -1944,6 +1944,7 @@ dependencies = [
  "ignore",
  "regex",
  "ropey",
+ "serde",
  "unicode-width",
 ]
 

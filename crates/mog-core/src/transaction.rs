@@ -1,11 +1,12 @@
 //! Atomic groups of text changes.
 
 use ropey::Rope;
+use serde::{Deserialize, Serialize};
 
 /// A replacement of the chars in `start..end` with `text`.
 ///
 /// Offsets are char indices into the text the change is applied to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Change {
     /// The first char offset that is replaced.
     pub start: usize,
@@ -16,7 +17,7 @@ pub struct Change {
 }
 
 /// A set of non-overlapping [`Change`]s that are applied together as one edit.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transaction {
     /// The changes, sorted by `start` and never overlapping.
     changes: Vec<Change>,

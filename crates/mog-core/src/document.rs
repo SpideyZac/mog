@@ -240,6 +240,16 @@ impl Document {
         self.semantic_tokens = LineMarks::new(&self.text, tokens);
     }
 
+    /// Returns the undo and redo history.
+    pub fn history(&self) -> &History {
+        &self.history
+    }
+
+    /// Puts back undo and redo history saved for exactly the current text.
+    pub fn restore_history(&mut self, history: History) {
+        self.history = history;
+    }
+
     /// Applies `tx`, records it for undo and moves the selection to `after`.
     ///
     /// With `merge` set the edit joins the previous undo step.

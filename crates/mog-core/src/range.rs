@@ -1,10 +1,12 @@
 //! Selection ranges over a document.
 
+use serde::{Deserialize, Serialize};
+
 /// A selection between two char offsets.
 ///
 /// The `head` is where the cursor is drawn and moves. The `anchor` stays put while a selection is
 /// extended. When both are equal the range is just a cursor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Range {
     /// The fixed end of the selection.
     pub anchor: usize,

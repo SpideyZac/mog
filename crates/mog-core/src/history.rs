@@ -1,9 +1,11 @@
 //! Undo and redo history.
 
+use serde::{Deserialize, Serialize};
+
 use crate::{range::Range, transaction::Transaction};
 
 /// One applied [`Transaction`] along with the transaction that undoes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Step {
     /// The edit that was applied.
     pub forward: Transaction,
@@ -12,7 +14,7 @@ pub struct Step {
 }
 
 /// A group of [`Step`]s that is undone and redone as one unit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revision {
     /// The steps in the order they were applied.
     pub steps: Vec<Step>,
@@ -23,7 +25,7 @@ pub struct Revision {
 }
 
 /// The undo and redo stacks of a document.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct History {
     /// Revisions that can be undone, newest last.
     undo: Vec<Revision>,
@@ -50,6 +52,17 @@ impl History {
                 after,
             }),
         }
+    }
+
+    /// Returns `true` if there is nothing to undo or redo.
+    pub fn is_empty(&self) -> bool {
+        self.undo.is_empty() && self.redo.is_empty()
+    }
+
+    /// Drops the oldest revisions so at most `max` can be undone.
+    pub fn truncate(&mut self, max: usize) {
+        let extra = self.undo.len().saturating_sub(max);
+        self.undo.drain(..extra);
     }
 
     /// Moves the newest revision to the redo stack and returns it so the caller can revert it.
