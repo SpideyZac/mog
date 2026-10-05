@@ -15,6 +15,8 @@ See `ROADMAP.md` for what is done and what is next. Update it whenever a roadmap
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test --workspace`
 - Accept changed screen snapshots: `cargo insta review` (or `INSTA_UPDATE=always cargo test`)
+- Licenses and advisories: `cargo deny check`
+- Plugin SDK tests: `python3 sdk/python/test_mog_plugin.py` and `node sdk/node/test.js`
 - Timings, by hand: `cargo test --release -p mog-tui --test large_files -- --ignored --nocapture`
   and `cargo test --release -p mog frame_cost -- --ignored --nocapture`
 
@@ -33,17 +35,21 @@ Cargo workspace, one crate per concern under `crates/`:
 - `mog-lsp`: language server client.
 - `mog-ai`: AI providers (Claude, Copilot) behind one trait.
 - `mog-dap`: debug adapter client.
-- `mog-plugin`: the plugin host, JSON-RPC over stdio.
+- `mog-plugin`: the plugin host, JSON-RPC over stdio, and plugin manifests.
+- `mog-plugin-sdk`: the Rust SDK for writing plugins. The Python and Node SDKs are in `sdk/`.
 
 Subsystems never touch the terminal. Everything flows through the event loop in `mog`
-(`crates/mog/src/app.rs`), and only `mog-tui` draws.
+(`crates/mog/src/app.rs`), and only `mog-tui` draws. The app's handling of each subsystem lives
+in a child module of `app`, like `app/language.rs` for language servers or `app/plugin_host.rs`
+for plugins.
 
 ## Where new things plug in
 
 - Editing command: add a `Command` variant and its name in `mog-core/src/command.rs`, handle it
   in `Editor::execute`, bind it in `DEFAULT_BINDINGS` in `keymap.rs`.
 - App level command (needs AI, UI): use a namespaced `Command::Custom` like
-  `ai.explain` and handle `Outcome::Unhandled` in `App::execute_command`.
+  `ai.explain`, handle it in `App::execute_custom` (`crates/mog/src/app/custom.rs`) and list it
+  in `crates/mog/src/commands.rs` for the palette.
 - Screen element (panel, palette, popup): implement `mog_tui::Layer` and push it in `App::new`.
   Layers get mouse events by hit testing and can animate via `tick`.
 - Flair: implement `mog_flair::Flair` in `crates/mog-flair/src/builtin/` and add it to
@@ -53,8 +59,11 @@ Subsystems never touch the terminal. Everything flows through the event loop in 
 - AI backend: implement `mog_ai::AiProvider` and build it in `settings::ai_providers`.
 - Config: add a field with a default in `mog-config`, and keep `examples/config.toml` valid (a
   test parses it).
-- Plugin protocol: `mog-plugin` speaks it, `crates/mog/src/plugins.rs` routes it. Keep
-  `docs/plugins.md` and `examples/plugins/words.py` in step with it.
+- Plugin protocol: `mog-plugin` speaks it, `crates/mog/src/plugins.rs` runs the plugins and
+  `crates/mog/src/app/plugin_host.rs` answers them. Keep `docs/plugins.md`,
+  `docs/plugin-protocol.schema.json`, the SDKs in `sdk/` and `crates/mog-plugin-sdk`, and the
+  examples in `examples/plugins` in step with it. `examples/plugins/todo/mog_plugin.py` is a
+  copy of `sdk/python/mog_plugin.py`, a test checks they match.
 - Debugger: `mog-dap` is the client, `crates/mog/src/debug.rs` runs sessions, built in adapters
   are in `mog-config/src/tasks.rs`. Tasks and their output parsing live in
   `crates/mog/src/tasks.rs` and `mog-core/src/problems.rs`.

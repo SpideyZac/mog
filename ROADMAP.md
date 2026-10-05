@@ -91,13 +91,13 @@
 
 ## AI
 
-- [x] AI ghost text (Claude)
 - [x] Copilot ghost text
 - [x] Copilot sign in and status
 - [x] Accept ghost text by word and cycle suggestions
 - [x] Turn chat and ghost text on or off for each AI
-- [ ] Copilot chat
 - [x] Claude chat panel
+- [x] Stream chat answers, retry a busy API and keep long chats in budget
+- [x] Keep secret files like `.env` away from every AI (`ai.exclude`)
 - [x] Ask Claude about the selection
 
 ## Flair
@@ -143,7 +143,16 @@
 - [x] Tree-sitter parsing off the UI thread
 - [x] Incremental tree-sitter parsing and highlighting of only what changed
 - [x] Profile idle CPU use of audio, flair ticks and the resource monitor
+- [x] Property tests for transactions and undo
+- [x] Crash safe state writes off the UI thread
+- [x] CI checks the minimum Rust version, licenses and advisories, and releases wait for it
 
 ## Extensions
 
 - [x] Plugin API, programs in any language over JSON-RPC
+- [x] Plugin protocol 2: manifests and lazy start, events, before save, an editor API, status
+  segments, decorations and diagnostics
+- [x] Plugins provide completion, hover, formatting and code actions
+- [x] Plugin timeouts, cancellation, crash restarts and logs
+- [x] Plugin SDKs for Python, Node and Rust
+- [x] `mog plugin` to make, install, list, check and remove plugins
