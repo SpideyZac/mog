@@ -234,6 +234,8 @@ impl FromStr for Command {
                 "insert_text" => Ok(Self::InsertText(arg.to_owned())),
                 "scroll" => arg.parse().map(Self::Scroll).map_err(|_| unknown()),
                 "goto_line" => arg.parse().map(Self::GotoLine).map_err(|_| unknown()),
+                // namespaced commands like plugin.snip.insert:hello carry their own argument
+                custom if custom.contains('.') => Ok(Self::Custom(name.to_owned())),
                 _ => Err(unknown()),
             };
         }
@@ -282,6 +284,7 @@ mod tests {
             Command::Scroll(-3),
             Command::GotoLine(42),
             Command::Custom("hello.wave".into()),
+            Command::Custom("plugin.snip.insert:hello there".into()),
         ];
         for command in commands {
             assert_eq!(command.to_string().parse::<Command>(), Ok(command));
