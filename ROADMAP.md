@@ -130,10 +130,10 @@
 
 ## Distribution
 
-- [ ] Homebrew
-- [ ] winget
-- [ ] AUR package
-- [ ] `cargo-binstall` metadata
+- [x] Homebrew
+- [x] winget
+- [x] AUR package
+- [x] `cargo-binstall` metadata
 
 ## Quality
 

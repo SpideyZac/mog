@@ -34,7 +34,9 @@ mog .
 - Git gutter, branch in the status line, file colors and inline blame, plus a source control
   panel with diffs, staging of whole files or single changes, and commits
 - Claude chat, explain selection and ghost text. Copilot ghost text.
-- Updates itself from GitHub releases and shows what changed
+- Run build and test tasks with their errors in the problems list, and debug with any debug
+  adapter (lldb-dap and debugpy work out of the box)
+- Updates itself from signed GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
   to your config
 - A serious mode that turns all the fun off, a reduced motion setting, and `NO_COLOR` support
@@ -58,9 +60,16 @@ All of it can be switched off.
 
 ## Install
 
-Grab a build for Windows, macOS or Linux from
+```sh
+brew install spideyzac/mog/mog                          # macOS, Linux
+winget install SpideyZac.mog                             # Windows
+yay -S mog-bin                                           # Arch, or any AUR helper
+cargo binstall --git https://github.com/SpideyZac/mog mog  # anywhere with cargo
+```
+
+Or grab a build for Windows, macOS or Linux from
 [releases](https://github.com/SpideyZac/mog/releases), unpack it and put `mog` somewhere on your
-`PATH`.
+`PATH`. Package manager installs are updated by the package manager, mog leaves them alone.
 
 mog updates itself. When a new release is out it downloads in the background, checks its
 [minisign](https://jedisct1.github.io/minisign/) signature against the key built into mog and is
