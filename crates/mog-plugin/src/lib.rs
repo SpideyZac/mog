@@ -28,6 +28,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// The JSON-RPC error code for a method that does not exist.
 const METHOD_NOT_FOUND: i64 = -32601;
 
+/// The JSON-RPC error code mog answers failed requests with.
+const REQUEST_FAILED: i64 = -32000;
+
 /// A command a plugin adds to the palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginCommand {
@@ -98,6 +101,17 @@ pub enum PluginEvent {
         plugin: String,
         /// The text.
         text: String,
+    },
+    /// The plugin asked mog something and waits for [`Plugin::respond`].
+    Request {
+        /// The plugin name.
+        plugin: String,
+        /// The request id to answer with.
+        id: Value,
+        /// What it asks, like `editor/context` or `ui/pick`.
+        method: String,
+        /// The arguments.
+        params: Value,
     },
     /// The plugin process went away.
     Exited {
@@ -202,6 +216,13 @@ enum Outgoing {
         method: String,
         /// The arguments.
         params: Value,
+    },
+    /// The answer to a request the plugin sent.
+    Response {
+        /// The id of the request.
+        id: Value,
+        /// The result, or an error message.
+        result: Result<Value, String>,
     },
 }
 
@@ -337,6 +358,11 @@ impl Plugin {
         Ok(parse_actions(&result))
     }
 
+    /// Answers the request `id` the plugin sent, with a result or an error message.
+    pub fn respond(&self, id: Value, result: Result<Value, String>) {
+        let _ = self.outgoing.send(Outgoing::Response { id, result });
+    }
+
     /// Tells the plugin something happened, like `opened` or `saved` with the file.
     pub fn event(&self, kind: &str, path: Option<&Path>) {
         let _ = self.outgoing.send(Outgoing::Notification {
@@ -457,6 +483,11 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
             Outgoing::Notification { method, params } => {
                 self.write(Message::Notification { method, params }).await
             }
+            Outgoing::Response { id, result } => {
+                let result =
+                    result.map_err(|message| json!({ "code": REQUEST_FAILED, "message": message }));
+                self.write(Message::Response { id, result }).await
+            }
         }
     }
 
@@ -495,13 +526,22 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                 };
                 let _ = self.events.send(event);
             }
-            Message::Request { id, .. } => {
-                let error = json!({ "code": METHOD_NOT_FOUND, "message": "mog does not answer requests yet" });
-                self.write(Message::Response {
-                    id,
-                    result: Err(error),
-                })
-                .await?;
+            Message::Request { id, method, params } => {
+                let event = PluginEvent::Request {
+                    plugin: self.name.clone(),
+                    id: id.clone(),
+                    method,
+                    params,
+                };
+                // without mog listening nobody will answer, so say so instead of hanging
+                if self.events.send(event).is_err() {
+                    let error = json!({ "code": METHOD_NOT_FOUND, "message": "mog is closing" });
+                    self.write(Message::Response {
+                        id,
+                        result: Err(error),
+                    })
+                    .await?;
+                }
             }
         }
         Ok(())
@@ -552,6 +592,62 @@ mod tests {
                 Action::Command("save".into()),
             ]
         );
+    }
+
+    /// A request from the plugin reaches mog and the answer gets back to the plugin.
+    #[tokio::test]
+    async fn answers_plugin_requests() {
+        let (mog_side, plugin_side) = io::duplex(1 << 16);
+        let (mog_read, mog_write) = io::split(mog_side);
+        let (plugin_read, mut plugin_write) = io::split(plugin_side);
+        let (events, mut events_rx) = mpsc::unbounded_channel();
+        let (plugin, _task) = Plugin::connect("ask", mog_read, mog_write, &env::temp_dir(), events);
+        let answer = tokio::spawn(async move {
+            let mut reader = BufReader::new(plugin_read);
+            let Ok(Some(Message::Request { id, .. })) = transport::read_message(&mut reader).await
+            else {
+                panic!("expected initialize");
+            };
+            let hello = Message::Response {
+                id,
+                result: Ok(json!({ "commands": [] })),
+            };
+            transport::write_message(&mut plugin_write, &hello)
+                .await
+                .expect("write");
+            let ask = Message::Request {
+                id: json!("q"),
+                method: "editor/context".into(),
+                params: json!({}),
+            };
+            transport::write_message(&mut plugin_write, &ask)
+                .await
+                .expect("write");
+            loop {
+                if let Ok(Some(Message::Response { id, result })) =
+                    transport::read_message(&mut reader).await
+                {
+                    assert_eq!(id, json!("q"));
+                    return result.expect("answered");
+                }
+            }
+        });
+        loop {
+            let event = time::timeout(Duration::from_secs(5), events_rx.recv())
+                .await
+                .expect("in time")
+                .expect("event");
+            if let PluginEvent::Request { id, method, .. } = event {
+                assert_eq!(method, "editor/context");
+                plugin.respond(id, Ok(json!({ "line": 4 })));
+                break;
+            }
+        }
+        let result = time::timeout(Duration::from_secs(5), answer)
+            .await
+            .expect("in time")
+            .expect("plugin side");
+        assert_eq!(result["line"], 4);
     }
 
     /// The handshake reports the commands and a command run comes back with its actions.
