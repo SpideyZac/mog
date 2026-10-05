@@ -2,11 +2,15 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    env,
+    ffi::OsString,
+    fs,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
 };
 
 use mog_config::DebugConfig;
-use mog_dap::{DapEvent, DebugClient, Frame};
+use mog_dap::{DapEvent, DebugClient, Frame, client::program_path};
 use mog_tui::debug_panel::VariableEntry;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -103,6 +107,103 @@ pub fn variables(root: &Path, file: Option<&Path>) -> Vec<(&'static str, String)
     ]
 }
 
+/// Returns the Python DLL a broken LLVM lldb next to `adapter` asks for, like `python311.dll`.
+///
+/// LLVM's Windows builds of lldb link one exact Python version and fail to start without it,
+/// saying which one only when lldb itself is run.
+fn missing_python_dll(adapter: &Path) -> Option<String> {
+    let lldb = adapter.with_file_name("lldb.exe");
+    if !lldb.is_file() {
+        return None;
+    }
+    let output = Command::new(&lldb)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    if output.status.success() {
+        return None;
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let start = stderr.find("unable to find '")? + "unable to find '".len();
+    let name = stderr[start..].split('\'').next()?;
+    (name.starts_with("python") && name.ends_with(".dll")).then(|| name.to_owned())
+}
+
+/// Returns the folders a Windows Python install may keep its DLL in.
+fn python_folders() -> Vec<PathBuf> {
+    // folders that hold one install per version, like `Python311`
+    let mut parents = Vec::new();
+    let mut folders = Vec::new();
+    if let Some(local) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        parents.push(local.join("Programs").join("Python"));
+        parents.push(local.join("Python"));
+    }
+    if let Some(roaming) = env::var_os("APPDATA").map(PathBuf::from) {
+        parents.push(roaming.join("uv").join("python"));
+    }
+    if let Some(home) = env::var_os("USERPROFILE").map(PathBuf::from) {
+        parents.push(home.join(".pyenv").join("pyenv-win").join("versions"));
+        folders.push(home.join(".platformio").join("python3"));
+        folders.push(
+            home.join("scoop")
+                .join("apps")
+                .join("python")
+                .join("current"),
+        );
+        folders.push(home.join("miniconda3"));
+        folders.push(home.join("anaconda3"));
+    }
+    parents.push(PathBuf::from("C:\\"));
+    parents.push(PathBuf::from("C:\\Program Files"));
+    for parent in parents {
+        if let Ok(entries) = fs::read_dir(&parent) {
+            folders.extend(entries.flatten().map(|entry| entry.path()));
+        }
+    }
+    folders
+}
+
+/// Returns extra environment that lets `command` start, for adapters known to need help.
+///
+/// Only LLVM's `lldb-dap` on Windows needs any: it is pointed at a Python install that has the
+/// DLL it was built against. Returns why it cannot start when no such install is found.
+pub fn adapter_env(command: &str) -> Result<Vec<(OsString, OsString)>, String> {
+    let adapter = program_path(command);
+    let is_lldb = adapter
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("lldb-dap"));
+    if !cfg!(windows) || !is_lldb {
+        return Ok(Vec::new());
+    }
+    let Some(dll) = missing_python_dll(&adapter) else {
+        return Ok(Vec::new());
+    };
+    let Some(folder) = python_folders()
+        .into_iter()
+        .find(|folder| folder.join(&dll).is_file())
+    else {
+        // python311.dll is Python 3.11
+        let digits = dll.trim_start_matches("python").trim_end_matches(".dll");
+        let version = match digits.split_at_checked(1) {
+            Some((major, minor)) => format!("{major}.{minor}"),
+            None => digits.to_owned(),
+        };
+        return Err(format!(
+            "lldb-dap needs {dll}, install Python {version} (uv python install {version} works)"
+        ));
+    };
+    let mut path = OsString::from(folder.as_os_str());
+    if let Some(current) = env::var_os("PATH") {
+        path.push(";");
+        path.push(current);
+    }
+    Ok(vec![
+        ("PATH".into(), path),
+        ("PYTHONHOME".into(), folder.into_os_string()),
+    ])
+}
+
 /// One debugging session at a time and what it reports.
 pub struct Debugger {
     /// The adapter, while a session runs.
@@ -153,7 +254,8 @@ impl Debugger {
         // a fresh channel so a session that is shutting down cannot talk over this one
         let (events_tx, events) = mpsc::unbounded_channel();
         self.events = events;
-        let client = DebugClient::start(&config.command, &config.args, root, events_tx)
+        let env = adapter_env(&config.command)?;
+        let client = DebugClient::start(&config.command, &config.args, root, &env, events_tx)
             .map_err(|err| format!("could not start {}: {err}", config.command))?;
         let replies = self.replies_tx.clone();
         let request = if config.request.is_empty() {

@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     env,
+    ffi::OsString,
     io::{self, ErrorKind},
     path::{Path, PathBuf},
     process::Stdio,
@@ -118,7 +119,7 @@ pub struct DebugClient {
 }
 
 /// Returns the path to run for `command`, finding npm style `.cmd` shims on Windows.
-fn program_path(command: &str) -> PathBuf {
+pub fn program_path(command: &str) -> PathBuf {
     let program: PathBuf = Path::new(command).components().collect();
     if !cfg!(windows) || program.extension().is_some() || program.components().count() > 1 {
         return program;
@@ -145,7 +146,8 @@ async fn last_line(stderr: impl AsyncRead + Unpin) -> Option<String> {
 }
 
 impl DebugClient {
-    /// Starts `command` with `args` in `cwd` as a debug adapter talking over stdio.
+    /// Starts `command` with `args` in `cwd` as a debug adapter talking over stdio, with `env`
+    /// added to its environment.
     ///
     /// # Errors
     ///
@@ -154,10 +156,12 @@ impl DebugClient {
         command: &str,
         args: &[String],
         cwd: &Path,
+        env: &[(OsString, OsString)],
         events: UnboundedSender<DapEvent>,
     ) -> io::Result<Self> {
         let mut child = Command::new(program_path(command))
             .args(args)
+            .envs(env.iter().map(|(key, value)| (key, value)))
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
