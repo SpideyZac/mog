@@ -2005,6 +2005,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mog-plugin-sdk"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "mog-syntax"
 version = "0.2.0"
 dependencies = [
