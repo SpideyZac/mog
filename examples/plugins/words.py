@@ -7,7 +7,8 @@ Add it to your config:
     command = "python"
     args = ["/path/to/mog/examples/plugins/words.py"]
 
-It only uses the standard library. See docs/plugins.md for the protocol.
+It only uses the standard library and speaks the protocol by hand, see docs/plugins.md. For an
+easier start use the SDK in sdk/python, like examples/plugins/todo does.
 """
 
 import datetime
@@ -106,7 +107,7 @@ def main():
         method = message.get("method")
         params = message.get("params") or {}
         if method == "initialize":
-            write({"id": message["id"], "result": {"commands": [
+            write({"id": message["id"], "result": {"protocolVersion": 2, "events": ["opened", "saved"], "commands": [
                 {"name": "count", "title": "Words: Count words", "keys": ["alt+shift+w"]},
                 {"name": "shout", "title": "Words: SHOUT the selection"},
                 {"name": "date", "title": "Words: Insert today's date"},
