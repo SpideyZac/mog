@@ -98,6 +98,12 @@ type EventHandler<R, W> = Box<dyn FnMut(&mut Mog<R, W>, &Value) -> Result<Value,
 /// A provider handler with the languages it covers, `None` for every file.
 type Provider<R, W> = (Option<Vec<String>>, EventHandler<R, W>);
 
+/// Handles a key the plugin takes, with the key name and where the cursor is.
+type KeyHandler<R, W> = Box<dyn FnMut(&mut Mog<R, W>, &str, &Value) -> Result<Value, String>>;
+
+/// Runs once mog said hello, to start timers or take keys.
+type StartHandler<R, W> = Box<dyn FnMut(&mut Mog<R, W>)>;
+
 /// The connection to mog, handed to handlers so they can ask and tell it things.
 pub struct Mog<R, W> {
     /// Where messages from mog come from.
@@ -212,6 +218,46 @@ impl<R: BufRead, W: Write> Mog<R, W> {
     pub fn actions(&mut self, actions: Vec<Value>) {
         self.notify("actions", json!({ "actions": actions }));
     }
+
+    /// Puts the widget `id` on the screen showing `lines`, replacing one with the same id.
+    ///
+    /// `options` is an object with any of `anchor`, `x`, `y`, `frames`, `fps`, `flair`,
+    /// `transparent`, `clickable`, `fg`, `bg`, `z`, `motion` and `restart`, see
+    /// `docs/plugins.md`.
+    pub fn draw(&mut self, id: &str, lines: Value, options: Value) {
+        let mut params = if options.is_object() {
+            options
+        } else {
+            json!({})
+        };
+        params["id"] = json!(id);
+        if params.get("frames").is_none() {
+            params["lines"] = lines;
+        }
+        self.notify("draw", params);
+    }
+
+    /// Removes the widget `id`, or every widget of this plugin when `None`.
+    pub fn clear(&mut self, id: Option<&str>) {
+        self.notify("clear", json!({ "id": id }));
+    }
+
+    /// Sets the cursor shape: `default`, `block`, `bar` or `underline`.
+    pub fn cursor(&mut self, shape: &str, blink: bool) {
+        self.notify("cursor", json!({ "shape": shape, "blink": blink }));
+    }
+
+    /// Takes `keys` before the editor does: `"all"`, a list like `["esc"]`, or `null` for
+    /// none, leaving `except` alone when taking all.
+    pub fn capture(&mut self, keys: Value, except: &[&str]) {
+        self.notify("capture", json!({ "keys": keys, "except": except }));
+    }
+
+    /// Starts a timer that sends the `timer` event with `id` every `ms` milliseconds, 0 stops
+    /// it.
+    pub fn timer(&mut self, id: &str, ms: u64) {
+        self.notify("timer", json!({ "id": id, "every": ms }));
+    }
 }
 
 /// A mog plugin. Add handlers, then call [`Plugin::run`].
@@ -222,6 +268,10 @@ pub struct Plugin<R = BufReader<io::Stdin>, W = io::Stdout> {
     events: BTreeMap<String, EventHandler<R, W>>,
     /// The providers by name, with the languages they cover, `None` for every file.
     providers: BTreeMap<String, Provider<R, W>>,
+    /// The handler for keys the plugin takes.
+    key: Option<KeyHandler<R, W>>,
+    /// What runs once mog said hello.
+    start: Option<StartHandler<R, W>>,
 }
 
 impl<R: BufRead, W: Write> Default for Plugin<R, W> {
@@ -230,6 +280,8 @@ impl<R: BufRead, W: Write> Default for Plugin<R, W> {
             commands: Vec::new(),
             events: BTreeMap::new(),
             providers: BTreeMap::new(),
+            key: None,
+            start: None,
         }
     }
 }
@@ -287,6 +339,27 @@ impl<R: BufRead, W: Write> Plugin<R, W> {
         self
     }
 
+    /// Handles the keys the plugin takes, see [`Mog::capture`], with the key name like
+    /// `shift+g` and the cursor context, which also has `key` and `char`.
+    ///
+    /// Return `{ "actions": [...] }`, `{ "handled": false }` to let the editor have the key,
+    /// and optionally a new `capture`.
+    #[must_use]
+    pub fn on_key(
+        mut self,
+        handler: impl FnMut(&mut Mog<R, W>, &str, &Value) -> Result<Value, String> + 'static,
+    ) -> Self {
+        self.key = Some(Box::new(handler));
+        self
+    }
+
+    /// Runs `handler` once mog said hello, the place to start timers or take keys.
+    #[must_use]
+    pub fn on_start(mut self, handler: impl FnMut(&mut Mog<R, W>) + 'static) -> Self {
+        self.start = Some(Box::new(handler));
+        self
+    }
+
     /// Returns the answer to `initialize`.
     fn hello(&self) -> Value {
         let commands: Vec<Value> = self
@@ -341,6 +414,10 @@ impl<R: BufRead, W: Write> Plugin<R, W> {
                 let actions = handler(mog, &params["context"], &params["args"])?;
                 Ok(json!({ "actions": actions }))
             }
+            "key" => match &mut self.key {
+                Some(handler) => handler(mog, params["key"].as_str().unwrap_or_default(), params),
+                None => Ok(json!({ "handled": false })),
+            },
             event if REQUEST_EVENTS.contains(&event) => match self.events.get_mut(event) {
                 Some(handler) => handler(mog, params),
                 None => Ok(json!({ "changes": [] })),
@@ -386,6 +463,11 @@ impl<R: BufRead, W: Write> Plugin<R, W> {
                 };
                 if !mog.cancelled.remove(&id.to_string()) {
                     mog.write(reply)?;
+                }
+                if method == "initialize"
+                    && let Some(start) = &mut self.start
+                {
+                    start(&mut mog);
                 }
                 continue;
             }
@@ -450,6 +532,7 @@ mod tests {
             json!({ "id": 4, "method": "command", "params": { "command": "nope" } }),
             json!({ "method": "$/cancelRequest", "params": { "id": 5 } }),
             json!({ "id": 5, "method": "provide/hover", "params": {} }),
+            json!({ "id": 6, "method": "key", "params": { "key": "j", "char": "j" } }),
             json!({ "method": "shutdown" }),
         ]);
         let mut output = Vec::new();
@@ -467,6 +550,11 @@ mod tests {
             })
             .provide("hover", Some(vec!["md".into()]), |_, _| {
                 Ok(json!({ "text": "hi" }))
+            })
+            .on_start(|mog| mog.capture(json!(["j"]), &[]))
+            .on_key(|mog, key, _| {
+                mog.draw("pressed", json!([key]), json!({ "anchor": "cursor" }));
+                Ok(json!({ "actions": [actions::command("move_down", Value::Null)] }))
             })
             .run_with(input, &mut output)
             .expect("ran");
@@ -494,5 +582,12 @@ mod tests {
                 .is_some_and(|message| message.contains("no command"))
         );
         assert!(by_id(5).is_none());
+        assert_eq!(
+            by_id(6).expect("key")["result"]["actions"][0]["name"],
+            "move_down"
+        );
+        let notes: Vec<&Value> = answers.iter().filter(|a| a.get("id").is_none()).collect();
+        assert_eq!(notes[0]["method"], "capture");
+        assert_eq!(notes[1]["params"]["lines"], json!(["j"]));
     }
 }
