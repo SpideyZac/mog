@@ -35,5 +35,6 @@ pub use keymap::{Key, KeyChord, Keymap, Modifiers};
 pub use marks::{InlayHint, LineMarks, SemanticToken, TokenKind};
 pub use problems::{TaskProblem, parse_problems};
 pub use range::Range;
+pub use ropey::Rope;
 pub use transaction::{Change, Transaction};
 pub use view::View;

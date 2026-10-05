@@ -603,7 +603,7 @@ impl App {
                 |path| path.to_string_lossy().into_owned(),
             );
             if self.swaps.get(&key).map(|(version, _)| *version) != Some(document.version()) {
-                let text = document.text().to_string();
+                let text = document.text().clone();
                 let file = state.write_swap(&key, document.path(), &self.ui.root, text);
                 self.swaps.insert(key.clone(), (document.version(), file));
             }
@@ -612,10 +612,14 @@ impl App {
         self.swaps.retain(|key, (_, file)| {
             let keep = wanted.contains(key);
             if !keep {
-                let _ = fs::remove_file(file);
+                state.remove_swap(file.clone());
             }
             keep
         });
+        if let Some(err) = state.take_error() {
+            self.editor
+                .set_status(format!("could not save recovery data: {err}"));
+        }
     }
 
     /// Puts back the undo history saved for files that were just opened.
@@ -651,7 +655,7 @@ impl App {
         };
         let document = self.editor.document();
         if let Some(path) = document.path() {
-            state.save_undo(path, &document.text().to_string(), document.history());
+            state.save_undo(path, document.text(), document.history());
         }
     }
 
@@ -690,13 +694,16 @@ impl App {
         {
             for document in self.editor.documents() {
                 if let Some(path) = document.path().filter(|_| !document.is_modified()) {
-                    state.save_undo(path, &document.text().to_string(), document.history());
+                    state.save_undo(path, document.text(), document.history());
                 }
             }
         }
         // quitting with unsaved changes was confirmed, so they are meant to go
-        for (_, file) in self.swaps.values() {
-            let _ = fs::remove_file(file);
+        if let Some(state) = &self.state {
+            for (_, file) in self.swaps.values() {
+                state.remove_swap(file.clone());
+            }
+            state.flush();
         }
         self.swaps.clear();
     }
@@ -3904,6 +3911,7 @@ mod tests {
             root: project.clone(),
             // no process has this id so the swap counts as left behind
             pid: u32::MAX,
+            started: 0,
             text: "saved\nand more\n".into(),
         };
         let swap_file = dir.join("state").join("swap").join("left.json");
