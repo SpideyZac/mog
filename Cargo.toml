@@ -36,6 +36,7 @@ mog-ai = { path = "crates/mog-ai" }
 mog-audio = { path = "crates/mog-audio" }
 mog-config = { path = "crates/mog-config" }
 mog-core = { path = "crates/mog-core" }
+mog-dap = { path = "crates/mog-dap" }
 mog-flair = { path = "crates/mog-flair" }
 mog-git = { path = "crates/mog-git" }
 mog-lsp = { path = "crates/mog-lsp" }

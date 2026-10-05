@@ -1,0 +1,14 @@
+[package]
+name = "mog-dap"
+description = "The debug adapter client of mog."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
