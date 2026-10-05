@@ -4031,7 +4031,7 @@ mod tests {
         config.tasks.insert(
             "build".into(),
             TaskConfig {
-                command: "echo src/lib.c:1:6: error: expected ';'".into(),
+                command: "echo src/lib.c:1:6: error: expected semicolon".into(),
                 cwd: String::new(),
             },
         );
@@ -4059,7 +4059,7 @@ mod tests {
         }
         let problem = app.ui.task_problems.first().expect("a problem");
         assert_eq!((problem.line, problem.column), (0, 5));
-        assert_eq!(problem.message, "expected ';'");
+        assert_eq!(problem.message, "expected semicolon");
         assert!(problem.path.ends_with("lib.c"));
         let _ = fs::remove_dir_all(dir);
     }
