@@ -68,9 +68,9 @@
 - [x] Branch in the status line
 - [x] File status colors in the explorer
 - [x] Inline blame for the cursor line
-- [ ] Stage and unstage hunks
-- [ ] Diff view
-- [ ] Commit from the editor
+- [x] Stage and unstage hunks
+- [x] Diff view
+- [x] Commit from the editor
 
 ## Language servers
 

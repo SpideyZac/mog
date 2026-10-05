@@ -31,7 +31,8 @@ mog .
 - Picks up where you left off: opening a folder brings back its files, split and cursors, undo
   history survives restarts, and unsaved work is kept on disk so a crash or a closed terminal
   does not lose it
-- Git gutter, branch in the status line, file colors and inline blame
+- Git gutter, branch in the status line, file colors and inline blame, plus a source control
+  panel with diffs, staging of whole files or single changes, and commits
 - Claude chat, explain selection and ghost text. Copilot ghost text.
 - Updates itself from GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
@@ -527,6 +528,17 @@ The selecting versions are named `select_*`, like `select_word_left` and `select
 | `alt+g` | `graph.toggle` | Project graph |
 | `alt+d` | `annotate.toggle` | Draw on the screen |
 
+### Git
+
+| keys | command | |
+| --- | --- | --- |
+| `ctrl+shift+g` `alt+shift+g` | `git.panel` | Source control: changed files and their diffs |
+| `alt+s` | `git.stage_hunk` | Stage the change at the cursor |
+| `alt+shift+s` | `git.unstage_hunk` | Unstage the change at the cursor |
+| `alt+shift+r` | `git.revert_hunk` | Put the change at the cursor back to the last commit |
+| | `git.stage_file` | Stage the whole file |
+| | `git.commit` | Commit what is staged |
+
 ### AI
 
 | keys | command | |
@@ -590,6 +602,19 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `alt+r` | Regular expressions (`.*`), with `$1` or `${name}` in the replacement for groups |
 | `ctrl+backspace` | Clear the field |
 | click `Aa` `ab` `.*` | Toggle the same options |
+| `esc` | Close |
+
+**Source control** (`ctrl+shift+g`)
+
+| keys | |
+| --- | --- |
+| `up` `down` | Pick a file, its diff shows on the right |
+| `space` `s` `u` | Stage or unstage the picked file |
+| `a` | Stage everything |
+| `c` | Commit what is staged |
+| `enter` | Open the file |
+| `pageup` `pagedown` | Scroll the diff |
+| `r` | Read the changes again |
 | `esc` | Close |
 
 **Find in project** (`ctrl+shift+f`, needs a folder open)
