@@ -499,6 +499,8 @@ fn whole_lines(rope: &Rope, ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
 #[cfg(test)]
 /// Tests for incremental highlighting.
 mod tests {
+    use std::time::Instant;
+
     use super::{Edit, Highlighter, Incremental, kind_for};
     use crate::Kind;
 
@@ -571,6 +573,38 @@ mod tests {
                 "after edits the text is {text:?}"
             );
         }
+    }
+
+    /// Prints how long an edit in a big file takes to highlight, from scratch and incrementally.
+    #[test]
+    #[ignore = "a timing, run by hand with --release --nocapture"]
+    fn edit_timing() {
+        let line = "    let value = compute(alpha, beta) + other(\"text\", 42); // note\n";
+        let mut text = format!("fn main() {{\n{}}}\n", line.repeat(20_000));
+        let mut highlighter = Highlighter::default();
+        let mut doc = Incremental::new("rust");
+        let start = Instant::now();
+        doc.update(&mut highlighter, &text, None);
+        let full = start.elapsed();
+        let at = text.chars().count() / 2;
+        let edit = Edit {
+            start: at,
+            end: at,
+            text: "x".into(),
+        };
+        let byte = text
+            .char_indices()
+            .nth(at)
+            .map_or(text.len(), |(byte, _)| byte);
+        text.insert(byte, 'x');
+        let start = Instant::now();
+        doc.update(&mut highlighter, &text, Some(&[vec![edit]]));
+        let incremental = start.elapsed();
+        println!(
+            "{} bytes: from scratch {full:?}, one edit {incremental:?}",
+            text.len()
+        );
+        assert!(incremental < full);
     }
 
     /// Edits that do not lead to the text start over instead of going wrong.
