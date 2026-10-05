@@ -2,6 +2,7 @@
 
 use std::{future::Future, path::PathBuf, pin::Pin};
 
+use ropey::Rope;
 use thiserror::Error;
 
 /// A boxed future, used so [`AiProvider`] works as a trait object.
@@ -67,8 +68,10 @@ pub struct CompletionFile {
     pub path: Option<PathBuf>,
     /// The tab index, which names files that were never saved.
     pub index: usize,
-    /// The full text.
-    pub text: String,
+    /// The full text. Cloning a rope is cheap, so the editor hands it over without copying.
+    pub text: Rope,
+    /// The editor's version of the text, so an unchanged file is not sent again.
+    pub version: u64,
     /// The char offset of the cursor.
     pub cursor: usize,
     /// How many columns a tab takes.

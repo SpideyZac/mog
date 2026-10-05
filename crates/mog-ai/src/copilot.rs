@@ -76,8 +76,9 @@ pub struct DeviceCode {
 pub struct Copilot {
     /// The connection to the language server.
     client: Client,
-    /// The last version sent to the server for each file, by uri.
-    files: Mutex<HashMap<String, i32>>,
+    /// The last version sent to the server for each file by uri, with the editor's version of
+    /// the text it had.
+    files: Mutex<HashMap<String, (i32, u64)>>,
 }
 
 impl Copilot {
@@ -199,13 +200,18 @@ impl Copilot {
     /// Sends the text of `file` at `uri` to the server and returns the version it now has.
     fn sync(&self, file: &CompletionFile, uri: &str) -> i32 {
         let mut files = self.files.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(version) = files.get_mut(uri) {
+        if let Some((version, sent)) = files.get_mut(uri) {
+            // asking for more suggestions at the same spot needs no new text
+            if *sent == file.version {
+                return *version;
+            }
             *version += 1;
+            *sent = file.version;
             self.client.notify(
                 "textDocument/didChange",
                 json!({
                     "textDocument": { "uri": uri, "version": *version },
-                    "contentChanges": [{ "text": file.text }],
+                    "contentChanges": [{ "text": file.text.to_string() }],
                 }),
             );
             return *version;
@@ -214,10 +220,10 @@ impl Copilot {
         self.client.notify(
             "textDocument/didOpen",
             json!({ "textDocument": {
-                "uri": uri, "languageId": language, "version": 1, "text": file.text
+                "uri": uri, "languageId": language, "version": 1, "text": file.text.to_string()
             }}),
         );
-        files.insert(uri.to_owned(), 1);
+        files.insert(uri.to_owned(), (1, file.version));
         1
     }
 }
@@ -244,10 +250,10 @@ impl AiProvider for Copilot {
                 None => format!("untitled:Untitled-{}", file.index + 1),
             };
             let version = self.sync(file, &uri);
-            let text = Rope::from_str(&file.text);
+            let text = &file.text;
             let params = json!({
                 "textDocument": { "uri": uri, "version": version },
-                "position": convert::char_to_position(&text, file.cursor),
+                "position": convert::char_to_position(text, file.cursor),
                 "context": {
                     "triggerKind": if request.invoked { TRIGGER_INVOKED } else { TRIGGER_AUTOMATIC },
                 },
@@ -266,7 +272,7 @@ impl AiProvider for Copilot {
                 .unwrap_or_default();
             let mut suggestions: Vec<String> = Vec::new();
             for item in &items {
-                if let Some(suggestion) = suggestion_at(&text, file.cursor, item)
+                if let Some(suggestion) = suggestion_at(text, file.cursor, item)
                     && !suggestions.contains(&suggestion)
                 {
                     suggestions.push(suggestion);

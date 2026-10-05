@@ -2352,7 +2352,8 @@ impl App {
             file: Some(CompletionFile {
                 path: document.path().map(ToOwned::to_owned),
                 index: self.editor.active(),
-                text: text.to_string(),
+                text: text.clone(),
+                version: document.version(),
                 cursor: head,
                 tab_size: self.editor.options().tab_width,
                 insert_spaces: self.editor.options().insert_spaces,
