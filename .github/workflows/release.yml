@@ -10,9 +10,17 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# third party actions are pinned to a commit, the comment says which release it is
 jobs:
+  # a tag only ships if formatting, lints, tests, the minimum rust version and cargo deny pass
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
     name: build ${{ matrix.target }}
+    needs: ci
     strategy:
       fail-fast: false
       matrix:
@@ -29,17 +37,18 @@ jobs:
             os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install system libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
 
@@ -69,20 +78,20 @@ jobs:
           fi
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.target }}
           path: |
             ${{ env.ARCHIVE }}
             ${{ env.ARCHIVE }}.sha256
 
+  # every platform has to build, a partial release would break the updater and binstall for the
+  # missing ones
   release:
     needs: build
-    # still publish the platforms that built if one of them broke
-    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -107,10 +116,22 @@ jobs:
           } > notes.md
           cat notes.md
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
+
+      - name: Check every platform is there
+        shell: bash
+        run: |
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin \
+            aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            archive=$(ls dist/mog-"${GITHUB_REF_NAME}-${target}".* 2>/dev/null | grep -v '\.sha256$' || true)
+            if [ -z "$archive" ] || [ ! -f "$archive.sha256" ]; then
+              echo "the build for $target is missing, not releasing"
+              exit 1
+            fi
+          done
 
       # the updater refuses archives without a signature from this key, see RELEASE_KEY
       - name: Sign archives
@@ -133,7 +154,7 @@ jobs:
           rm -f "$key"
           ls dist
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/*
           body_path: notes.md
@@ -144,16 +165,16 @@ jobs:
   # release and publishes each one whose secret is set, see packaging/README.md
   packages:
     needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' && !contains(github.ref_name, '-') }}
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     env:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
@@ -162,7 +183,7 @@ jobs:
         run: bash packaging/render.sh "${GITHUB_REF_NAME#v}" dist packages
 
       - name: Attach them to the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             packages/homebrew/mog.rb
@@ -185,7 +206,7 @@ jobs:
 
       - name: Update the AUR package
         if: env.AUR_SSH_PRIVATE_KEY != ''
-        uses: KSXGitHub/github-actions-deploy-aur@v4
+        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
         with:
           pkgname: mog-bin
           pkgbuild: packages/aur/PKGBUILD
@@ -196,7 +217,7 @@ jobs:
 
       - name: Open a winget pull request
         if: env.WINGET_TOKEN != ''
-        uses: vedantmgoyal9/winget-releaser@main
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
           identifier: SpideyZac.mog
           installers-regex: 'x86_64-pc-windows-msvc\.zip$'
