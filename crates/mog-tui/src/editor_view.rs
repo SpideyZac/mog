@@ -7,8 +7,8 @@ use std::{
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use mog_core::{Command, Document, Severity, TokenKind, View, movement, view};
-use mog_git::{LineChange, line_changes};
-use mog_syntax::{Highlighter, Kind, Span, language_for};
+use mog_git::LineChange;
+use mog_syntax::{Kind, Span, language_for};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -18,6 +18,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
+    highlight::{Done, Job, Worker, map_spans},
     menu,
     theme::{RAINBOW_LEN, Theme},
     ui::{Focus, Layout, Pane, Ui},
@@ -38,16 +39,23 @@ const INLINE_GAP: usize = 4;
 /// How many lines ahead an empty line looks to decide its indent guides.
 const GUIDE_LOOKAHEAD: usize = 64;
 
+/// How long a frame waits for fresh colors, enough for small files to never show stale ones.
+const HIGHLIGHT_WAIT: Duration = Duration::from_millis(4);
+
 /// Converts a cell count to a terminal coordinate, saturating on overflow.
 fn cells(n: usize) -> u16 {
     u16::try_from(n).unwrap_or(u16::MAX)
 }
 
-/// Things worked out once per document version instead of every frame.
+/// Things worked out in the background instead of every frame.
 #[derive(Default)]
 struct Cache {
-    /// The document the cache is for, as `(index, path, version)`.
-    key: Option<(usize, Option<PathBuf>, u64)>,
+    /// The document the cache is for, as `(index, path, colored)`.
+    key: Option<(usize, Option<PathBuf>, bool)>,
+    /// The document version the cached work lines up with.
+    version: u64,
+    /// Whether the work was carried over from an older version and needs redoing.
+    stale: bool,
     /// The highlighted spans, sorted and not overlapping.
     spans: Vec<Span>,
     /// The bracket nesting depth at the start of each line.
@@ -96,34 +104,15 @@ fn token_style(theme: &Theme, kind: TokenKind) -> Option<Style> {
     })
 }
 
-/// Returns the bracket depth at the start of every line, skipping strings and comments.
-fn bracket_depths(document: &Document, spans: &[Span]) -> Vec<usize> {
-    let text = document.text();
-    let mut depths = Vec::with_capacity(text.len_lines());
-    let mut depth = 0usize;
-    let mut span = 0;
-    depths.push(0);
-    for (pos, ch) in text.chars().enumerate() {
-        if ch == '\n' {
-            depths.push(depth);
-            continue;
-        }
-        while span < spans.len() && spans[span].to <= pos {
-            span += 1;
-        }
-        let quoted = spans
-            .get(span)
-            .is_some_and(|s| s.from <= pos && matches!(s.kind, Kind::String | Kind::Comment));
-        if quoted {
-            continue;
-        }
-        if movement::BRACKETS.iter().any(|(open, _)| *open == ch) {
-            depth += 1;
-        } else if movement::BRACKETS.iter().any(|(_, close)| *close == ch) {
-            depth = depth.saturating_sub(1);
-        }
-    }
-    depths
+/// Returns `count` if the `count` chars from `start` are plain ascii without tabs, which take
+/// exactly one cell each, or 0 otherwise.
+fn plain_prefix(document: &Document, start: usize, count: usize) -> usize {
+    let plain = document
+        .text()
+        .slice(start..start + count)
+        .chunks()
+        .all(|chunk| chunk.is_ascii() && !chunk.bytes().any(|byte| byte == b'\t'));
+    if plain { count } else { 0 }
 }
 
 /// Returns the leading whitespace width of `line` in cells, or `None` for blank lines.
@@ -148,8 +137,8 @@ pub struct EditorView {
     gutter_width: u16,
     /// The time, cell and count of the last left click, used to detect multi clicks.
     last_click: Option<(Instant, Position, u8)>,
-    /// The syntax highlighter.
-    highlighter: Highlighter,
+    /// Works out colors, bracket depths and git changes in the background.
+    worker: Worker,
     /// Per document work kept between frames.
     cache: Cache,
     /// Which pane this view draws.
@@ -212,34 +201,76 @@ impl EditorView {
         cells(signs + numbers + GUTTER_PADDING)
     }
 
-    /// Brings the cache up to date with the focused document.
+    /// Brings the cache up to date with the shown document.
+    ///
+    /// Edits move the cached colors along right away, and fresh ones are worked out in the
+    /// background. Large files get no colors or git changes at all.
     fn refresh_cache(&mut self, cx: &Context<'_>, index: usize) {
         let document = &cx.editor.documents()[index];
-        let key = (
-            index,
-            document.path().map(ToOwned::to_owned),
-            document.version(),
-        );
-        let base = document.path().and_then(|path| cx.ui.git_base.get(path));
+        let large = document.is_large();
+        let colored = cx.ui.config.ui.syntax_highlighting && !large;
+        let key = (index, document.path().map(ToOwned::to_owned), colored);
+        let version = document.version();
+        let base = document
+            .path()
+            .filter(|_| !large)
+            .and_then(|path| cx.ui.git_base.get(path));
         let base_len = base.map(String::len);
-        let stale = self.cache.key.as_ref() != Some(&key);
-        if stale {
-            let language = document.path().and_then(language_for);
-            self.cache.spans = match language {
-                Some(language) if cx.ui.config.ui.syntax_highlighting => self
-                    .highlighter
-                    .highlight(language, &document.text().to_string()),
-                _ => Vec::new(),
+        if self.cache.key.as_ref() != Some(&key) {
+            self.cache = Cache {
+                key: Some(key),
+                version,
+                stale: true,
+                ..Cache::default()
             };
-            self.cache.depths = bracket_depths(document, &self.cache.spans);
-            self.cache.key = Some(key);
+        } else if self.cache.version != version {
+            match document.changes_since(self.cache.version) {
+                Some(changes) => map_spans(&mut self.cache.spans, &changes),
+                None => self.cache.spans.clear(),
+            }
+            self.cache.version = version;
+            self.cache.stale = true;
         }
-        if stale || self.cache.base_len != base_len {
-            self.cache.changes = base.map_or_else(Vec::new, |base| {
-                line_changes(base, &document.text().to_string())
-            });
+        if self.cache.base_len != base_len {
             self.cache.base_len = base_len;
+            self.cache.stale = true;
         }
+        if let Some(done) = self.worker.take(Duration::ZERO) {
+            self.accept(document, done);
+        }
+        if !self.cache.stale || self.worker.is_busy() {
+            return;
+        }
+        let language = document.path().and_then(language_for).filter(|_| colored);
+        if language.is_none() && base.is_none() {
+            self.cache.spans.clear();
+            self.cache.changes.clear();
+            self.cache.stale = false;
+            return;
+        }
+        self.worker.send(Job {
+            version,
+            language,
+            text: document.text().to_string(),
+            base: base.cloned(),
+        });
+        if let Some(done) = self.worker.take(HIGHLIGHT_WAIT) {
+            self.accept(document, done);
+        }
+    }
+
+    /// Takes background results, moving them along with edits made since they started.
+    fn accept(&mut self, document: &Document, mut done: Done) {
+        if done.version != self.cache.version {
+            let Some(changes) = document.changes_since(done.version) else {
+                return;
+            };
+            map_spans(&mut done.spans, &changes);
+        }
+        self.cache.stale = done.version != self.cache.version;
+        self.cache.spans = done.spans;
+        self.cache.depths = done.depths;
+        self.cache.changes = done.changes;
     }
 }
 
@@ -400,9 +431,28 @@ impl Layer for EditorView {
                 &[]
             };
             let mut token = 0;
-            for (i, ch) in text.slice(start..line_end).chars().enumerate() {
+            let right_edge = scroll.scroll_col + usize::from(text_width);
+            // a plain ascii start scrolled off to the left is one cell per char, so jump over it
+            let skip = plain_prefix(document, start, scroll.scroll_col.min(len));
+            col += skip;
+            for (i, ch) in text.slice(start + skip..line_end).chars().enumerate() {
+                let i = i + skip;
+                // the rest of a very long line is off screen, so stop instead of walking it
+                if col >= right_edge {
+                    break;
+                }
                 let pos = start + i;
                 let width = view::char_width(ch, col, tab_width);
+                // chars scrolled off to the left only matter for bracket depth
+                if col + width <= scroll.scroll_col {
+                    if movement::BRACKETS.iter().any(|(open, _)| *open == ch) {
+                        depth += 1;
+                    } else if movement::BRACKETS.iter().any(|(_, close)| *close == ch) {
+                        depth = depth.saturating_sub(1);
+                    }
+                    col += width;
+                    continue;
+                }
                 while span < self.cache.spans.len() && self.cache.spans[span].to <= pos {
                     span += 1;
                 }
@@ -687,6 +737,11 @@ impl Layer for EditorView {
             return None;
         }
         self.cursor_position(area, cx)
+    }
+
+    fn is_animating(&self) -> bool {
+        // keep drawing until the background work lands
+        self.worker.is_busy()
     }
 }
 

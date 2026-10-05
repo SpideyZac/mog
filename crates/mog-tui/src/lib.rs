@@ -9,6 +9,7 @@ pub mod compositor;
 pub mod editor_view;
 pub mod explorer;
 pub mod ghost;
+pub mod highlight;
 pub mod icons;
 pub mod input;
 pub mod menu;
