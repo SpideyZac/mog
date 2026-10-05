@@ -1,7 +1,7 @@
 //! Open files and their text.
 
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs::File,
     io::{self, BufWriter, ErrorKind},
     path::{self, Path, PathBuf},
@@ -80,8 +80,10 @@ pub struct Document {
     version: u64,
     /// The value of `version` when the document was last saved or loaded.
     saved_version: u64,
-    /// Problems reported about the text.
+    /// Problems reported about the text, from every source, sorted by position.
     diagnostics: Vec<Diagnostic>,
+    /// Problems by who reported them, the language server being the empty name.
+    diagnostic_sources: BTreeMap<String, Vec<Diagnostic>>,
     /// Extra cursors besides the main selection.
     cursors: Vec<Range>,
     /// Notes a language server wants shown after lines.
@@ -293,10 +295,27 @@ impl Document {
         &self.diagnostics
     }
 
-    /// Replaces the diagnostics.
-    pub fn set_diagnostics(&mut self, mut diagnostics: Vec<Diagnostic>) {
-        diagnostics.sort_by_key(|diagnostic| (diagnostic.from, diagnostic.to));
-        self.diagnostics = diagnostics;
+    /// Replaces the diagnostics from the language server.
+    pub fn set_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
+        self.set_source_diagnostics("", diagnostics);
+    }
+
+    /// Replaces the diagnostics reported by `source`, like a plugin, keeping everyone else's.
+    pub fn set_source_diagnostics(&mut self, source: &str, diagnostics: Vec<Diagnostic>) {
+        if diagnostics.is_empty() {
+            self.diagnostic_sources.remove(source);
+        } else {
+            self.diagnostic_sources
+                .insert(source.to_owned(), diagnostics);
+        }
+        let mut merged: Vec<Diagnostic> = self
+            .diagnostic_sources
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
+        merged.sort_by_key(|diagnostic| (diagnostic.from, diagnostic.to));
+        self.diagnostics = merged;
     }
 
     /// Returns the inlay hints of `line`, or none if it changed since they were worked out.
