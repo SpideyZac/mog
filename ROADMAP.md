@@ -156,3 +156,6 @@
 - [x] Plugin timeouts, cancellation, crash restarts and logs
 - [x] Plugin SDKs for Python, Node and Rust
 - [x] `mog plugin` to make, install, list, check and remove plugins
+- [x] Plugins draw widgets and flair on the screen, with animation, motion and clicks
+- [x] Plugins take keys before the editor, enough for vim motions as a plugin
+- [x] Plugins set the cursor shape and run timers

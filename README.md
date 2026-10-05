@@ -445,8 +445,11 @@ Click a frame to look at it.
 Plugins are programs in any language that add to mog, talking JSON-RPC over stdio. They can add
 commands, edit and open files, hear about edits and saves, tidy a file before it is saved, show
 diagnostics, notes after lines and status line text, and provide completion, hover, formatting
-and code actions. See [docs/plugins.md](docs/plugins.md) for the protocol, and
-[examples/plugins/todo](examples/plugins/todo) for a plugin built on the Python SDK.
+and code actions. They can also draw on the screen, from flair to popups, take keys before the
+editor and change the cursor shape. See [docs/plugins.md](docs/plugins.md) for the protocol,
+[examples/plugins/todo](examples/plugins/todo) for a plugin built on the Python SDK,
+[examples/plugins/vim](examples/plugins/vim) for vim motions as a plugin and
+[examples/plugins/aquarium](examples/plugins/aquarium) for flair.
 
 Plugin folders, each with a `plugin.toml`, are found in the `plugins` folder next to your
 config, and start when they are needed:

@@ -62,8 +62,10 @@ for plugins.
 - Plugin protocol: `mog-plugin` speaks it, `crates/mog/src/plugins.rs` runs the plugins and
   `crates/mog/src/app/plugin_host.rs` answers them. Keep `docs/plugins.md`,
   `docs/plugin-protocol.schema.json`, the SDKs in `sdk/` and `crates/mog-plugin-sdk`, and the
-  examples in `examples/plugins` in step with it. `examples/plugins/todo/mog_plugin.py` is a
-  copy of `sdk/python/mog_plugin.py`, a test checks they match.
+  examples in `examples/plugins` in step with it. The `mog_plugin.py` in each folder under
+  `examples/plugins` is a copy of `sdk/python/mog_plugin.py`, a test checks they match.
+- Plugin screen and keys: widgets are drawn by `mog_tui::PluginWidgets`, and
+  `crates/mog/src/app/plugin_host/screen.rs` handles `draw`, `capture`, `cursor` and `timer`.
 - Debugger: `mog-dap` is the client, `crates/mog/src/debug.rs` runs sessions, built in adapters
   are in `mog-config/src/tasks.rs`. Tasks and their output parsing live in
   `crates/mog/src/tasks.rs` and `mog-core/src/problems.rs`.

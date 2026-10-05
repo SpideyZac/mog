@@ -84,6 +84,37 @@
         "modified": { "type": "boolean" }
       }
     },
+    "span": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "text": { "type": "string" },
+            "fg": { "$ref": "#/$defs/color" },
+            "bg": { "$ref": "#/$defs/color" },
+            "bold": { "type": "boolean" },
+            "italic": { "type": "boolean" },
+            "underline": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "row": {
+      "description": "One row of a widget, a string or a list of spans.",
+      "oneOf": [{ "$ref": "#/$defs/span" }, { "type": "array", "items": { "$ref": "#/$defs/span" } }]
+    },
+    "capture": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "description": "\"all\", a list of keys like \"esc\" or \"shift+g\", or null for none.",
+          "oneOf": [{ "const": "all" }, { "type": "array", "items": { "type": "string" } }, { "type": "null" }]
+        },
+        "except": { "type": "array", "items": { "type": "string" }, "description": "Keys left alone when keys is all." }
+      }
+    },
     "diagnostic": {
       "type": "object",
       "properties": {
@@ -117,6 +148,7 @@
               "properties": {
                 "events": { "type": "array", "items": { "type": "string" } },
                 "requests": { "type": "array", "items": { "type": "string" } },
+                "notifications": { "type": "array", "items": { "type": "string" } },
                 "actions": { "type": "array", "items": { "type": "string" } },
                 "providers": { "type": "array", "items": { "type": "string" } }
               }
@@ -296,6 +328,99 @@
               "type": "array",
               "items": { "type": "object", "required": ["line"], "properties": { "line": { "$ref": "#/$defs/offset" }, "text": { "type": "string" }, "color": { "$ref": "#/$defs/color" } } }
             }
+          }
+        }
+      }
+    },
+    "draw": {
+      "description": "plugin to mog notification, puts a widget on the screen. No lines or frames removes it.",
+      "type": "object",
+      "properties": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "lines": { "type": "array", "items": { "$ref": "#/$defs/row" } },
+            "frames": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/$defs/row" } } },
+            "fps": { "type": "number", "minimum": 0 },
+            "anchor": { "enum": ["top_left", "top_right", "bottom_left", "bottom_right", "center", "cursor", "screen"] },
+            "x": { "type": "integer" },
+            "y": { "type": "integer" },
+            "flair": { "type": "boolean", "description": "Hidden with the rest of the flair, true when left out." },
+            "transparent": { "type": "boolean" },
+            "clickable": { "type": "boolean" },
+            "fg": { "$ref": "#/$defs/color" },
+            "bg": { "$ref": "#/$defs/color" },
+            "z": { "type": "integer" },
+            "restart": { "type": "boolean" },
+            "motion": {
+              "type": "object",
+              "properties": { "dx": { "type": "number" }, "dy": { "type": "number" }, "edge": { "enum": ["bounce", "wrap"] } }
+            }
+          }
+        }
+      }
+    },
+    "clear": {
+      "description": "plugin to mog notification, removes a widget, or all of them without an id.",
+      "type": "object",
+      "properties": { "params": { "type": "object", "properties": { "id": { "type": ["string", "null"] } } } }
+    },
+    "cursor": {
+      "description": "plugin to mog notification.",
+      "type": "object",
+      "properties": {
+        "params": {
+          "type": "object",
+          "properties": { "shape": { "enum": ["default", "block", "bar", "underline"] }, "blink": { "type": "boolean" } }
+        }
+      }
+    },
+    "capture": {
+      "description": "plugin to mog notification, takes keys before the editor.",
+      "type": "object",
+      "properties": { "params": { "$ref": "#/$defs/capture" } }
+    },
+    "timer": {
+      "description": "plugin to mog notification, sends the timer event every so many milliseconds. 0 stops it.",
+      "type": "object",
+      "properties": {
+        "params": { "type": "object", "properties": { "id": { "type": "string" }, "every": { "type": "integer", "minimum": 0 } } }
+      }
+    },
+    "key": {
+      "description": "mog to plugin request for a key the plugin captured.",
+      "type": "object",
+      "properties": {
+        "params": {
+          "allOf": [{ "$ref": "#/$defs/context" }],
+          "properties": { "key": { "type": "string" }, "char": { "type": ["string", "null"] } }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "handled": { "type": "boolean", "description": "false hands the key to the editor, true when left out." },
+            "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+            "capture": { "$ref": "#/$defs/capture" }
+          }
+        }
+      }
+    },
+    "ui/layout": {
+      "description": "plugin to mog request.",
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "properties": {
+            "screen": { "type": "object" },
+            "editor": { "type": "object" },
+            "split": { "type": ["object", "null"] },
+            "status": { "type": "object" },
+            "cursor": { "type": ["object", "null"] },
+            "flair": { "type": "boolean" },
+            "reduced_motion": { "type": "boolean" },
+            "theme": { "type": "string" }
           }
         }
       }

@@ -33,6 +33,10 @@ The SDKs do the framing and dispatch so a plugin is just its handlers:
 | Rust | the `mog-plugin-sdk` crate in this repository | its crate docs |
 | anything else | read on, it is a hundred lines | [`examples/plugins/words.py`](../examples/plugins/words.py) with no SDK |
 
+Two bigger examples show how far a plugin can go:
+[`examples/plugins/vim`](../examples/plugins/vim) takes over the keyboard to add vim motions, and
+[`examples/plugins/aquarium`](../examples/plugins/aquarium) fills the editor with fish as flair.
+
 ```python
 from mog_plugin import Plugin, status
 
@@ -129,6 +133,7 @@ mog sends `initialize` first:
   "capabilities": {
     "events": ["opened", "closed", "saved", "changed", "..."],
     "requests": ["editor/context", "editor/text", "..."],
+    "notifications": ["status", "draw", "capture", "..."],
     "actions": ["status", "edit", "..."],
     "providers": ["completion", "hover", "formatting", "code_actions"]
   }
@@ -243,6 +248,11 @@ A plugin does not have to wait to be asked. These notifications can be sent at a
 | `diagnostics` | `{ "path": "...", "diagnostics": [...] }` | Replaces this plugin's problems for an open file, see below |
 | `decorations` | `{ "path": "...", "decorations": [{ "line": 3, "text": "...", "color": "dim" }] }` | Replaces the text this plugin shows after lines of a file, empty removes them |
 | `output` | `{ "title": "...", "text": "..." }` | Shows text in the output panel |
+| `draw` | a widget, see [Drawing on the screen](#drawing-on-the-screen) | Puts a widget on the screen or replaces the one with the same `id` |
+| `clear` | `{ "id": "..." }` | Removes a widget, or every widget of the plugin when `id` is left out |
+| `cursor` | `{ "shape": "block", "blink": false }` | Sets the cursor shape, see [The cursor](#the-cursor) |
+| `capture` | `{ "keys": "all", "except": ["ctrl+s"] }` | Takes keys before the editor, see [Taking keys](#taking-keys) |
+| `timer` | `{ "id": "...", "every": 500 }` | Sends the `timer` event every so many milliseconds, 0 stops it, see [Timers](#timers) |
 
 A diagnostic is `{ "start": 0, "end": 4, "severity": "warning", "message": "..." }` in char
 offsets, or `{ "line": 2, "column": 0, "end_line": 2, "end_column": 4, ... }`. Severities are
@@ -270,6 +280,7 @@ put other messages aside for later, like the SDKs do.
 | `actions` | `{ "actions": [...] }` | `{}` once the actions are done, or an error saying what failed |
 | `ui/pick` | `{ "title": "...", "items": ["a", { "label": "b", "detail": "...", "hint": "..." }] }` | `{ "index": 1, "item": "b" }`, or `null` if the user closed the list |
 | `ui/prompt` | `{ "title": "...", "text": "start", "hint": "..." }` | `{ "text": "what was typed" }`, or `null` if the user closed it or left it empty |
+| `ui/layout` | `{}` | Where things are on screen, see [Drawing on the screen](#drawing-on-the-screen) |
 
 Only one `ui/pick` or `ui/prompt` can be open at a time, and none while another popup is open. A
 second one gets an error, try again later. If the plugin stops while one is open, mog closes it.
@@ -296,6 +307,12 @@ mog sends the notification `event` for each event the plugin listed in `events`:
 | `git_changed` | The git status or branch changed | `branch` |
 | `before_save` | A file is about to be saved, see below | `path`, `language`, `version`, `text` |
 
+Two more events come without asking for them in `events`, since a plugin only gets them for
+things it set up itself: `click` when the user clicks one of its
+[widgets](#drawing-on-the-screen), with the widget `id`, the `x` and `y` of the click inside it
+and the `button` (`left`, `right` or `middle`), and `timer` with the `id` of one of its
+[timers](#timers).
+
 `before_save` is a request, not a notification. Answer with `{ "changes": [...] }` in char
 offsets of the `text` it sent, like a formatter would, or `{ "changes": [] }`. mog waits up to 2
 seconds for every plugin that listens, applies all their changes together as one undo step, then
@@ -318,6 +335,124 @@ in with the language server's answer. Every request has `path`, `language`, `ver
 
 Completion works in files with no language server at all, so a plugin can add completion for
 any kind of file.
+
+## Drawing on the screen
+
+A plugin can put widgets anywhere on the screen: a box of styled text that can animate, drift on
+its own and be clicked. Flair, little critters, a mode indicator or a which-key popup are all
+widgets. The notification `draw` puts one up, or replaces the one with the same `id`:
+
+```json
+{
+  "id": "fish",
+  "anchor": "top_left",
+  "x": 10,
+  "y": 3,
+  "frames": [["><>"], ["><o"]],
+  "fps": 2,
+  "transparent": true,
+  "clickable": true,
+  "motion": { "dx": 3, "dy": 0, "edge": "wrap" }
+}
+```
+
+| field | default | means |
+| --- | --- | --- |
+| `id` | `widget` | Which widget of this plugin it is |
+| `lines` | | The rows, each a string or a list of spans like `{ "text": "hi", "fg": "red", "bg": "panel", "bold": true, "italic": false, "underline": false }` |
+| `frames` | | A list of `lines` to cycle through instead, at `fps` frames a second |
+| `anchor` | `top_left` | What `x` and `y` count from: `top_left`, `top_right`, `bottom_left` and `bottom_right` of the editor area, counting inward from that corner, `center` of the editor area, `cursor` for the text cursor, or `screen` for the top left of the whole screen |
+| `x`, `y` | 0 | Cells from the anchor, can be negative |
+| `flair` | `true` | Decoration, hidden with the rest of the flair. Set it to `false` for widgets that are part of how the plugin works, like a mode indicator |
+| `transparent` | `false` | Spaces without a background let what is underneath show through |
+| `clickable` | `false` | Clicks on it go to the plugin as the `click` event instead of to what is underneath |
+| `fg`, `bg` | | The default text color, and a background that fills the whole box |
+| `z` | 0 | Widgets with a higher `z` are drawn on top |
+| `motion` | | Drifts `dx` and `dy` cells a second, and at the edge of the editor area (the screen for `screen` widgets) either bounces back (`bounce`) or comes in on the other side (`wrap`) |
+| `restart` | `false` | Starts the animation and motion over. Otherwise they keep going when a widget is replaced, so moving or changing one does not make it jump |
+
+A `draw` with no `lines` or `frames` removes the widget, and so does `clear`. A plugin can have 64
+widgets, each up to 400 cells wide and tall with up to 64 frames. Widgets anchored to the editor
+area are cut off at its edges and ones anchored to the cursor hide while the cursor is off screen.
+mog draws them above the text and the built in flair and below popups like the palette.
+
+mog animates and moves widgets itself, so a plugin only sends a widget again when it changes.
+Flair widgets follow the user's flair settings: they hide in serious mode and when flair is off,
+`flair.disabled = ["plugin.<name>"]` turns off one plugin's flair (it is listed in the settings
+menu once it drew something), `"plugins"` turns off all of it, and reduced motion holds
+animations on their first frame and hides widgets that drift.
+
+The request `ui/layout` answers where things are, to place widgets with:
+
+```json
+{
+  "screen": { "x": 0, "y": 0, "width": 120, "height": 40 },
+  "editor": { "x": 31, "y": 1, "width": 89, "height": 38 },
+  "split": null,
+  "status": { "x": 0, "y": 39, "width": 120, "height": 1 },
+  "cursor": { "x": 36, "y": 4 },
+  "flair": true,
+  "reduced_motion": false,
+  "theme": "mog"
+}
+```
+
+## Taking keys
+
+A plugin can take keys before the editor does, which is enough to build modal editing like vim
+on top of mog. The notification `capture` says which:
+
+| `capture` params | takes |
+| --- | --- |
+| `{ "keys": "all" }` | Every key |
+| `{ "keys": "all", "except": ["ctrl+s", "ctrl+q"] }` | Every key but these |
+| `{ "keys": ["esc", "ctrl+space"] }` | Only these |
+| `{ "keys": null }` | Nothing, the editor gets every key again |
+
+Keys are named like in `[keys]`: `j`, `shift+g`, `ctrl+r`, `esc`, `enter`, `space`. Keys are only
+taken while the text has focus and no popup, prompt or drawing is open, so the palette, the
+explorer, the terminal and search keep working.
+
+For each key it takes, mog sends the request `key` with the key and where the cursor is (the
+[context](#running-a-command) without `text`, plus `lines`, the number of lines):
+
+```json
+{ "key": "shift+g", "char": "G", "path": "...", "version": 7, "selection": { "anchor": 4, "head": 4 }, "...": "..." }
+```
+
+`char` is the char the key types, or `null` for keys like `esc` or `ctrl+r`. Answer with what to
+do:
+
+```json
+{ "actions": [{ "type": "select", "selections": [{ "anchor": 9, "head": 9 }] }], "capture": { "keys": ["esc"] } }
+```
+
+- `actions` are [actions](#actions), like `select`, `edit` or `command` with any mog command
+  such as `move_word_right` or `undo`.
+- `{ "handled": false }` hands the key to the editor as if the plugin never took it, so a plugin
+  can take every key and still let `ctrl+s` through.
+- `capture` changes which keys the plugin takes, before the next key is looked at. Change modes
+  here rather than with a separate `capture` notification, so a key typed right after `i` already
+  goes to the text.
+
+Keys stay in order: while a plugin decides about one, later keys wait, then go to the plugin or
+the editor depending on what it answered. A plugin has a second to answer a key, after that the
+key is dropped. Ask mog things like `editor/text` while answering, but do not wait on the user
+there: run a plugin command instead, with a `command` action, and ask from that command.
+
+## The cursor
+
+The notification `cursor` sets the shape of the text cursor, `default` (what the terminal is set
+up to show), `block`, `bar` or `underline`, and whether it `blink`s. It goes back to normal when
+the plugin stops and when mog quits.
+
+## Timers
+
+The notification `timer` with an `id` and `every` in milliseconds makes mog send the `timer`
+event with that `id` every so often, for things that change on their own. `every` of 0 stops
+it. Ticks come at most every 30 milliseconds, a plugin can have 16 timers, and a plugin that is
+slow to read skips ticks rather than getting a pile of them. For moving and animated widgets, let
+mog do it with `frames` and `motion` instead.
 
 ## When things go wrong
 
@@ -356,3 +491,10 @@ What changed in protocol 2:
   `editor/documents`, `editor/diagnostics`, `editor/select`, `editor/save`, and `editor/text`
   can read part of a file.
 - New events and `before_save`, and providers for completion, hover, formatting and code actions.
+
+Added later without changing the protocol version, check `capabilities.notifications` and
+`capabilities.requests` for them:
+
+- `draw`, `clear`, `ui/layout` and the `click` event for [drawing on the screen](#drawing-on-the-screen).
+- `capture` and the `key` request for [taking keys](#taking-keys).
+- `cursor` and `timer` with the `timer` event.
