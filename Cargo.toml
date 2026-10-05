@@ -40,6 +40,7 @@ mog-dap = { path = "crates/mog-dap" }
 mog-flair = { path = "crates/mog-flair" }
 mog-git = { path = "crates/mog-git" }
 mog-lsp = { path = "crates/mog-lsp" }
+mog-plugin = { path = "crates/mog-plugin" }
 mog-syntax = { path = "crates/mog-syntax" }
 mog-term = { path = "crates/mog-term" }
 mog-tui = { path = "crates/mog-tui" }

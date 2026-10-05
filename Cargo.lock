@@ -1991,6 +1991,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mog-plugin"
+version = "0.2.0"
+dependencies = [
+ "mog-lsp",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "mog-syntax"
 version = "0.2.0"
 dependencies = [
