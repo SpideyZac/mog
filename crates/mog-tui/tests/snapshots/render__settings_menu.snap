@@ -1,0 +1,38 @@
+---
+source: crates/mog-tui/tests/render.rs
+expression: "screen(&mut editor, &mut ui, 100, 34)"
+---
+ [scratch] ×
+1   ╭ ⚙ settings ──────────────────────────────────────────────────────────────────────────────╮
+    │ ❯ type to filter, arrows to move, enter to toggle, left and right to cycle               │
+    │                                                                                          │
+    │ ✦ LOOK                                                                                   │
+    │ ▸ Theme                                                                          ◂ mog ▸ │
+    │   Opacity                                                                        ◂ 100 ▸ │
+    │   Tab bar                                                                          ● on  │
+    │   Line numbers                                                                     ● on  │
+    │   Relative line numbers                                                            ○ off │
+    │   Highlight cursor line                                                            ● on  │
+    │   Indent guides                                                                    ● on  │
+    │   Rainbow brackets                                                                 ● on  │
+    │   Syntax highlighting                                                              ● on  │
+    │   Minimap                                                                          ○ off │
+    │   File icons                                                                       ● on  │
+    │   Explorer starts open                                                             ● on  │
+    │ ⚒ CODE                                                                                   │
+    │   Error lens                                                                       ● on  │
+    │   Git gutter                                                                       ○ off │
+    │   Git blame                                                                        ○ off │
+    │   Auto close brackets                                                              ● on  │
+    │   Auto complete                                                                    ● on  │
+    │   Indent with spaces                                                               ● on  │
+    │   AltGr types symbols                                                              ● on  │
+    │   AI ghost text                                                                    ● on  │
+    │ ♫ UPDATES                                                                                │
+    │   Check for updates                                                                ● on  │
+    │ ──────────────────────────────────────────────────────────────────────────────────────── │
+    │ Pick a color palette. Changes right away.                                                │
+    ╰──────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+ mog  [scratch]                                                                         Ln 1, Col 1

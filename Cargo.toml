@@ -29,6 +29,7 @@ dirs = "7"
 flate2 = "1"
 futures = "0.3"
 ignore = "0.4"
+insta = "1"
 lsp-types = "0.97"
 minisign-verify = "0.3"
 mog-ai = { path = "crates/mog-ai" }

@@ -1,0 +1,12 @@
+---
+source: crates/mog-tui/tests/render.rs
+expression: "screen(&mut editor, &mut ui, 60, 8)"
+---
+ [scratch] ●
+1 fn main() {
+2     let answer = 42;
+3     println!("{answer}");
+4 }
+5
+
+ mog  [scratch] [+]                             Ln 1, Col 1
