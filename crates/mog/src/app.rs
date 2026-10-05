@@ -1,7 +1,7 @@
 //! The application state and event loop.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     env, fs, mem,
     path::{Path, PathBuf},
     sync::{
@@ -498,8 +498,13 @@ impl App {
         );
     }
 
-    /// Opens the files in `session` and puts the cursors, scroll and split back.
+    /// Opens the files in `session` and puts the cursors, scroll, split and breakpoints back.
     fn apply_session(&mut self, session: &Session) {
+        self.ui.breakpoints = session
+            .breakpoints
+            .iter()
+            .map(|(path, lines)| (path.clone(), lines.iter().copied().collect()))
+            .collect();
         let mut opened = Vec::new();
         for file in &session.files {
             if !file.path.is_file() || self.editor.open(&file.path).is_err() {
@@ -556,6 +561,12 @@ impl App {
                 .as_ref()
                 .and_then(|split| indexes.get(&split.other_document).copied()),
             explorer_open: self.ui.explorer_open,
+            breakpoints: self
+                .ui
+                .breakpoints
+                .iter()
+                .map(|(path, lines)| (path.clone(), lines.iter().copied().collect()))
+                .collect(),
             files,
         }
     }
@@ -899,6 +910,7 @@ impl App {
             self.sync_signature();
             self.sync_git();
             self.watch_focus();
+            self.sync_breakpoints();
             self.restore_undo();
             self.play_sounds();
             self.ui.idle = self.last_input.elapsed() >= IDLE_AFTER;
@@ -1707,15 +1719,50 @@ impl App {
             return;
         };
         let line = document.text().char_to_line(document.selection().head);
-        let lines = self.ui.breakpoints.entry(path.clone()).or_default();
+        let mut lines = document.breakpoints().clone();
         if !lines.remove(&line) {
             lines.insert(line);
         }
-        let lines: Vec<usize> = lines.iter().copied().collect();
+        self.editor
+            .document_mut()
+            .set_breakpoints(lines.iter().copied());
+        self.publish_breakpoints(path, lines);
+    }
+
+    /// Records the breakpoints of `path` for the gutter and the session, and tells the debugger.
+    fn publish_breakpoints(&mut self, path: PathBuf, lines: BTreeSet<usize>) {
+        let list: Vec<usize> = lines.iter().copied().collect();
         if lines.is_empty() {
             self.ui.breakpoints.remove(&path);
+        } else {
+            self.ui.breakpoints.insert(path.clone(), lines);
         }
-        self.debugger.set_breakpoints(path, lines);
+        self.debugger.set_breakpoints(path, list);
+    }
+
+    /// Keeps breakpoints and open documents in step: newly opened files get theirs back, and
+    /// breakpoints that edits moved are passed on.
+    fn sync_breakpoints(&mut self) {
+        let mut moved = Vec::new();
+        for document in self.editor.documents_mut() {
+            let Some(path) = document.path().map(ToOwned::to_owned) else {
+                continue;
+            };
+            let known = self.ui.breakpoints.get(&path);
+            if document.version() == 0 && document.breakpoints().is_empty() {
+                // a file that was just opened takes the breakpoints it had before
+                if let Some(lines) = known {
+                    document.set_breakpoints(lines.iter().copied());
+                }
+            } else if known.map_or(!document.breakpoints().is_empty(), |known| {
+                known != document.breakpoints()
+            }) {
+                moved.push((path, document.breakpoints().clone()));
+            }
+        }
+        for (path, lines) in moved {
+            self.publish_breakpoints(path, lines);
+        }
     }
 
     /// Shows the frame picked in the call stack and loads its variables.
@@ -3691,6 +3738,24 @@ mod tests {
         app.handle_event(press("ctrl+q"));
         assert!(app.quit);
         assert_eq!(fs::read_to_string(&path).expect("read"), "");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Breakpoints follow edits and the debugger hears where they went.
+    #[tokio::test]
+    async fn breakpoints_follow_edits() {
+        let dir = temp_dir();
+        let path = dir.join("bp.txt");
+        fs::write(&path, "one\ntwo\n").expect("write");
+        let mut app = start(&path);
+        let second = app.editor.document().text().line_to_char(1);
+        app.editor.select(second, second);
+        app.execute_command("debug.toggle_breakpoint".parse().expect("command"));
+        app.handle_event(press("ctrl+home"));
+        type_text(&mut app, "zero\n");
+        app.sync_breakpoints();
+        let lines: Vec<usize> = app.ui.breakpoints[&path].iter().copied().collect();
+        assert_eq!(lines, [2]);
         let _ = fs::remove_dir_all(dir);
     }
 

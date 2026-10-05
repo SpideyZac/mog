@@ -4,6 +4,7 @@
 //! file names hashed from the project or file they are for.
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     process,
@@ -45,6 +46,9 @@ pub struct Session {
     pub split: Option<usize>,
     /// Whether the file explorer was open.
     pub explorer_open: bool,
+    /// The breakpoints of each file, lines counted from 0.
+    #[serde(default)]
+    pub breakpoints: BTreeMap<PathBuf, Vec<usize>>,
 }
 
 /// Unsaved text kept on disk so a crash does not lose it.
@@ -211,7 +215,7 @@ impl State {
 #[cfg(test)]
 /// Tests for saved state.
 mod tests {
-    use std::{env, fs, path::Path, process};
+    use std::{collections::BTreeMap, env, fs, path::Path, process};
 
     use mog_core::{Document, Range, Transaction};
 
@@ -238,6 +242,7 @@ mod tests {
             active: 0,
             split: Some(0),
             explorer_open: true,
+            breakpoints: BTreeMap::from([("/code/a.rs".into(), vec![3])]),
         };
         state.save_session(Path::new("/code"), &session);
         assert_eq!(state.load_session(Path::new("/code")), Some(session));
