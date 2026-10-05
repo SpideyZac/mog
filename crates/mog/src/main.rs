@@ -5,6 +5,7 @@ mod app;
 mod cli;
 mod clipboard;
 mod commands;
+mod debug;
 mod discord;
 mod git;
 mod lsp;

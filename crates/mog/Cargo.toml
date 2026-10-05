@@ -22,6 +22,7 @@ crossterm.workspace = true
 discord-rich-presence.workspace = true
 futures.workspace = true
 mog-core.workspace = true
+mog-dap.workspace = true
 mog-flair.workspace = true
 mog-git.workspace = true
 mog-lsp.workspace = true

@@ -1885,6 +1885,7 @@ dependencies = [
  "mog-audio",
  "mog-config",
  "mog-core",
+ "mog-dap",
  "mog-flair",
  "mog-git",
  "mog-lsp",

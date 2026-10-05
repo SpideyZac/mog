@@ -23,8 +23,8 @@ use lsp_types::{Position as LspPosition, PublishDiagnosticsParams, Range as LspR
 use mog_ai::{CompletionFile, CompletionRequest, CopilotEvent, CopilotStatus, DeviceCode};
 use mog_audio::{Audio, Mood, Sfx};
 use mog_config::{
-    Config, Install, ProjectFile, SettingValue, ThemeConfig, config_path, project,
-    project_config_path, save_setting, theme::COLOR_NAMES,
+    Config, DebugConfig, Install, ProjectFile, SettingValue, ThemeConfig, config_path,
+    merged_debuggers, project, project_config_path, save_setting, theme::COLOR_NAMES,
 };
 use mog_core::{
     Change, Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity,
@@ -32,6 +32,7 @@ use mog_core::{
     project_search::{self, ProjectResults},
     search::{self as core_search, Matcher},
 };
+use mog_dap::{DapEvent, Frame};
 use mog_flair::{GraphView, builtin::screensaver};
 use mog_git::{Hunk, apply_hunk, hunks, map_line, revert_hunk};
 use mog_lsp::{
@@ -41,10 +42,11 @@ use mog_lsp::{
 use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
-    EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap, OutputPanel, Overlay, Pane,
-    Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel,
-    SignatureHint, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
+    DebugPanel, EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap, OutputPanel,
+    Overlay, Pane, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar,
+    SettingsPanel, SignatureHint, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
     completion::{self, CompletionState},
+    debug_panel::{self, FrameEntry},
     ghost, git_panel, input,
     menu::{self, MenuAction, MenuItem},
     popups::SYMBOL_SEARCH_COMMAND,
@@ -70,6 +72,7 @@ use crate::{
     ai::{AiReply, Assistant},
     cli::Args,
     clipboard, commands,
+    debug::{self, DebugReply, DebugUpdate, Debugger},
     discord::{Presence, Status},
     git::{self, Git, GitUpdate},
     lsp::{self, LanguageServers, LspReply},
@@ -243,6 +246,12 @@ pub struct App {
     task_list: Vec<Task>,
     /// The task that ran last, to run again.
     last_task: Option<Task>,
+    /// Runs debugging sessions.
+    debugger: Debugger,
+    /// A debugger waiting for its build task to finish, with its name.
+    debug_after_task: Option<(String, DebugConfig)>,
+    /// The call stack of the stopped program, innermost first.
+    debug_frames: Vec<Frame>,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -298,6 +307,7 @@ impl App {
         compositor.push(Box::new(EditorView::side()));
         compositor.push(Box::new(Tabs::new()));
         compositor.push(Box::new(ChatPanel::new()));
+        compositor.push(Box::new(DebugPanel::new()));
         compositor.push(Box::new(Minimap::new()));
         compositor.push(Box::new(TerminalPanel::new()));
         compositor.push(Box::new(SearchBar::new()));
@@ -386,6 +396,9 @@ impl App {
             runner: Runner::new(),
             task_list: Vec::new(),
             last_task: None,
+            debugger: Debugger::new(),
+            debug_after_task: None,
+            debug_frames: Vec::new(),
             quit: false,
         };
         for name in startup {
@@ -896,6 +909,10 @@ impl App {
                 Some(update) = self.git.update() => self.handle_git(update),
                 Some(event) = self.updater.event() => self.handle_update(event),
                 Some(event) = self.runner.event() => self.handle_task(event),
+                Some(update) = self.debugger.update() => match update {
+                    DebugUpdate::Event(event) => self.handle_debug_event(event),
+                    DebugUpdate::Reply(reply) => self.handle_debug_reply(reply),
+                },
                 Some((generation, results)) = self.project_results.recv() => {
                     self.show_project_results(generation, results);
                 }
@@ -910,6 +927,7 @@ impl App {
             }
             self.run_requests();
         }
+        self.debugger.stop();
         self.shut_down();
         Ok(())
     }
@@ -1425,6 +1443,209 @@ impl App {
                 };
                 self.editor
                     .set_status(format!("{} {outcome}{found}", task.name));
+                if let Some((name, config)) = self.debug_after_task.take() {
+                    if code == Some(0) {
+                        self.launch_debugger(&name, &config);
+                    } else {
+                        self.editor
+                            .set_status(format!("{} {outcome}, not debugging", task.name));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Starts debugging the focused file's project, continuing instead if the program is paused.
+    fn start_debugging(&mut self) {
+        if self.debugger.is_active() {
+            if self.ui.debug.paused {
+                self.debugger.step("continue");
+                self.ui.debug.resume();
+            } else {
+                self.editor.set_status("already debugging, shift+f5 stops");
+            }
+            return;
+        }
+        let debuggers = merged_debuggers(&self.ui.config.debug);
+        let path = self.editor.document().path().map(ToOwned::to_owned);
+        let Some((name, config)) = debug::pick(&debuggers, path.as_deref()) else {
+            self.editor.set_status(
+                "no debugger for this file, add [debug.<name>] to the config, see the readme",
+            );
+            return;
+        };
+        if !config.before.is_empty() {
+            let task = tasks::tasks(&self.ui.root, &self.ui.config.tasks)
+                .into_iter()
+                .find(|task| task.name == config.before);
+            if let Some(task) = task {
+                self.debug_after_task = Some((name, config));
+                self.start_task(task);
+                return;
+            }
+        }
+        self.launch_debugger(&name, &config);
+    }
+
+    /// Starts the debug adapter of `config`, called `name`.
+    fn launch_debugger(&mut self, name: &str, config: &DebugConfig) {
+        let path = self.editor.document().path().map(ToOwned::to_owned);
+        let vars = debug::variables(&self.ui.root, path.as_deref());
+        let arguments = debug::substitute(&config.arguments, &vars);
+        let arguments = if arguments.is_object() {
+            arguments
+        } else {
+            serde_json::json!({})
+        };
+        if let Err(err) = self.debugger.start(name, config, arguments, &self.ui.root) {
+            self.editor.set_status(err);
+            return;
+        }
+        let state = &mut self.ui.debug;
+        state.active = true;
+        state.open = true;
+        state.paused = false;
+        state.console.clear();
+        state.status = format!("starting {name}");
+        self.debug_frames.clear();
+        self.editor
+            .set_status(format!("debugging with {name}, shift+f5 stops"));
+    }
+
+    /// Ends the debugging session and clears what it showed.
+    fn end_debugging(&mut self, message: impl Into<String>) {
+        self.debugger.stop();
+        self.debug_after_task = None;
+        self.debug_frames.clear();
+        let state = &mut self.ui.debug;
+        state.active = false;
+        state.paused = false;
+        state.frames.clear();
+        state.variables.clear();
+        state.stopped_at = None;
+        state.status = "finished".into();
+        self.editor.set_status(message);
+    }
+
+    /// Toggles a breakpoint on the cursor line.
+    fn toggle_breakpoint(&mut self) {
+        let document = self.editor.document();
+        let Some(path) = document.path().map(ToOwned::to_owned) else {
+            self.editor
+                .set_status("save the file first so the debugger can find it");
+            return;
+        };
+        let line = document.text().char_to_line(document.selection().head);
+        let lines = self.ui.breakpoints.entry(path.clone()).or_default();
+        if !lines.remove(&line) {
+            lines.insert(line);
+        }
+        let lines: Vec<usize> = lines.iter().copied().collect();
+        if lines.is_empty() {
+            self.ui.breakpoints.remove(&path);
+        }
+        self.debugger.set_breakpoints(path, lines);
+    }
+
+    /// Shows the frame picked in the call stack and loads its variables.
+    fn show_frame(&mut self, index: usize) {
+        let Some(frame) = self.debug_frames.get(index).cloned() else {
+            return;
+        };
+        self.ui.debug.frame = index;
+        self.ui.debug.variables.clear();
+        self.debugger.load_variables(frame.id);
+        let Some(path) = frame.path else {
+            return;
+        };
+        if let Err(err) = self.editor.open(&path) {
+            self.editor
+                .set_status(format!("could not open {}: {err}", path.display()));
+            return;
+        }
+        let text = self.editor.document().text();
+        let line = frame.line.min(text.len_lines().saturating_sub(1));
+        let pos = text.line_to_char(line) + frame.column.min(movement::line_len(text, line));
+        self.editor.select(pos, pos);
+        self.ui.debug.stopped_at = Some((
+            self.editor
+                .document()
+                .path()
+                .map_or(path, ToOwned::to_owned),
+            line,
+        ));
+        self.ui.focus = Focus::Editor;
+    }
+
+    /// Acts on something the debug adapter reported.
+    fn handle_debug_event(&mut self, event: DapEvent) {
+        match event {
+            DapEvent::Initialized => self.debugger.configure(self.ui.breakpoints.clone()),
+            DapEvent::Stopped {
+                thread,
+                reason,
+                text,
+            } => {
+                let state = &mut self.ui.debug;
+                state.paused = true;
+                state.status = match text {
+                    Some(text) if !text.is_empty() => format!("paused, {reason}: {text}"),
+                    _ => format!("paused, {reason}"),
+                };
+                self.debugger.stopped(thread);
+            }
+            DapEvent::Continued => self.ui.debug.resume(),
+            DapEvent::Output { category, text } => {
+                if category != "telemetry" {
+                    self.ui.debug.print(&text);
+                }
+            }
+            DapEvent::Exited { code } => {
+                let code = code.map_or_else(|| "?".to_owned(), |code| code.to_string());
+                self.ui.debug.print(&format!("exited with code {code}"));
+            }
+            DapEvent::Terminated => self.end_debugging("the program finished"),
+            DapEvent::Gone { reason } => {
+                if self.debugger.is_active() {
+                    let message = match reason {
+                        Some(reason) => format!("the debugger stopped: {reason}"),
+                        None => "the debugger stopped".to_owned(),
+                    };
+                    self.end_debugging(message);
+                }
+            }
+        }
+    }
+
+    /// Acts on an answer to a background debugger request.
+    fn handle_debug_reply(&mut self, reply: DebugReply) {
+        match reply {
+            DebugReply::Stack(frames) => {
+                self.ui.debug.frames = frames
+                    .iter()
+                    .map(|frame| FrameEntry {
+                        name: frame.name.clone(),
+                        path: frame.path.clone(),
+                        line: frame.line,
+                    })
+                    .collect();
+                self.debug_frames = frames;
+                // the innermost frame with source is where the user wants to look
+                let first = self
+                    .debug_frames
+                    .iter()
+                    .position(|frame| frame.path.as_ref().is_some_and(|path| path.is_file()))
+                    .unwrap_or(0);
+                self.show_frame(first);
+            }
+            DebugReply::Variables(variables) => self.ui.debug.variables = variables,
+            DebugReply::Failed(message) => {
+                self.ui.debug.print(&message);
+                if self.ui.debug.status.starts_with("starting") {
+                    self.end_debugging(message);
+                } else {
+                    self.editor.set_status(message);
+                }
             }
         }
     }
@@ -2894,6 +3115,33 @@ impl App {
                     self.editor.set_status(title);
                 }
             }
+            "debug.start" => self.start_debugging(),
+            "debug.stop" => {
+                if self.debugger.is_active() {
+                    self.end_debugging("stopped debugging");
+                } else {
+                    self.editor.set_status("not debugging");
+                }
+            }
+            "debug.toggle_breakpoint" => self.toggle_breakpoint(),
+            "debug.step_over" | "debug.step_into" | "debug.step_out" | "debug.pause" => {
+                if !self.debugger.is_active() {
+                    self.editor.set_status("not debugging, f5 starts");
+                    return;
+                }
+                let command = match name {
+                    "debug.step_over" => "next",
+                    "debug.step_into" => "stepIn",
+                    "debug.step_out" => "stepOut",
+                    _ => "pause",
+                };
+                if command != "pause" {
+                    self.ui.debug.resume();
+                }
+                self.debugger.step(command);
+            }
+            "debug.panel" => self.ui.debug.open = !self.ui.debug.open,
+            debug_panel::FRAME_COMMAND => self.show_frame(self.ui.debug.frame),
             "task.run" => self.pick_task(),
             "task.start" => {
                 let task = self
@@ -3156,7 +3404,7 @@ mod tests {
 
     use clap::Parser;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use mog_config::{Config, TaskConfig};
+    use mog_config::{Config, DebugConfig, TaskConfig};
     use mog_core::{Key, KeyChord};
     use mog_tui::{Context, PromptKind};
     use ratatui::{Terminal, backend::TestBackend};
@@ -3165,6 +3413,7 @@ mod tests {
     use super::{App, FRAME_TIME, IDLE_FRAME_TIME};
     use crate::{
         cli::Args,
+        debug::DebugUpdate,
         session::{State, Swap},
         tasks::TaskEvent,
     };
@@ -3460,6 +3709,157 @@ mod tests {
         assert_eq!((problem.line, problem.column), (0, 5));
         assert_eq!(problem.message, "expected ';'");
         assert!(problem.path.ends_with("lib.c"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Feeds the app debugger updates until `done` says to stop.
+    async fn debug_until(app: &mut App, done: impl Fn(&App) -> bool) {
+        while !done(app) {
+            let update = time::timeout(Duration::from_secs(60), app.debugger.update())
+                .await
+                .expect("the debugger answered in time")
+                .expect("an update");
+            match update {
+                DebugUpdate::Event(event) => app.handle_debug_event(event),
+                DebugUpdate::Reply(reply) => app.handle_debug_reply(reply),
+            }
+        }
+    }
+
+    /// Debugs a real C program with lldb-dap: stop at a breakpoint, read variables, step, finish.
+    #[tokio::test]
+    #[ignore = "needs clang and lldb-dap, run by hand"]
+    async fn debugs_a_c_program() {
+        let dir = temp_dir();
+        let source = dir.join("main.c");
+        fs::write(
+            &source,
+            "#include <stdio.h>\nint add(int a, int b) {\n    int sum = a + b;\n    return sum;\n}\n\
+             int main(void) {\n    int x = add(2, 3);\n    printf(\"%d\\n\", x);\n    return 0;\n}\n",
+        )
+        .expect("write");
+        let exe = if cfg!(windows) { "main.exe" } else { "main" };
+        let built = process::Command::new("clang")
+            .args(["-g", "-O0", "main.c", "-o", exe])
+            .current_dir(&dir)
+            .status()
+            .expect("clang runs");
+        assert!(built.success());
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.debug.insert(
+            "c".into(),
+            DebugConfig {
+                command: "lldb-dap".into(),
+                extensions: vec!["c".into()],
+                arguments: serde_json::json!({ "program": "${root}/main${exe}", "cwd": "${root}" }),
+                ..DebugConfig::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.editor.open(&source).expect("open");
+        let line_start = app.editor.document().text().line_to_char(2);
+        app.editor.select(line_start, line_start);
+        app.execute_command("debug.toggle_breakpoint".parse().expect("command"));
+        app.execute_command("debug.start".parse().expect("command"));
+        debug_until(&mut app, |app| {
+            app.ui.debug.paused && !app.ui.debug.variables.is_empty()
+        })
+        .await;
+        let (_, line) = app.ui.debug.stopped_at.clone().expect("stopped");
+        assert_eq!(line, 2);
+        assert!(app.ui.debug.frames[0].name.contains("add"));
+        assert!(
+            app.ui
+                .debug
+                .variables
+                .iter()
+                .any(|variable| variable.name == "a" && variable.value == "2"),
+            "{:?}",
+            app.ui.debug.variables
+        );
+        app.execute_command("debug.step_over".parse().expect("command"));
+        debug_until(&mut app, |app| {
+            app.ui.debug.paused && !app.ui.debug.variables.is_empty()
+        })
+        .await;
+        assert_eq!(app.ui.debug.stopped_at.as_ref().map(|at| at.1), Some(3));
+        assert!(
+            app.ui
+                .debug
+                .variables
+                .iter()
+                .any(|variable| variable.name == "sum" && variable.value == "5")
+        );
+        app.execute_command("debug.start".parse().expect("command"));
+        debug_until(&mut app, |app| !app.ui.debug.active).await;
+        assert!(
+            app.ui.debug.console.iter().any(|line| line.trim() == "5"),
+            "{:?}",
+            app.ui.debug.console
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Debugs a Python script with debugpy, which answers the launch only after configuration.
+    #[tokio::test]
+    #[ignore = "needs uv to fetch debugpy, run by hand"]
+    async fn debugs_a_python_script() {
+        let dir = temp_dir();
+        let script = dir.join("app.py");
+        fs::write(
+            &script,
+            "def add(a, b):\n    total = a + b\n    return total\n\nprint(add(2, 3))\n",
+        )
+        .expect("write");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.debug.insert(
+            "python".into(),
+            DebugConfig {
+                command: "uv".into(),
+                args: [
+                    "run",
+                    "--with",
+                    "debugpy",
+                    "python",
+                    "-m",
+                    "debugpy.adapter",
+                ]
+                .map(String::from)
+                .to_vec(),
+                extensions: vec!["py".into()],
+                arguments: serde_json::json!({ "program": "${file}", "cwd": "${root}",
+                    "console": "internalConsole" }),
+                ..DebugConfig::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.editor.open(&script).expect("open");
+        let line_start = app.editor.document().text().line_to_char(2);
+        app.editor.select(line_start, line_start);
+        app.execute_command("debug.toggle_breakpoint".parse().expect("command"));
+        app.execute_command("debug.start".parse().expect("command"));
+        debug_until(&mut app, |app| {
+            app.ui.debug.paused && !app.ui.debug.variables.is_empty()
+        })
+        .await;
+        assert_eq!(app.ui.debug.stopped_at.as_ref().map(|at| at.1), Some(2));
+        assert!(
+            app.ui
+                .debug
+                .variables
+                .iter()
+                .any(|variable| variable.name == "total" && variable.value == "5"),
+            "{:?}",
+            app.ui.debug.variables
+        );
+        app.execute_command("debug.start".parse().expect("command"));
+        debug_until(&mut app, |app| !app.ui.debug.active).await;
         let _ = fs::remove_dir_all(dir);
     }
 
