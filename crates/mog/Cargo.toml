@@ -9,6 +9,20 @@ repository.workspace = true
 [lints]
 workspace = true
 
+# lets `cargo binstall` grab a release build instead of compiling
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/mog-v{ version }-{ target }.tar.gz"
+bin-dir = "mog-v{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/mog-v{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
+[package.metadata.binstall.signing]
+algorithm = "minisign"
+pubkey = "RWQEyQrj2l2VtRVkLbwHBkVxhMbDdbOGc7wHR8hjR27Ry+epMjmzedE0"
+
 [dependencies]
 anyhow.workspace = true
 arboard.workspace = true
