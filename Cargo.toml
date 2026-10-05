@@ -33,19 +33,19 @@ ignore = "0.4"
 insta = "1"
 lsp-types = "0.97"
 minisign-verify = "0.3"
-mog-ai = { path = "crates/mog-ai" }
-mog-audio = { path = "crates/mog-audio" }
-mog-config = { path = "crates/mog-config" }
-mog-core = { path = "crates/mog-core" }
-mog-dap = { path = "crates/mog-dap" }
-mog-flair = { path = "crates/mog-flair" }
-mog-git = { path = "crates/mog-git" }
-mog-lsp = { path = "crates/mog-lsp" }
-mog-plugin = { path = "crates/mog-plugin" }
-mog-plugin-sdk = { path = "crates/mog-plugin-sdk" }
-mog-syntax = { path = "crates/mog-syntax" }
-mog-term = { path = "crates/mog-term" }
-mog-tui = { path = "crates/mog-tui" }
+mog-ai = { path = "crates/mog-ai", version = "0.2.0" }
+mog-audio = { path = "crates/mog-audio", version = "0.2.0" }
+mog-config = { path = "crates/mog-config", version = "0.2.0" }
+mog-core = { path = "crates/mog-core", version = "0.2.0" }
+mog-dap = { path = "crates/mog-dap", version = "0.2.0" }
+mog-flair = { path = "crates/mog-flair", version = "0.2.0" }
+mog-git = { path = "crates/mog-git", version = "0.2.0" }
+mog-lsp = { path = "crates/mog-lsp", version = "0.2.0" }
+mog-plugin = { path = "crates/mog-plugin", version = "0.2.0" }
+mog-plugin-sdk = { path = "crates/mog-plugin-sdk", version = "0.2.0" }
+mog-syntax = { path = "crates/mog-syntax", version = "0.2.0" }
+mog-term = { path = "crates/mog-term", version = "0.2.0" }
+mog-tui = { path = "crates/mog-tui", version = "0.2.0" }
 notify = "8"
 proptest = { version = "1", default-features = false, features = ["std"] }
 open = "5"
