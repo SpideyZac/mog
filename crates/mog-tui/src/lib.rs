@@ -29,6 +29,7 @@ pub mod tabs;
 pub mod theme;
 pub mod theme_editor;
 pub mod ui;
+pub mod widgets;
 
 pub use annotate::Annotations;
 pub use chat::ChatPanel;
@@ -54,4 +55,8 @@ pub use theme_editor::ThemeEditor;
 pub use ui::{
     CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, PluginSegment, Prompt, PromptKind,
     Segment, Side, SignatureHint, SplitState, SymbolEntry, Ui, UiEvent,
+};
+pub use widgets::{
+    Anchor, CursorShape, CursorStyle, Edge, Motion, PluginWidget, PluginWidgets, WidgetClick,
+    WidgetLine, WidgetSpan,
 };

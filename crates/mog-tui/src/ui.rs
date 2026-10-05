@@ -14,11 +14,22 @@ use ratatui::{
 };
 
 use crate::{
-    annotate::AnnotateState, chat::ChatState, completion::CompletionState, debug_panel::DebugState,
-    ghost::Ghost, git_panel::GitPanelState, menu::MenuState, output::OutputState,
-    picker::PickerItem, project_search::ProjectSearchState, release_notes::ReleaseNotes,
-    search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
+    annotate::AnnotateState,
+    chat::ChatState,
+    completion::CompletionState,
+    debug_panel::DebugState,
+    ghost::Ghost,
+    git_panel::GitPanelState,
+    menu::MenuState,
+    output::OutputState,
+    picker::PickerItem,
+    project_search::ProjectSearchState,
+    release_notes::ReleaseNotes,
+    search::SearchState,
+    settings::SettingKey,
+    status_line::STATUS_HEIGHT,
     theme_editor::ThemeDraft,
+    widgets::{CursorStyle, PluginWidget, WidgetClick},
 };
 
 /// The widest the file explorer gets, in cells.
@@ -366,6 +377,12 @@ pub struct Ui {
     pub plugin_decorations: HashMap<PathBuf, BTreeMap<usize, (String, Option<String>)>>,
     /// The item picked from that list, for the app to pass on.
     pub plugin_picked: Option<usize>,
+    /// The widgets plugins drew on the screen.
+    pub plugin_widgets: Vec<PluginWidget>,
+    /// Clicks on plugin widgets, for the app to pass on.
+    pub widget_clicks: Vec<WidgetClick>,
+    /// The look of the text cursor a plugin asked for.
+    pub cursor_style: CursorStyle,
     /// The lines with a breakpoint in each file, counted from 0.
     pub breakpoints: BTreeMap<PathBuf, BTreeSet<usize>>,
     /// Status line pieces added by layers this frame.
