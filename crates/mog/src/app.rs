@@ -1578,6 +1578,46 @@ three
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// The aquarium example draws fish as flair, which turning off its flair hides.
+    #[tokio::test]
+    async fn runs_the_aquarium_plugin() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/aquarium");
+        let mut config = Config::default();
+        config.updates.check = false;
+        // the critters have fish of their own
+        config.flair.disabled.push("critters".into());
+        config.plugins.insert(
+            "aquarium".into(),
+            PluginConfig {
+                path: Some(example),
+                command: python.into(),
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        plugins_until(&mut app, |app| app.ui.plugin_widgets.len() >= 4).await;
+        assert!(app.ui.flairs.iter().any(|(id, _)| id == "plugin.aquarium"));
+        let fish = |screen: &str| screen.contains("><") || screen.contains("<>");
+        let screen = app
+            .snapshot("100x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert!(fish(&screen), "{screen}");
+        app.ui.config.flair.disabled.push("plugin.aquarium".into());
+        let screen = app
+            .snapshot("100x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert!(!fish(&screen), "{screen}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
     /// The example plugin adds commands that count, edit and insert, and fills the status line.
     #[tokio::test]
     async fn runs_the_example_plugin() {

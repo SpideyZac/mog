@@ -1,0 +1,17 @@
+name = "aquarium"
+version = "1.0.0"
+description = "Fish swim over the editor, bubbles rise and clicking a fish makes it talk."
+protocol = 2
+command = "python3"
+command_windows = "python"
+args = ["${plugin_dir}/aquarium.py"]
+activation = ["startup"]
+timeout = 10
+
+[[commands]]
+name = "add"
+title = "Aquarium: Add a fish"
+
+[[commands]]
+name = "empty"
+title = "Aquarium: Let the fish go"

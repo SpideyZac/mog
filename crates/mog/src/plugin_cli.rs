@@ -412,6 +412,11 @@ mod tests {
             include_str!("../../../examples/plugins/vim/mog_plugin.py"),
             "copy sdk/python/mog_plugin.py into examples/plugins/vim"
         );
+        assert_eq!(
+            super::PYTHON_SDK,
+            include_str!("../../../examples/plugins/aquarium/mog_plugin.py"),
+            "copy sdk/python/mog_plugin.py into examples/plugins/aquarium"
+        );
     }
 
     /// Git urls are told apart from folders.
