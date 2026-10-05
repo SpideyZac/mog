@@ -3,6 +3,7 @@ version = "1.0.0"
 description = "Marks TODO and FIXME notes, lists them, removes them and tidies trailing spaces on save."
 protocol = 2
 command = "python3"
+command_windows = "python"
 args = ["${plugin_dir}/todo.py"]
 activation = ["startup"]
 timeout = 10

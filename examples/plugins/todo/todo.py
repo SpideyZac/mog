@@ -7,9 +7,7 @@ them on hover and trims trailing spaces before every save.
 Install it by copying this folder into the plugins folder of your mog config, or point a config
 entry at it:
 
-    [plugins.todo]
-    path = "/path/to/mog/examples/plugins/todo"
-    command = "python"  # if python3 is not the name on your system
+    mog plugin install /path/to/mog/examples/plugins/todo
 
 See docs/plugins.md for the protocol.
 """
@@ -18,10 +16,8 @@ import os
 import re
 import sys
 
-# the sdk lives in the repo, an installed plugin would keep a copy of it next to this file
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-sys.path.insert(1, os.path.join(HERE, "..", "..", "..", "sdk", "python"))
+# a copy of the sdk sits next to this file, so the folder works wherever it is installed
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mog_plugin import Plugin, change, edit, open_file, status  # noqa: E402
 
