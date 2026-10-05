@@ -5,6 +5,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
 
 use mog_config::TaskConfig;
@@ -13,7 +14,13 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncRead, BufReader},
     process::{Child, Command},
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    task::JoinHandle,
+    time,
 };
+
+/// How long to wait for the last output after a task exits, in case something it started still
+/// holds its output open.
+const OUTPUT_GRACE: Duration = Duration::from_millis(500);
 
 /// Something a running task did.
 #[derive(Debug)]
@@ -137,6 +144,8 @@ async fn forward(reader: impl AsyncRead + Unpin, sender: UnboundedSender<TaskEve
 pub struct Runner {
     /// The running process, to stop it.
     child: Option<Child>,
+    /// What reads the output of the running process, done once all of it is sent.
+    readers: Option<JoinHandle<()>>,
     /// Where output goes.
     sender: UnboundedSender<TaskEvent>,
     /// Output waiting to be shown.
@@ -149,6 +158,7 @@ impl Runner {
         let (sender, events) = mpsc::unbounded_channel();
         Self {
             child: None,
+            readers: None,
             sender,
             events,
         }
@@ -184,13 +194,13 @@ impl Runner {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let sender = self.sender.clone();
-        tokio::spawn(async move {
+        self.readers = Some(tokio::spawn(async move {
             let out = stdout.map(|out| tokio::spawn(forward(out, sender.clone())));
             let err = stderr.map(|err| tokio::spawn(forward(err, sender.clone())));
             for reader in [out, err].into_iter().flatten() {
                 let _ = reader.await;
             }
-        });
+        }));
         self.child = Some(child);
         Ok(())
     }
@@ -209,7 +219,11 @@ impl Runner {
             biased;
             Some(event) = self.events.recv() => Some(event),
             status = child.wait() => {
-                // lines can still be on their way after the process is gone
+                // lines can still be on their way after the process is gone, so let them land
+                // before saying it is done
+                if let Some(readers) = self.readers.take() {
+                    let _ = time::timeout(OUTPUT_GRACE, readers).await;
+                }
                 let code = status.ok().and_then(|status| status.code());
                 self.child = None;
                 Some(TaskEvent::Done(code))
