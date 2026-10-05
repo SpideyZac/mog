@@ -506,14 +506,17 @@ impl Theme {
         if self.monochrome {
             return fallback;
         }
-        let color = name.and_then(|name| {
-            COLOR_NAMES
-                .iter()
-                .position(|known| known.eq_ignore_ascii_case(name))
-                .map(|index| self.palette.get(index))
-                .or_else(|| parse_hex(name))
-        });
-        color.map_or(fallback, |color| fallback.fg(color))
+        name.and_then(|name| self.color(name))
+            .map_or(fallback, |color| fallback.fg(color))
+    }
+
+    /// Returns the color called `name`, a palette color like `green` or a hex code.
+    pub fn color(&self, name: &str) -> Option<Color> {
+        COLOR_NAMES
+            .iter()
+            .position(|known| known.eq_ignore_ascii_case(name))
+            .map(|index| self.palette.get(index))
+            .or_else(|| parse_hex(name))
     }
 
     /// Returns the names of every built in theme.
