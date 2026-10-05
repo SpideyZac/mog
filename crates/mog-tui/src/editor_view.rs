@@ -790,7 +790,10 @@ mod tests {
         let buffer = draw(&mut editor, 30, 2);
         let row: String = (0..30).map(|x| buffer[(x, 0)].symbol()).collect();
         assert_eq!(row.trim_end(), "1 let x = 1;   x: i32");
-        assert_eq!(buffer[(6, 0)].fg, Theme::default().parameter.fg.expect("color"));
+        assert_eq!(
+            buffer[(6, 0)].fg,
+            Theme::default().parameter.fg.expect("color")
+        );
     }
 
     /// Text is drawn after the gutter with tabs expanded and the cursor placed.
