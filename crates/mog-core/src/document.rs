@@ -1,7 +1,7 @@
 //! Open files and their text.
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeSet, VecDeque},
     fs::File,
     io::{self, BufWriter, ErrorKind},
     path::{self, Path, PathBuf},
@@ -90,6 +90,8 @@ pub struct Document {
     semantic_tokens: LineMarks<SemanticToken>,
     /// Recent edits with the version each one led to, oldest first.
     changes: VecDeque<(u64, Transaction)>,
+    /// The lines with a breakpoint, counted from 0, moved along with edits.
+    breakpoints: BTreeSet<usize>,
 }
 
 impl Document {
@@ -244,6 +246,36 @@ impl Document {
         )
     }
 
+    /// Returns the lines with a breakpoint, counted from 0.
+    pub fn breakpoints(&self) -> &BTreeSet<usize> {
+        &self.breakpoints
+    }
+
+    /// Replaces the breakpoints, dropping lines past the end.
+    pub fn set_breakpoints(&mut self, lines: impl IntoIterator<Item = usize>) {
+        let count = self.text.len_lines();
+        self.breakpoints = lines.into_iter().filter(|line| *line < count).collect();
+    }
+
+    /// Applies `tx` to the text, moving breakpoints along so they stay on the same code.
+    fn edit_text(&mut self, tx: &Transaction) -> Transaction {
+        // a breakpoint sticks to the start of its line, which edits move like any position
+        let starts: Vec<usize> = self
+            .breakpoints
+            .iter()
+            .map(|line| self.text.line_to_char(*line))
+            .collect();
+        let inverse = tx.apply(&mut self.text);
+        self.breakpoints = starts
+            .into_iter()
+            .map(|start| {
+                self.text
+                    .char_to_line(tx.map_pos(start).min(self.text.len_chars()))
+            })
+            .collect();
+        inverse
+    }
+
     /// Remembers that `tx` led to the current version.
     fn log_change(&mut self, tx: Transaction) {
         if self.changes.len() == CHANGE_LOG {
@@ -310,7 +342,7 @@ impl Document {
             return;
         }
         let before = self.selection;
-        let inverse = tx.apply(&mut self.text);
+        let inverse = self.edit_text(&tx);
         self.version += 1;
         self.log_change(tx.clone());
         self.history.record(
@@ -339,7 +371,7 @@ impl Document {
         let before = revision.before;
         self.version += 1;
         for tx in steps {
-            tx.apply(&mut self.text);
+            self.edit_text(&tx);
             self.log_change(tx);
         }
         self.set_selection(before);
@@ -359,7 +391,7 @@ impl Document {
         let after = revision.after;
         self.version += 1;
         for tx in steps {
-            tx.apply(&mut self.text);
+            self.edit_text(&tx);
             self.log_change(tx);
         }
         self.set_selection(after);
@@ -422,6 +454,30 @@ mod tests {
         assert_eq!(pos, 3);
         assert_eq!(doc.changes_since(doc.version()).map(|c| c.len()), Some(0));
         assert!(doc.changes_since(doc.version() + 5).is_none());
+    }
+
+    /// Breakpoints follow their line through edits above them, undo included.
+    #[test]
+    fn breakpoints_move_with_edits() {
+        let mut doc = Document::from_text("a\nb\nc\n");
+        doc.set_breakpoints([1, 2, 9]);
+        assert_eq!(
+            doc.breakpoints().iter().copied().collect::<Vec<_>>(),
+            [1, 2]
+        );
+        doc.apply(Transaction::insert(0, "new\n"), Range::point(4), false);
+        assert_eq!(
+            doc.breakpoints().iter().copied().collect::<Vec<_>>(),
+            [2, 3]
+        );
+        // deleting the line with a breakpoint leaves it on the line that took its place
+        doc.apply(Transaction::delete(6, 8), Range::point(6), false);
+        assert_eq!(doc.breakpoints().iter().copied().collect::<Vec<_>>(), [2]);
+        // undo puts the line back, the breakpoint stays with the code it ended up on
+        assert!(doc.undo());
+        assert_eq!(doc.breakpoints().iter().copied().collect::<Vec<_>>(), [3]);
+        assert!(doc.undo());
+        assert_eq!(doc.breakpoints().iter().copied().collect::<Vec<_>>(), [2]);
     }
 
     /// Line endings are detected from the first line break.
