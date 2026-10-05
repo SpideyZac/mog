@@ -139,9 +139,10 @@
 
 - [x] Snapshot tests for `mog-tui` with `TestBackend` and `insta`
 - [x] Scripted event loop tests (open, edit, save, quit)
-- [ ] Benchmark a 100 MB file and a very long single line
-- [ ] Make sure tree-sitter parsing is incremental and off the UI thread
-- [ ] Profile idle CPU use of audio, flair ticks and the resource monitor
+- [x] Benchmark a 100 MB file and a very long single line
+- [x] Tree-sitter parsing off the UI thread
+- [ ] Incremental tree-sitter parsing, it still parses the whole file in the background
+- [x] Profile idle CPU use of audio, flair ticks and the resource monitor
 
 ## Extensions
 

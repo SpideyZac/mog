@@ -14,6 +14,9 @@ See `ROADMAP.md` for what is done and what is next. Update it whenever a roadmap
   - `cargo +nightly fmt --all --check`
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test --workspace`
+- Accept changed screen snapshots: `cargo insta review` (or `INSTA_UPDATE=always cargo test`)
+- Timings, by hand: `cargo test --release -p mog-tui --test large_files -- --ignored --nocapture`
+  and `cargo test --release -p mog frame_cost -- --ignored --nocapture`
 
 ## Layout
 
