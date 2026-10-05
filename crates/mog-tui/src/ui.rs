@@ -102,6 +102,10 @@ pub enum Overlay {
     ReleaseNotes,
     /// Find and replace across the project.
     ProjectSearch,
+    /// The symbols of the focused file, an outline to jump around in.
+    Symbols,
+    /// Symbols from the whole project, searched as you type.
+    WorkspaceSymbols,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -140,6 +144,40 @@ pub enum PromptKind {
     TrustProject,
     /// Confirmation to replace every match of a project search.
     ReplaceAll,
+    /// Confirmation to run a command that installs a missing language server.
+    InstallServer(String),
+}
+
+/// The signature of the call around the cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureHint {
+    /// The whole signature, like `fn add(a: i32, b: i32) -> i32`.
+    pub label: String,
+    /// The chars of `label` that name the parameter being typed, as `(from, to)`.
+    pub active: Option<(usize, usize)>,
+    /// What the function does, if the server says.
+    pub documentation: Option<String>,
+    /// The line the call is on, so the hint goes away when the cursor leaves it.
+    pub line: usize,
+}
+
+/// A symbol in a symbol picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolEntry {
+    /// The symbol name.
+    pub name: String,
+    /// A short name for its kind, like `fn`.
+    pub kind: String,
+    /// Extra detail like a signature or the containing type.
+    pub detail: String,
+    /// How deep it is nested inside other symbols.
+    pub depth: usize,
+    /// The file it is in.
+    pub path: PathBuf,
+    /// The line it is on, from 0.
+    pub line: usize,
+    /// The column its name starts at, from 0.
+    pub column: usize,
 }
 
 /// A one line question, like where to save a file.
@@ -292,6 +330,14 @@ pub struct Ui {
     pub completion: Option<CompletionState>,
     /// Hover text and the char offset it is about.
     pub hover: Option<(String, usize)>,
+    /// The signature of the call being typed.
+    pub signature: Option<SignatureHint>,
+    /// The symbols shown in the symbol pickers.
+    pub symbols: Vec<SymbolEntry>,
+    /// Bumped whenever `symbols` is replaced, so an open picker refills.
+    pub symbols_version: u64,
+    /// What was typed in the project symbol picker, for the app to search for.
+    pub symbol_query: String,
     /// The open prompt.
     pub prompt: Option<Prompt>,
     /// A prompt that was answered and waits for the app to act on it.

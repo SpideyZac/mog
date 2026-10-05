@@ -16,7 +16,7 @@ use crate::{
     compositor::{Context, EventResult, Layer},
     ghost::{self, GhostKey},
     theme::Theme,
-    ui::{Focus, Layout, Ui},
+    ui::{Focus, Layout, SignatureHint, Ui},
 };
 
 /// The most rows the menu shows at once.
@@ -239,9 +239,62 @@ impl CompletionMenu {
     }
 }
 
+/// Draws the signature of the call being typed above the cursor, the current parameter bold.
+fn render_signature(
+    signature: &SignatureHint,
+    cursor: Position,
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+) {
+    let doc = signature
+        .documentation
+        .as_deref()
+        .and_then(|doc| doc.lines().find(|line| !line.trim().is_empty()))
+        .map(str::trim);
+    let label_width = signature.label.width() + 2;
+    let doc_width = doc.map_or(0, |doc| doc.width() + 2);
+    let width = label_width.max(doc_width).min(HOVER_WIDTH);
+    let width = u16::try_from(width).unwrap_or(0).min(area.width);
+    let height = if doc.is_some() { 2 } else { 1 };
+    if cursor.y < area.y + height {
+        return;
+    }
+    let rect = Rect::new(
+        cursor.x.min(area.right().saturating_sub(width)).max(area.x),
+        cursor.y - height,
+        width,
+        height,
+    );
+    Clear.render(rect, buf);
+    buf.set_style(rect, theme.popup);
+    buf.set_string(rect.x, rect.y, "\u{258c}", theme.popup_border);
+    let mut x = rect.x + 1;
+    for (i, ch) in signature.label.chars().enumerate() {
+        if x >= rect.right() {
+            break;
+        }
+        let active = signature
+            .active
+            .is_some_and(|(from, to)| (from..to).contains(&i));
+        let style = if active {
+            theme.popup_match.add_modifier(Modifier::UNDERLINED)
+        } else {
+            theme.popup
+        };
+        x = buf.set_stringn(x, rect.y, ch.to_string(), 2, style).0;
+    }
+    if let Some(doc) = doc {
+        buf.set_string(rect.x, rect.y + 1, "\u{258c}", theme.popup_border);
+        let room = usize::from(rect.width.saturating_sub(1));
+        buf.set_stringn(rect.x + 1, rect.y + 1, doc, room, theme.popup_dim);
+    }
+}
+
 impl Layer for CompletionMenu {
     fn area(&self, layout: &Layout, ui: &Ui) -> Rect {
-        if (ui.completion.is_some() || ui.hover.is_some()) && ui.overlay.is_none() {
+        let popup = ui.completion.is_some() || ui.hover.is_some() || ui.signature.is_some();
+        if popup && ui.overlay.is_none() {
             layout.editor
         } else {
             Rect::default()
@@ -254,6 +307,9 @@ impl Layer for CompletionMenu {
         let Some(cursor) = cx.ui.cursor_screen else {
             return;
         };
+        if let Some(signature) = cx.ui.signature.as_ref().filter(|_| cx.ui.hover.is_none()) {
+            render_signature(signature, cursor, area, buf, theme);
+        }
         if let Some((text, _)) = &cx.ui.hover {
             let lines = wrap(text, HOVER_WIDTH - 2, HOVER_LINES);
             let width = lines.iter().map(|line| line.width()).max().unwrap_or(0) + 2;
@@ -345,6 +401,10 @@ impl Layer for CompletionMenu {
             if chord.key == Key::Esc {
                 return EventResult::Consumed;
             }
+        }
+        if cx.ui.signature.is_some() && chord.key == Key::Esc && cx.ui.completion.is_none() {
+            cx.ui.signature = None;
+            return EventResult::Consumed;
         }
         let menu_open = cx.ui.completion.is_some();
         match ghost::handle_key(&mut cx.ui.ghost, chord, cx.editor, menu_open) {

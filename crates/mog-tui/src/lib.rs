@@ -46,5 +46,5 @@ pub use theme::Theme;
 pub use theme_editor::ThemeEditor;
 pub use ui::{
     CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, Prompt, PromptKind, Segment, Side,
-    SplitState, Ui, UiEvent,
+    SignatureHint, SplitState, SymbolEntry, Ui, UiEvent,
 };

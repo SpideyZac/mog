@@ -32,6 +32,9 @@ const PICKER_HEIGHT: u16 = 22;
 /// The width of text prompts.
 const PROMPT_WIDTH: u16 = 64;
 
+/// The command the project symbol picker asks the app to run when the query changes.
+pub const SYMBOL_SEARCH_COMMAND: &str = "lsp.workspace_symbols.search";
+
 /// What the rebind popup says under the title.
 const REBIND_HINT: &str = "esc cancels, backspace removes the binding";
 
@@ -56,6 +59,8 @@ pub struct Popups {
     files: Vec<PathBuf>,
     /// The command names behind the palette or key list rows.
     commands: Vec<String>,
+    /// The symbols version the picker was last filled with.
+    symbols_version: u64,
     /// The documents and offsets behind the problem rows.
     problems: Vec<(usize, usize)>,
     /// The box drawn in the last frame.
@@ -85,8 +90,42 @@ impl Popups {
                     | Overlay::Prompt
                     | Overlay::Problems
                     | Overlay::References
+                    | Overlay::Symbols
+                    | Overlay::WorkspaceSymbols
             )
         )
+    }
+
+    /// Returns the picker rows for the symbols in `ui`.
+    fn symbol_items(ui: &Ui) -> Vec<PickerItem> {
+        let workspace = ui.overlay == Some(Overlay::WorkspaceSymbols);
+        ui.symbols
+            .iter()
+            .map(|symbol| {
+                let indent = if workspace {
+                    String::new()
+                } else {
+                    "  ".repeat(symbol.depth)
+                };
+                let place = if workspace {
+                    format!(
+                        "{}:{}",
+                        display_path(&symbol.path, &ui.root),
+                        symbol.line + 1
+                    )
+                } else {
+                    format!("Ln {}", symbol.line + 1)
+                };
+                let detail = if symbol.detail.is_empty() {
+                    symbol.kind.clone()
+                } else {
+                    format!("{} {}", symbol.kind, symbol.detail)
+                };
+                PickerItem::new(format!("{indent}{}", symbol.name))
+                    .detail(detail)
+                    .hint(place)
+            })
+            .collect()
     }
 
     /// Fills the picker for the popup that just opened.
@@ -168,6 +207,10 @@ impl Popups {
                         }
                     })
                     .collect()
+            }
+            Some(Overlay::Symbols | Overlay::WorkspaceSymbols) => {
+                self.symbols_version = ui.symbols_version;
+                Self::symbol_items(ui)
             }
             Some(Overlay::Problems) => {
                 let theme_marks = [
@@ -264,6 +307,22 @@ impl Popups {
                 let line = line.min(text.len_lines() - 1);
                 let start = text.line_to_char(line);
                 let pos = start + column.min(movement::line_len(text, line));
+                cx.editor.select(pos, pos);
+            }
+            Some(Overlay::Symbols | Overlay::WorkspaceSymbols) => {
+                let Some(symbol) = cx.ui.symbols.get(index).cloned() else {
+                    return;
+                };
+                cx.ui.focus = Focus::Editor;
+                if let Err(err) = cx.editor.open(symbol.path.clone()) {
+                    cx.editor
+                        .set_status(format!("could not open {}: {err}", symbol.path.display()));
+                    return;
+                }
+                let text = cx.editor.document().text();
+                let line = symbol.line.min(text.len_lines() - 1);
+                let pos =
+                    text.line_to_char(line) + symbol.column.min(movement::line_len(text, line));
                 cx.editor.select(pos, pos);
             }
             Some(Overlay::Problems) => {
@@ -388,6 +447,12 @@ impl Layer for Popups {
             self.generation = cx.ui.overlay_generation;
             self.capturing = None;
             self.fill(cx);
+        } else if cx.ui.overlay == Some(Overlay::WorkspaceSymbols)
+            && self.symbols_version != cx.ui.symbols_version
+        {
+            // new results for what was typed, so keep the query
+            self.symbols_version = cx.ui.symbols_version;
+            self.picker.set_items(Self::symbol_items(cx.ui));
         }
         let theme = cx.theme;
         let (title, placeholder) = match cx.ui.overlay {
@@ -403,6 +468,10 @@ impl Layer for Popups {
             ),
             Some(Overlay::Problems) => ("\u{26a0} problems", "search problems..."),
             Some(Overlay::References) => ("\u{21c4} references", "search references..."),
+            Some(Overlay::Symbols) => ("\u{2261} symbols in this file", "search symbols..."),
+            Some(Overlay::WorkspaceSymbols) => {
+                ("\u{2261} symbols in the project", "type a symbol name...")
+            }
             _ => ("", ""),
         };
         if let Some(prompt) = cx
@@ -463,6 +532,12 @@ impl Layer for Popups {
             PickerAction::Cancel => cx.ui.close(),
             PickerAction::Ignored => return EventResult::Ignored,
             PickerAction::None => {}
+        }
+        if cx.ui.overlay == Some(Overlay::WorkspaceSymbols)
+            && self.picker.query() != cx.ui.symbol_query
+        {
+            cx.ui.symbol_query = self.picker.query().to_owned();
+            cx.ui.request(Command::Custom(SYMBOL_SEARCH_COMMAND.into()));
         }
         EventResult::Consumed
     }

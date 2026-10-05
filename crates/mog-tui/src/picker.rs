@@ -97,6 +97,12 @@ impl Picker {
         self.refilter();
     }
 
+    /// Replaces the items but keeps the query, for lists that change while typing.
+    pub fn set_items(&mut self, items: Vec<PickerItem>) {
+        self.items = items;
+        self.refilter();
+    }
+
     /// Returns the query text.
     pub fn query(&self) -> &str {
         &self.query
