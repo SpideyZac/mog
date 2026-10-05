@@ -2816,16 +2816,17 @@ mod tests {
         path::{Path, PathBuf},
         process,
         sync::atomic::{AtomicUsize, Ordering},
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use clap::Parser;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use mog_config::Config;
     use mog_core::{Key, KeyChord};
-    use mog_tui::PromptKind;
+    use mog_tui::{Context, PromptKind};
+    use ratatui::{Terminal, backend::TestBackend};
 
-    use super::App;
+    use super::{App, FRAME_TIME, IDLE_FRAME_TIME};
     use crate::{
         cli::Args,
         session::{State, Swap},
@@ -2988,10 +2989,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "a timing, run by hand with --nocapture"]
     async fn frame_cost() {
-        use ratatui::{Terminal, backend::TestBackend};
-
-        use super::{FRAME_TIME, IDLE_FRAME_TIME};
-
         let dir = temp_dir();
         let path = dir.join("frames.rs");
         fs::write(&path, "fn main() {\n    println!(\"hi\");\n}\n".repeat(200)).expect("write");
@@ -3002,12 +2999,12 @@ mod tests {
         app.editor.open(&path).expect("open");
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).expect("terminal");
         let frames = 300;
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         for _ in 0..frames {
             app.compositor.tick(FRAME_TIME);
             terminal
                 .draw(|frame| {
-                    let mut cx = mog_tui::Context {
+                    let mut cx = Context {
                         editor: &mut app.editor,
                         theme: &app.theme,
                         ui: &mut app.ui,
