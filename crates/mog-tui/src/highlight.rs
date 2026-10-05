@@ -4,6 +4,8 @@
 //! [`Worker`] and keeps drawing with the colors it had, moved along with the edits made since.
 
 use std::{
+    collections::HashMap,
+    path::PathBuf,
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     thread,
     time::Duration,
@@ -11,13 +13,24 @@ use std::{
 
 use mog_core::{Transaction, movement};
 use mog_git::{LineChange, line_changes};
-use mog_syntax::{Highlighter, Kind, Span};
+use mog_syntax::{Edit, Highlighter, Incremental, Kind, Span};
+
+/// Which document a job is for, as its index and path.
+pub type DocumentKey = (usize, Option<PathBuf>);
+
+/// How many documents the worker keeps parse trees for.
+const KEPT_DOCUMENTS: usize = 16;
 
 /// The work for one version of a document.
 #[derive(Debug)]
 pub struct Job {
+    /// The document the text is from.
+    pub document: DocumentKey,
     /// The document version the text is from.
     pub version: u64,
+    /// The edits since an earlier version the worker saw, as that version and the changes of
+    /// each transaction, so it can parse again from where it was.
+    pub edits: Option<(u64, Vec<Vec<Edit>>)>,
     /// The language to highlight in, `None` for no colors.
     pub language: Option<&'static str>,
     /// The whole text.
@@ -68,6 +81,23 @@ pub fn bracket_depths(text: &str, spans: &[Span]) -> Vec<usize> {
     depths
 }
 
+/// Converts editor transactions to the edits the highlighter replays.
+pub fn to_edits(changes: &[&Transaction]) -> Vec<Vec<Edit>> {
+    changes
+        .iter()
+        .map(|tx| {
+            tx.changes()
+                .iter()
+                .map(|change| Edit {
+                    start: change.start,
+                    end: change.end,
+                    text: change.text.clone(),
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Moves `spans` through `changes`, dropping any that end up empty.
 pub fn map_spans(spans: &mut Vec<Span>, changes: &[&Transaction]) {
     if changes.is_empty() {
@@ -82,12 +112,37 @@ pub fn map_spans(spans: &mut Vec<Span>, changes: &[&Transaction]) {
     spans.retain(|span| span.from < span.to);
 }
 
-/// Does `job` with `highlighter`.
-fn run(job: Job, highlighter: &mut Highlighter) -> Done {
-    let spans = job
-        .language
-        .map(|language| highlighter.highlight(language, &job.text))
-        .unwrap_or_default();
+/// The highlighting the worker keeps for each document, with the version it is for.
+type Documents = HashMap<DocumentKey, (u64, Incremental)>;
+
+/// Does `job` with `highlighter`, starting from what was kept for its document in `documents`.
+fn run(job: Job, highlighter: &mut Highlighter, documents: &mut Documents) -> Done {
+    let spans = match job.language {
+        Some(language) => {
+            if documents.len() >= KEPT_DOCUMENTS && !documents.contains_key(&job.document) {
+                documents.clear();
+            }
+            let (version, state) = documents
+                .entry(job.document.clone())
+                .or_insert_with(|| (0, Incremental::new(language)));
+            if state.language() != language {
+                *state = Incremental::new(language);
+            }
+            // edits only help when they start from the version the kept tree is for
+            let edits = job
+                .edits
+                .as_ref()
+                .filter(|(from, _)| *from == *version)
+                .map(|(_, edits)| edits.as_slice());
+            state.update(highlighter, &job.text, edits);
+            *version = job.version;
+            state.spans().to_vec()
+        }
+        None => {
+            documents.remove(&job.document);
+            Vec::new()
+        }
+    };
     let depths = bracket_depths(&job.text, &spans);
     let changes = job
         .base
@@ -118,12 +173,16 @@ impl Default for Worker {
         let (outbox, done) = mpsc::channel();
         thread::spawn(move || {
             let mut highlighter = Highlighter::new();
+            let mut documents = Documents::new();
             while let Ok(mut job) = inbox.recv() {
                 // only the newest text matters when edits came in faster than the work
                 while let Ok(newer) = inbox.try_recv() {
                     job = newer;
                 }
-                if outbox.send(run(job, &mut highlighter)).is_err() {
+                if outbox
+                    .send(run(job, &mut highlighter, &mut documents))
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -174,7 +233,7 @@ mod tests {
     use std::time::Duration;
 
     use mog_core::Transaction;
-    use mog_syntax::{Kind, Span};
+    use mog_syntax::{Edit, Highlighter, Kind, Span};
 
     use super::{Job, Worker, bracket_depths, map_spans};
 
@@ -203,11 +262,46 @@ mod tests {
         assert_eq!((spans[0].from, spans[0].to), (6, 11));
     }
 
+    /// A job with the edits since the last one gets the same colors as starting over.
+    #[test]
+    fn worker_follows_edits() {
+        let mut worker = Worker::default();
+        let first = "fn main() {}\n";
+        worker.send(Job {
+            document: (0, None),
+            edits: None,
+            version: 1,
+            language: Some("rust"),
+            text: first.into(),
+            base: None,
+        });
+        worker.take(Duration::from_secs(30)).expect("first");
+        let second = "fn main() { let s = \"hi\"; }\n";
+        let edits = vec![vec![Edit {
+            start: 11,
+            end: 11,
+            text: " let s = \"hi\";".into(),
+        }]];
+        worker.send(Job {
+            document: (0, None),
+            edits: Some((1, edits)),
+            version: 2,
+            language: Some("rust"),
+            text: second.into(),
+            base: None,
+        });
+        let done = worker.take(Duration::from_secs(30)).expect("second");
+        assert_eq!(done.version, 2);
+        assert_eq!(done.spans, Highlighter::new().highlight("rust", second));
+    }
+
     /// The worker highlights in the background and hands back the result.
     #[test]
     fn worker_highlights() {
         let mut worker = Worker::default();
         worker.send(Job {
+            document: (0, None),
+            edits: None,
             version: 3,
             language: Some("rust"),
             text: "fn main() {}\n".into(),

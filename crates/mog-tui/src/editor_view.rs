@@ -18,7 +18,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
-    highlight::{Done, Job, Worker, map_spans},
+    highlight::{DocumentKey, Done, Job, Worker, map_spans, to_edits},
     menu,
     theme::{RAINBOW_LEN, Theme},
     ui::{Focus, Layout, Pane, Ui},
@@ -196,6 +196,8 @@ pub struct EditorView {
     last_click: Option<(Instant, Position, u8)>,
     /// Works out colors, bracket depths and git changes in the background.
     worker: Worker,
+    /// The document and version the worker was last given, so it can be sent just the edits.
+    sent: Option<(DocumentKey, u64)>,
     /// Per document work kept between frames.
     cache: Cache,
     /// Which pane this view draws.
@@ -310,8 +312,21 @@ impl EditorView {
             self.cache.stale = false;
             return;
         }
+        let key: DocumentKey = (index, document.path().map(ToOwned::to_owned));
+        let edits = self
+            .sent
+            .as_ref()
+            .filter(|(sent, _)| *sent == key)
+            .and_then(|(_, from)| {
+                document
+                    .changes_since(*from)
+                    .map(|changes| (*from, to_edits(&changes)))
+            });
+        self.sent = Some((key.clone(), version));
         self.worker.send(Job {
+            document: key,
             version,
+            edits,
             language,
             text: document.text().to_string(),
             base: base.cloned(),
