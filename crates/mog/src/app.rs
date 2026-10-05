@@ -33,6 +33,7 @@ use mog_core::{
     search::{self as core_search, Matcher},
 };
 use mog_flair::{GraphView, builtin::screensaver};
+use mog_git::{Hunk, apply_hunk, hunks, map_line, revert_hunk};
 use mog_lsp::{
     LspEvent, convert,
     features::{CodeAction, FileEdits},
@@ -40,11 +41,11 @@ use mog_lsp::{
 use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
-    EditorView, EventResult, Explorer, Focus, Ghost, Minimap, Overlay, Pane, Popups,
+    EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap, Overlay, Pane, Popups,
     ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel, SignatureHint,
     SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
     completion::{self, CompletionState},
-    ghost, input,
+    ghost, git_panel, input,
     menu::{self, MenuAction, MenuItem},
     popups::SYMBOL_SEARCH_COMMAND,
     project_search as project_search_panel,
@@ -70,7 +71,7 @@ use crate::{
     cli::Args,
     clipboard, commands,
     discord::{Presence, Status},
-    git::{self, Git},
+    git::{self, Git, GitUpdate},
     lsp::{self, LanguageServers, LspReply},
     session::{Session, SessionFile, State, Swap},
     settings::{self, ProjectStatus},
@@ -310,6 +311,7 @@ impl App {
         compositor.push(Box::new(ReleaseNotesPopup::new()));
         compositor.push(Box::new(ProjectSearchPanel::new()));
         compositor.push(Box::new(GraphView::new()));
+        compositor.push(Box::new(GitPanel::new()));
         compositor.push(Box::new(ContextMenu::new()));
         compositor.push(Box::new(Annotations::new()));
 
@@ -880,7 +882,7 @@ impl App {
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
                 Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
                 Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
-                Some(update) = self.git.update() => git::apply(&mut self.ui, update),
+                Some(update) = self.git.update() => self.handle_git(update),
                 Some(event) = self.updater.event() => self.handle_update(event),
                 Some((generation, results)) = self.project_results.recv() => {
                     self.show_project_results(generation, results);
@@ -955,7 +957,7 @@ impl App {
             self.request_marks();
             self.sync_git();
             tokio::select! {
-                Some(update) = self.git.update() => git::apply(&mut self.ui, update),
+                Some(update) = self.git.update() => self.handle_git(update),
                 Some(event) = self.lsp_events.recv() => self.handle_lsp_event(event),
                 Some(reply) = self.lsp_replies.recv() => self.handle_lsp_reply(reply),
                 Some((generation, results)) = self.project_results.recv() => {
@@ -1332,6 +1334,154 @@ impl App {
         }
     }
 
+    /// Acts on a background git answer.
+    fn handle_git(&mut self, update: GitUpdate) {
+        let GitUpdate::Done(result) = update else {
+            git::apply(&mut self.ui, update);
+            if self.ui.overlay == Some(Overlay::Git) && !self.ui.git_panel.diff_is_current() {
+                self.request_git_diff();
+            }
+            return;
+        };
+        match result {
+            Ok(message) => self.editor.set_status(message),
+            Err(err) => self.editor.set_status(format!("git: {err}")),
+        }
+        // staging and committing change the gutter, the explorer colors and the panel
+        self.git.refresh();
+        self.git_refreshed = Instant::now();
+        if self.ui.overlay == Some(Overlay::Git) {
+            self.git.request_changes();
+            self.ui.git_panel.diff_for = None;
+        }
+    }
+
+    /// Asks for the diff of the file highlighted in the source control panel.
+    fn request_git_diff(&mut self) {
+        if let Some(row) = self.ui.git_panel.current() {
+            self.git.request_diff(row.path.clone(), row.staged);
+        }
+    }
+
+    /// Opens the source control panel.
+    fn open_git_panel(&mut self) {
+        if !self.git.is_repo() {
+            self.editor
+                .set_status("this folder is not in a git repository");
+            return;
+        }
+        self.ui.git_panel.diff_for = None;
+        self.ui.open(Overlay::Git);
+        self.git.request_changes();
+    }
+
+    /// Returns the focused file, its text and the cursor line, for hunk commands.
+    fn hunk_target(&mut self) -> Option<(PathBuf, String, usize)> {
+        let document = self.editor.document();
+        let Some(path) = document.path().map(ToOwned::to_owned) else {
+            self.editor
+                .set_status("save the file first so git can see it");
+            return None;
+        };
+        if !self.git.is_repo() {
+            self.editor
+                .set_status("this folder is not in a git repository");
+            return None;
+        }
+        let line = document.text().char_to_line(document.selection().head);
+        Some((path, document.text().to_string(), line))
+    }
+
+    /// Stages the change under the cursor, leaving the rest of the file as it is in the index.
+    fn stage_hunk(&mut self) {
+        let Some((path, text, line)) = self.hunk_target() else {
+            return;
+        };
+        self.git.run(move |repo| {
+            let index = repo.index_text(&path).unwrap_or_default();
+            let hunk = hunks(&index, &text)
+                .into_iter()
+                .find(|hunk| hunk.touches(line))
+                .ok_or("no change here to stage")?;
+            repo.set_index_text(&path, &apply_hunk(&index, &text, &hunk))?;
+            Ok(format!("staged lines {}", hunk_lines(&hunk)))
+        });
+    }
+
+    /// Takes the staged change under the cursor back out of the index.
+    fn unstage_hunk(&mut self) {
+        let Some((path, text, line)) = self.hunk_target() else {
+            return;
+        };
+        self.git.run(move |repo| {
+            let head = repo.head_text(&path).unwrap_or_default();
+            let index = repo
+                .index_text(&path)
+                .ok_or("nothing is staged for this file")?;
+            let at = map_line(&index, &text, line);
+            let hunk = hunks(&head, &index)
+                .into_iter()
+                .find(|hunk| hunk.touches(at))
+                .ok_or("no staged change here")?;
+            repo.set_index_text(&path, &revert_hunk(&head, &index, &hunk))?;
+            Ok(format!("unstaged lines {}", hunk_lines(&hunk)))
+        });
+    }
+
+    /// Puts the change under the cursor back the way it is in the last commit.
+    fn revert_hunk(&mut self) {
+        let Some((path, text, line)) = self.hunk_target() else {
+            return;
+        };
+        let Some(base) = self.ui.git_base.get(&path) else {
+            self.editor
+                .set_status("this file is not committed, nothing to go back to");
+            return;
+        };
+        let Some(hunk) = hunks(base, &text)
+            .into_iter()
+            .find(|hunk| hunk.touches(line))
+        else {
+            self.editor.set_status("no change here");
+            return;
+        };
+        let old: String = base
+            .split_inclusive('\n')
+            .skip(hunk.old.start)
+            .take(hunk.old.len())
+            .collect();
+        let rope = self.editor.document().text();
+        let at = |line: usize| rope.line_to_char(line.min(rope.len_lines()));
+        let change = Change {
+            start: at(hunk.new.start),
+            end: at(hunk.new.end),
+            text: old,
+        };
+        self.editor.apply_changes(vec![change]);
+        self.editor
+            .set_status("reverted to the last commit, ctrl+z brings it back");
+    }
+
+    /// Stages or unstages the file highlighted in the source control panel.
+    fn toggle_git_row(&mut self) {
+        let Some(row) = self.ui.git_panel.current().cloned() else {
+            return;
+        };
+        self.git.run(move |repo| {
+            let name = row
+                .path
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            if row.staged {
+                repo.unstage(&row.path)?;
+                Ok(format!("unstaged {name}"))
+            } else {
+                repo.stage(&row.path)?;
+                Ok(format!("staged {name}"))
+            }
+        });
+    }
+
     /// Runs periodic work like refreshing the explorer and git after files changed.
     fn housekeeping(&mut self) {
         let changed = mem::take(&mut self.files_changed);
@@ -1473,6 +1623,17 @@ impl App {
             }
             PromptKind::SaveTheme => {
                 self.save_theme(text);
+                return;
+            }
+            PromptKind::Commit => {
+                let message = text.to_owned();
+                self.git.run(move |repo| {
+                    let id = repo.commit(&message)?;
+                    Ok(format!("committed {id}: {message}"))
+                });
+                if self.ui.git_panel.loaded {
+                    self.ui.open(Overlay::Git);
+                }
                 return;
             }
             PromptKind::RecoverSwaps => {
@@ -2638,6 +2799,52 @@ impl App {
                     self.editor.set_status(title);
                 }
             }
+            "git.panel" => self.open_git_panel(),
+            "git.stage_hunk" => self.stage_hunk(),
+            "git.unstage_hunk" => self.unstage_hunk(),
+            "git.revert_hunk" => self.revert_hunk(),
+            "git.stage_file" => {
+                if let Some((path, _, _)) = self.hunk_target() {
+                    self.git.run(move |repo| {
+                        repo.stage(&path)?;
+                        Ok("staged the whole file".into())
+                    });
+                }
+            }
+            "git.commit" => {
+                if !self.git.is_repo() {
+                    self.editor
+                        .set_status("this folder is not in a git repository");
+                    return;
+                }
+                self.ui.ask(
+                    PromptKind::Commit,
+                    "\u{2714} commit what is staged",
+                    "",
+                    "a message for the commit, enter commits",
+                );
+            }
+            git_panel::DIFF_COMMAND => self.request_git_diff(),
+            git_panel::TOGGLE_COMMAND => self.toggle_git_row(),
+            git_panel::STAGE_ALL_COMMAND => self.git.run(|repo| {
+                repo.stage_all()?;
+                Ok("staged everything".into())
+            }),
+            git_panel::REFRESH_COMMAND => {
+                self.git.request_changes();
+                self.ui.git_panel.diff_for = None;
+            }
+            git_panel::OPEN_COMMAND => {
+                let Some(row) = self.ui.git_panel.current().cloned() else {
+                    return;
+                };
+                self.ui.close();
+                self.ui.focus = Focus::Editor;
+                if let Err(err) = self.editor.open(&row.path) {
+                    self.editor
+                        .set_status(format!("could not open {}: {err}", row.path.display()));
+                }
+            }
             "lsp.signature" => self.request_signature(),
             "lsp.symbols" => self.request_symbols(None),
             "lsp.workspace_symbols" => {
@@ -2800,6 +3007,15 @@ impl App {
     }
 }
 
+/// Describes the lines of `hunk` in the new text for a status message, counted from 1.
+fn hunk_lines(hunk: &Hunk) -> String {
+    if hunk.new.len() <= 1 {
+        format!("{}", hunk.new.start + 1)
+    } else {
+        format!("{} to {}", hunk.new.start + 1, hunk.new.end)
+    }
+}
+
 /// Waits for `watcher` to see a change, or forever when there is no watcher.
 async fn changed(watcher: Option<&FolderWatcher>) {
     match watcher {
@@ -2875,6 +3091,8 @@ mod tests {
             Key::Enter => KeyCode::Enter,
             Key::Backspace => KeyCode::Backspace,
             Key::Esc => KeyCode::Esc,
+            Key::Home => KeyCode::Home,
+            Key::End => KeyCode::End,
             other => panic!("press does not know {other:?}"),
         };
         let mut mods = KeyModifiers::empty();
@@ -3022,6 +3240,60 @@ mod tests {
             busy(IDLE_FRAME_TIME),
             app.compositor.is_animating()
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Runs git with `args` in `dir`, returning what it printed if it worked.
+    fn git(dir: &Path, args: &[&str]) -> Option<String> {
+        let output = process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    /// Staging the change at the cursor puts only that change in the index, and the panel shows
+    /// it.
+    #[tokio::test]
+    async fn stages_a_hunk_and_shows_the_panel() {
+        let dir = temp_dir();
+        let setup = [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "mog@example.com"],
+            vec!["config", "user.name", "mog"],
+            vec!["config", "core.autocrlf", "false"],
+        ];
+        let file = dir.join("list.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("write");
+        let ready = setup.iter().all(|args| git(&dir, args).is_some())
+            && git(&dir, &["add", "."]).is_some()
+            && git(&dir, &["commit", "-q", "-m", "first"]).is_some();
+        if !ready {
+            return;
+        }
+        let mut app = start(&dir);
+        app.editor.open(&file).expect("open");
+        // change the first and last lines, then stage only the first change
+        type_text(&mut app, "1 ");
+        app.handle_event(press("ctrl+end"));
+        type_text(&mut app, "six\n");
+        app.handle_event(press("ctrl+home"));
+        app.execute_command("git.stage_hunk".parse().expect("command"));
+        app.snapshot("80x24", Duration::from_millis(1500), &[])
+            .await
+            .expect("settle");
+        let staged = git(&dir, &["show", ":list.txt"]).expect("index");
+        assert_eq!(staged, "1 one\ntwo\nthree\nfour\nfive\n");
+        let screen = app
+            .snapshot("100x30", Duration::from_millis(1500), &["git.panel".into()])
+            .await
+            .expect("panel");
+        assert!(screen.contains("STAGED"), "{screen}");
+        assert!(screen.contains("+1 one"), "{screen}");
         let _ = fs::remove_dir_all(dir);
     }
 

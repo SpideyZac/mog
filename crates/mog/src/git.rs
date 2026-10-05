@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use mog_git::{FileStatus, Repo, repo};
+use mog_git::{FileChange, FileStatus, Repo, repo};
 use mog_tui::Ui;
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -30,6 +30,12 @@ pub enum GitUpdate {
     Base(PathBuf, Option<String>),
     /// Who last changed a line, as `(file, line, description)`.
     Blame(PathBuf, usize, Option<String>),
+    /// Every changed file with its staged and unstaged parts.
+    Changes(Vec<FileChange>),
+    /// The diff of a file, of what is staged if the flag is set.
+    Diff(PathBuf, bool, String),
+    /// A git command finished, with a message for the status line or why it failed.
+    Done(Result<String, String>),
 }
 
 /// The git state of the project, kept fresh by background tasks.
@@ -132,6 +138,48 @@ impl Git {
         });
     }
 
+    /// Returns whether the project is in a repository.
+    pub fn is_repo(&self) -> bool {
+        self.repo.is_some()
+    }
+
+    /// Asks for every changed file, for the source control panel.
+    pub fn request_changes(&self) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let sender = self.sender.clone();
+        task::spawn_blocking(move || {
+            let _ = sender.send(GitUpdate::Changes(repo.changes()));
+        });
+    }
+
+    /// Asks for the diff of `path`, of what is staged if `staged` is set.
+    pub fn request_diff(&self, path: PathBuf, staged: bool) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let sender = self.sender.clone();
+        task::spawn_blocking(move || {
+            let diff = repo.diff(&path, staged);
+            let _ = sender.send(GitUpdate::Diff(path, staged, diff));
+        });
+    }
+
+    /// Runs `op` on the repository in the background and reports how it went.
+    pub fn run<F>(&self, op: F)
+    where
+        F: FnOnce(&Repo) -> Result<String, String> + Send + 'static,
+    {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let sender = self.sender.clone();
+        task::spawn_blocking(move || {
+            let _ = sender.send(GitUpdate::Done(op(&repo)));
+        });
+    }
+
     /// Waits for the next background answer.
     pub async fn update(&mut self) -> Option<GitUpdate> {
         self.updates.recv().await
@@ -158,5 +206,9 @@ pub fn apply(ui: &mut Ui, update: GitUpdate) {
         }
         GitUpdate::Blame(path, line, Some(text)) => ui.blame = Some((path, line, text)),
         GitUpdate::Blame(..) => ui.blame = None,
+        GitUpdate::Changes(changes) => ui.git_panel.set_changes(changes),
+        GitUpdate::Diff(path, staged, text) => ui.git_panel.set_diff(path, staged, &text),
+        // the app reports these itself since they need the status line
+        GitUpdate::Done(_) => {}
     }
 }
