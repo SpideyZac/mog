@@ -1,6 +1,9 @@
 //! State shared by layers that is not part of the editing model.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    path::PathBuf,
+};
 
 use mog_config::Config;
 use mog_core::{Command, TaskProblem, View};
@@ -11,8 +14,8 @@ use ratatui::{
 };
 
 use crate::{
-    annotate::AnnotateState, chat::ChatState, completion::CompletionState, ghost::Ghost,
-    git_panel::GitPanelState, menu::MenuState, output::OutputState,
+    annotate::AnnotateState, chat::ChatState, completion::CompletionState, debug_panel::DebugState,
+    ghost::Ghost, git_panel::GitPanelState, menu::MenuState, output::OutputState,
     project_search::ProjectSearchState, release_notes::ReleaseNotes, search::SearchState,
     settings::SettingKey, status_line::STATUS_HEIGHT, theme_editor::ThemeDraft,
 };
@@ -22,6 +25,9 @@ const EXPLORER_MAX_WIDTH: u16 = 30;
 
 /// The widest the AI chat panel gets, in cells.
 const CHAT_MAX_WIDTH: u16 = 52;
+
+/// The widest the debug panel gets.
+const DEBUG_MAX_WIDTH: u16 = 48;
 
 /// The width of the minimap, in cells.
 const MINIMAP_WIDTH: u16 = 14;
@@ -283,6 +289,8 @@ pub struct Layout {
     pub minimap: Rect,
     /// The AI chat panel, empty when hidden.
     pub chat: Rect,
+    /// The debug panel, empty when hidden.
+    pub debug: Rect,
     /// The terminal panel under the editor, empty when hidden.
     pub terminal: Rect,
     /// The status line.
@@ -328,6 +336,10 @@ pub struct Ui {
     pub output: OutputState,
     /// Problems found in the output of the task that ran last.
     pub task_problems: Vec<TaskProblem>,
+    /// What the debugger is doing.
+    pub debug: DebugState,
+    /// The lines with a breakpoint in each file, counted from 0.
+    pub breakpoints: BTreeMap<PathBuf, BTreeSet<usize>>,
     /// Status line pieces added by layers this frame.
     pub segments: Vec<Segment>,
     /// Set when files changed on disk so the explorer reads its folders again.
@@ -493,6 +505,20 @@ impl Ui {
             width: body.width - explorer_width,
             ..body
         };
+        let debug_width = if self.debug.open {
+            DEBUG_MAX_WIDTH.min(rest.width / 3)
+        } else {
+            0
+        };
+        let debug = Rect {
+            x: rest.right() - debug_width,
+            width: debug_width,
+            ..rest
+        };
+        let rest = Rect {
+            width: rest.width - debug_width,
+            ..rest
+        };
         let chat_width = if self.chat.open {
             CHAT_MAX_WIDTH.min(rest.width / 2)
         } else {
@@ -572,6 +598,7 @@ impl Ui {
             split,
             minimap,
             chat,
+            debug,
             terminal,
             status,
         }

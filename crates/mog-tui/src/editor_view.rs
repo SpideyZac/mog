@@ -159,6 +159,11 @@ impl EditorView {
         }
     }
 
+    /// Returns whether the gutter needs a column for breakpoints and the debugger arrow.
+    fn debug_column(ui: &Ui) -> bool {
+        ui.debug.active || ui.breakpoints.values().any(|lines| !lines.is_empty())
+    }
+
     /// Returns whether this pane shows the focused document.
     fn is_active(&self, ui: &Ui) -> bool {
         ui.split
@@ -192,7 +197,7 @@ impl EditorView {
 
     /// Returns the gutter width for a document with `lines` lines under the current settings.
     fn gutter_width_for(lines: usize, ui: &Ui) -> u16 {
-        let signs = usize::from(ui.config.ui.git_gutter);
+        let signs = usize::from(ui.config.ui.git_gutter) + usize::from(Self::debug_column(ui));
         let numbers = if ui.config.ui.line_numbers {
             lines.to_string().len()
         } else {
@@ -358,7 +363,15 @@ impl Layer for EditorView {
                 Severity::Info => theme.info,
                 Severity::Hint => theme.hint,
             };
+            let stopped_here = path.is_some_and(|path| {
+                cx.ui
+                    .debug
+                    .stopped_at
+                    .as_ref()
+                    .is_some_and(|(at, at_line)| at == path && *at_line == line)
+            });
             let line_style = match diagnostic.map(|d| d.severity) {
+                _ if stopped_here => Some(theme.debug_line),
                 Some(Severity::Error) if settings.error_lens => Some(theme.error_line),
                 Some(Severity::Warning) if settings.error_lens => Some(theme.warning_line),
                 _ if is_cursor_line && settings.cursor_line => Some(theme.cursor_line),
@@ -369,6 +382,17 @@ impl Layer for EditorView {
             }
 
             let mut gx = area.x;
+            if Self::debug_column(cx.ui) {
+                let breakpoint = path
+                    .and_then(|path| cx.ui.breakpoints.get(path))
+                    .is_some_and(|lines| lines.contains(&line));
+                if stopped_here {
+                    buf.set_string(gx, y, "\u{25b6}", theme.warning);
+                } else if breakpoint {
+                    buf.set_string(gx, y, "\u{25cf}", theme.breakpoint);
+                }
+                gx += 1;
+            }
             if settings.git_gutter {
                 while change.peek().is_some_and(|(changed, _)| *changed < line) {
                     change.next();

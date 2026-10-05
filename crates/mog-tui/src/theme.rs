@@ -460,6 +460,10 @@ pub struct Theme {
     pub inlay_hint: Style,
     /// Function parameters, told apart by the language server.
     pub parameter: Style,
+    /// The line the debugger stopped at.
+    pub debug_line: Style,
+    /// Breakpoint marks in the gutter.
+    pub breakpoint: Style,
     /// Language keywords.
     pub keyword: Style,
     /// Function names.
@@ -573,6 +577,8 @@ impl Theme {
             ghost: fg(p.dim).add_modifier(Modifier::ITALIC),
             inlay_hint: fg(mix(p.dim, p.fg, 0.25)).bg(mix(p.bg, p.dim, 0.18)),
             parameter: fg(mix(p.fg, p.orange, 0.3)).add_modifier(Modifier::ITALIC),
+            debug_line: Style::new().bg(mix(p.bg, p.yellow, 0.22)),
+            breakpoint: fg(p.red).add_modifier(bold),
             keyword: fg(p.blue).add_modifier(bold),
             function: fg(p.cyan),
             type_name: fg(p.yellow),
@@ -613,6 +619,8 @@ impl Theme {
             minimap_view: style(Modifier::BOLD),
             ghost: style(Modifier::DIM | Modifier::ITALIC),
             inlay_hint: style(Modifier::DIM),
+            debug_line: reversed,
+            breakpoint: style(Modifier::BOLD),
             ..Self::from_palette("no color", plain)
         }
     }
