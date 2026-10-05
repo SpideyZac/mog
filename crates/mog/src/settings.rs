@@ -148,7 +148,7 @@ pub fn apply_project(config: &mut Config, root: &Path) -> ProjectStatus {
     match read_project(root) {
         Ok(None) => ProjectStatus::Missing,
         // nothing to run means nothing to trust
-        Ok(Some(file)) if file.config.lsp.is_empty() => ProjectStatus::Missing,
+        Ok(Some(file)) if file.config.is_empty() => ProjectStatus::Missing,
         Ok(Some(file)) if project::is_trusted(&file) => {
             file.config.apply(config);
             ProjectStatus::Applied

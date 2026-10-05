@@ -114,3 +114,18 @@ bg = "#070b14"
 check = true
 # download and install it by itself, ready the next time mog starts
 install = true
+
+# tasks show up in Tasks: Run task (ctrl+shift+b). mog also finds cargo, npm, go, make and
+# pytest tasks by itself. errors in their output land in the problems list.
+[tasks.lint]
+command = "cargo clippy --all-targets"
+
+# debuggers speak the debug adapter protocol over stdio. ${file} and ${root} are filled in.
+[debug.python]
+command = "python"
+args = ["-m", "debugpy.adapter"]
+extensions = ["py"]
+request = "launch"
+
+[debug.python.arguments]
+program = "${file}"

@@ -20,6 +20,7 @@ pub mod discord;
 pub mod lsp;
 pub mod project;
 pub mod save;
+pub mod tasks;
 pub mod terminal;
 pub mod theme;
 pub mod ui;
@@ -31,6 +32,7 @@ pub use discord::DiscordConfig;
 pub use lsp::{Install, ServerConfig, install_hint};
 pub use project::{ProjectConfig, ProjectFile, project_config_path, read_project};
 pub use save::{SettingValue, config_path, save_setting};
+pub use tasks::{DebugConfig, TaskConfig};
 pub use terminal::TerminalConfig;
 pub use theme::ThemeConfig;
 pub use ui::UiConfig;
@@ -110,6 +112,10 @@ pub struct Config {
     pub themes: BTreeMap<String, ThemeConfig>,
     /// Updating from GitHub releases.
     pub updates: UpdatesConfig,
+    /// Tasks like building and testing by name, on top of the ones mog finds in the project.
+    pub tasks: BTreeMap<String, TaskConfig>,
+    /// Debuggers by name.
+    pub debug: BTreeMap<String, DebugConfig>,
 }
 
 /// Settings for editing behavior.

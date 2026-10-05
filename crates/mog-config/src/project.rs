@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{Config, ConfigError, config_dir};
+use crate::{Config, ConfigError, DebugConfig, TaskConfig, config_dir};
 
 /// The folder in a project that holds its mog settings.
 pub const PROJECT_DIR: &str = ".mog";
@@ -31,6 +31,10 @@ const TRUST_FILE: &str = "trusted_projects";
 pub struct ProjectConfig {
     /// Language servers by name, changing only what each one sets.
     pub lsp: BTreeMap<String, ProjectServer>,
+    /// Tasks by name, replacing global ones with the same name.
+    pub tasks: BTreeMap<String, TaskConfig>,
+    /// Debuggers by name, replacing global ones with the same name.
+    pub debug: BTreeMap<String, DebugConfig>,
 }
 
 /// One language server as a project changes it. Missing fields keep the global value.
@@ -80,8 +84,15 @@ impl ProjectConfig {
         })
     }
 
+    /// Returns `true` if the project sets nothing.
+    pub fn is_empty(&self) -> bool {
+        self.lsp.is_empty() && self.tasks.is_empty() && self.debug.is_empty()
+    }
+
     /// Changes `config` by what this project sets.
     pub fn apply(&self, config: &mut Config) {
+        config.tasks.extend(self.tasks.clone());
+        config.debug.extend(self.debug.clone());
         for (name, project) in &self.lsp {
             // a new entry only fills in what the project set, the rest comes from built ins
             let server = config.lsp.entry(name.clone()).or_default();
@@ -232,6 +243,31 @@ mod tests {
         assert_eq!(servers["python"].command, "pylsp");
         assert_eq!(servers["python"].extensions, ["py"]);
         assert!(!servers.contains_key("go"));
+    }
+
+    /// Project tasks and debuggers replace global ones by name.
+    #[test]
+    fn project_tasks_replace_global_ones() {
+        let mut config = Config::parse(
+            "[tasks.build]\ncommand = \"make\"\n[tasks.lint]\ncommand = \"lint\"\n",
+            "global.toml".as_ref(),
+        )
+        .expect("valid global");
+        let project = ProjectConfig::parse(
+            "[tasks.build]\ncommand = \"cargo build\"\n[debug.rust]\ncommand = \"lldb-dap\"\n\
+             [debug.rust.arguments]\nprogram = \"${root}/target/debug/app\"\n",
+            "project.toml".as_ref(),
+        )
+        .expect("valid project");
+        assert!(!project.is_empty());
+        project.apply(&mut config);
+        assert_eq!(config.tasks["build"].command, "cargo build");
+        assert_eq!(config.tasks["lint"].command, "lint");
+        assert_eq!(config.debug["rust"].request, "launch");
+        assert_eq!(
+            config.debug["rust"].arguments["program"],
+            json!("${root}/target/debug/app")
+        );
     }
 
     /// Only language server settings belong in a project config.
