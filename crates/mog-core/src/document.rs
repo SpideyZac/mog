@@ -1,6 +1,7 @@
 //! Open files and their text.
 
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{self, BufWriter, ErrorKind},
     path::{self, Path, PathBuf},
@@ -18,6 +19,13 @@ use crate::{
 
 /// The name shown for a document that has no path yet.
 const SCRATCH_NAME: &str = "[scratch]";
+
+/// Documents bigger than this many bytes skip the expensive extras like syntax colors, git and
+/// language servers, so they stay quick to edit.
+pub const LARGE_FILE: usize = 8 << 20;
+
+/// How many recent edits are kept for [`Document::changes_since`].
+const CHANGE_LOG: usize = 128;
 
 /// A line ending style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -80,6 +88,8 @@ pub struct Document {
     inlay_hints: LineMarks<InlayHint>,
     /// What a language server says each run of text is.
     semantic_tokens: LineMarks<SemanticToken>,
+    /// Recent edits with the version each one led to, oldest first.
+    changes: VecDeque<(u64, Transaction)>,
 }
 
 impl Document {
@@ -209,6 +219,43 @@ impl Document {
         self.version
     }
 
+    /// Returns `true` if the document is big enough that expensive extras are skipped for it.
+    pub fn is_large(&self) -> bool {
+        self.text.len_bytes() > LARGE_FILE
+    }
+
+    /// Returns the edits that took the text from `version` to now, oldest first, or `None` if
+    /// they are no longer all known.
+    pub fn changes_since(&self, version: u64) -> Option<Vec<&Transaction>> {
+        if version == self.version {
+            return Some(Vec::new());
+        }
+        // the oldest kept edit started from the version before it, anything older is lost
+        let oldest = self.changes.front()?.0 - 1;
+        if version < oldest || version > self.version {
+            return None;
+        }
+        Some(
+            self.changes
+                .iter()
+                .filter(|(after, _)| *after > version)
+                .map(|(_, tx)| tx)
+                .collect(),
+        )
+    }
+
+    /// Remembers that `tx` led to the current version.
+    fn log_change(&mut self, tx: Transaction) {
+        if self.changes.len() == CHANGE_LOG {
+            let dropped = self.changes.pop_front().map(|(after, _)| after);
+            // an undo logs several edits under one version, drop them together
+            while self.changes.front().map(|(after, _)| *after) == dropped {
+                self.changes.pop_front();
+            }
+        }
+        self.changes.push_back((self.version, tx));
+    }
+
     /// Returns the current diagnostics, sorted by position.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
@@ -264,6 +311,8 @@ impl Document {
         }
         let before = self.selection;
         let inverse = tx.apply(&mut self.text);
+        self.version += 1;
+        self.log_change(tx.clone());
         self.history.record(
             Step {
                 forward: tx,
@@ -273,7 +322,6 @@ impl Document {
             after,
             merge,
         );
-        self.version += 1;
         self.set_selection(after);
     }
 
@@ -282,11 +330,18 @@ impl Document {
         let Some(revision) = self.history.undo() else {
             return false;
         };
-        for step in revision.steps.iter().rev() {
-            step.inverse.apply(&mut self.text);
-        }
+        let steps: Vec<Transaction> = revision
+            .steps
+            .iter()
+            .rev()
+            .map(|step| step.inverse.clone())
+            .collect();
         let before = revision.before;
         self.version += 1;
+        for tx in steps {
+            tx.apply(&mut self.text);
+            self.log_change(tx);
+        }
         self.set_selection(before);
         true
     }
@@ -296,11 +351,17 @@ impl Document {
         let Some(revision) = self.history.redo() else {
             return false;
         };
-        for step in &revision.steps {
-            step.forward.apply(&mut self.text);
-        }
+        let steps: Vec<Transaction> = revision
+            .steps
+            .iter()
+            .map(|step| step.forward.clone())
+            .collect();
         let after = revision.after;
         self.version += 1;
+        for tx in steps {
+            tx.apply(&mut self.text);
+            self.log_change(tx);
+        }
         self.set_selection(after);
         true
     }
@@ -342,6 +403,25 @@ mod tests {
         assert!(!doc.is_modified());
         assert_eq!(fs::read_to_string(&path).expect("read back"), "mog");
         fs::remove_file(path).expect("clean up");
+    }
+
+    /// The change log replays edits since an old version, undo and redo included.
+    #[test]
+    fn logs_changes_since_a_version() {
+        let mut doc = Document::from_text("ac");
+        doc.apply(Transaction::insert(1, "b"), Range::point(2), false);
+        let after_b = doc.version();
+        doc.apply(Transaction::insert(3, "d"), Range::point(4), false);
+        assert!(doc.undo());
+        let changes = doc.changes_since(after_b).expect("known");
+        assert_eq!(changes.len(), 2);
+        let mut pos = 3;
+        for tx in &changes {
+            pos = tx.map_pos(pos);
+        }
+        assert_eq!(pos, 3);
+        assert_eq!(doc.changes_since(doc.version()).map(|c| c.len()), Some(0));
+        assert!(doc.changes_since(doc.version() + 5).is_none());
     }
 
     /// Line endings are detected from the first line break.

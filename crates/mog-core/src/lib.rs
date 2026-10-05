@@ -25,7 +25,7 @@ pub mod view;
 pub use clipboard::{Clipboard, MemoryClipboard};
 pub use command::{Command, Motion};
 pub use diagnostic::{Diagnostic, Severity};
-pub use document::{Document, LineEnding};
+pub use document::{Document, LARGE_FILE, LineEnding};
 pub use editor::{Editor, Options, Outcome};
 pub use file_tree::{Entry, FileTree, walk_files};
 pub use fuzzy::{Match, fuzzy_match};
