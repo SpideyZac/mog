@@ -98,6 +98,23 @@ after background work finishes:
 | `status` | `{ "text": "..." }` | Shows a message in the status line |
 | `segment` | `{ "text": "..." }` | Puts a short text in the status line until replaced, empty removes it |
 
+## Asking mog
+
+A plugin can send requests to mog at any time, even while it is handling a `command`, and gets a
+normal JSON-RPC response. mog keeps reading while it waits, so read the answer by its `id` and
+put other messages aside for later, like `ask` in the example does.
+
+| method | params | answers |
+| --- | --- | --- |
+| `editor/context` | `{}` | The same context a `command` gets |
+| `editor/text` | `{ "path": "..." }` | `{ "text": "..." }` of an open file, from disk if it is not open, the focused file when `path` is left out |
+| `actions` | `{ "actions": [...] }` | `{}` once the actions are done |
+| `ui/pick` | `{ "title": "...", "items": ["a", "b"] }` | `{ "index": 1, "item": "b" }`, or `null` if the user closed the list |
+| `ui/prompt` | `{ "title": "...", "text": "start", "hint": "..." }` | `{ "text": "what was typed" }`, or `null` if the user closed it or left it empty |
+
+Only one `ui/pick` or `ui/prompt` can be open at a time, and none while another popup is open.
+A second one gets an error, try again later.
+
 ## Hearing about things
 
 mog sends the notification `event` when something happens:
