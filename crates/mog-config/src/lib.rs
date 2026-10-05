@@ -28,7 +28,7 @@ pub mod updates;
 pub use ai::{AiConfig, ClaudeConfig, CopilotConfig};
 pub use audio::AudioConfig;
 pub use discord::DiscordConfig;
-pub use lsp::ServerConfig;
+pub use lsp::{Install, ServerConfig, install_hint};
 pub use project::{ProjectConfig, ProjectFile, project_config_path, read_project};
 pub use save::{SettingValue, config_path, save_setting};
 pub use terminal::TerminalConfig;

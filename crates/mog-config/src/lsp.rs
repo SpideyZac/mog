@@ -70,6 +70,121 @@ const BUILTIN_SERVERS: &[(&str, &str, &[&str], &[&str])] = &[
     ("vue", "vue-language-server", &["--stdio"], &["vue"]),
 ];
 
+/// How to install each built in server, as `(command, how, runnable)`.
+///
+/// `how` is a shell command when `runnable` is set, otherwise directions for a person.
+const INSTALL: &[(&str, &str, bool)] = &[
+    ("rust-analyzer", "rustup component add rust-analyzer", true),
+    ("pyright-langserver", "npm i -g pyright", true),
+    (
+        "typescript-language-server",
+        "npm i -g typescript-language-server typescript",
+        true,
+    ),
+    ("gopls", "go install golang.org/x/tools/gopls@latest", true),
+    (
+        "clangd",
+        "install clangd from your package manager or LLVM",
+        false,
+    ),
+    (
+        "lua-language-server",
+        "get it from your package manager or github.com/LuaLS/lua-language-server",
+        false,
+    ),
+    (
+        "zls",
+        "get it from your package manager or github.com/zigtools/zls",
+        false,
+    ),
+    (
+        "jdtls",
+        "get it from your package manager or download.eclipse.org/jdtls",
+        false,
+    ),
+    ("csharp-ls", "dotnet tool install --global csharp-ls", true),
+    (
+        "kotlin-language-server",
+        "get it from your package manager or github.com/fwcd/kotlin-language-server",
+        false,
+    ),
+    (
+        "sourcekit-lsp",
+        "it comes with the Swift toolchain from swift.org",
+        false,
+    ),
+    ("ruby-lsp", "gem install ruby-lsp", true),
+    ("intelephense", "npm i -g intelephense", true),
+    ("metals", "cs install metals", true),
+    ("haskell-language-server-wrapper", "ghcup install hls", true),
+    ("ocamllsp", "opam install ocaml-lsp-server", true),
+    (
+        "elixir-ls",
+        "get it from github.com/elixir-lsp/elixir-ls",
+        false,
+    ),
+    ("dart", "it comes with the Dart SDK from dart.dev", false),
+    (
+        "bash-language-server",
+        "npm i -g bash-language-server",
+        true,
+    ),
+    (
+        "vscode-html-language-server",
+        "npm i -g vscode-langservers-extracted",
+        true,
+    ),
+    (
+        "vscode-css-language-server",
+        "npm i -g vscode-langservers-extracted",
+        true,
+    ),
+    (
+        "vscode-json-language-server",
+        "npm i -g vscode-langservers-extracted",
+        true,
+    ),
+    (
+        "yaml-language-server",
+        "npm i -g yaml-language-server",
+        true,
+    ),
+    (
+        "taplo",
+        "cargo install taplo-cli --locked --features lsp",
+        true,
+    ),
+    (
+        "marksman",
+        "get it from your package manager or github.com/artempyanykh/marksman",
+        false,
+    ),
+    ("vue-language-server", "npm i -g @vue/language-server", true),
+];
+
+/// How to get a missing language server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Install {
+    /// A shell command that installs it.
+    Run(&'static str),
+    /// Directions for a person, when there is no one command for every system.
+    Manual(&'static str),
+}
+
+/// Returns how to install the built in server run as `command`, if it is one.
+pub fn install_hint(command: &str) -> Option<Install> {
+    INSTALL
+        .iter()
+        .find(|(known, _, _)| *known == command)
+        .map(|(_, how, runnable)| {
+            if *runnable {
+                Install::Run(how)
+            } else {
+                Install::Manual(how)
+            }
+        })
+}
+
 /// Built in servers whose language id differs from their name.
 const LANGUAGE_IDS: &[(&str, &str)] = &[("bash", "shellscript")];
 
@@ -157,7 +272,7 @@ pub fn merged_servers(
 mod tests {
     use std::{collections::BTreeMap, path::Path};
 
-    use super::{ServerConfig, merged_servers};
+    use super::{BUILTIN_SERVERS, Install, ServerConfig, install_hint, merged_servers};
     use crate::Config;
 
     /// Overrides replace built ins and disabled servers are dropped.
@@ -183,6 +298,19 @@ mod tests {
         assert!(!servers.contains_key("go"));
         assert_eq!(servers["zig"].command, "zls");
         assert_eq!(servers["rust"].command, "rust-analyzer");
+    }
+
+    /// Every built in server says how to install it.
+    #[test]
+    fn builtins_have_install_hints() {
+        for (_, command, _, _) in BUILTIN_SERVERS {
+            assert!(install_hint(command).is_some(), "{command}");
+        }
+        assert_eq!(
+            install_hint("rust-analyzer"),
+            Some(Install::Run("rustup component add rust-analyzer"))
+        );
+        assert_eq!(install_hint("my-own-server"), None);
     }
 
     /// Overriding only the command keeps the built in extensions and arguments.
