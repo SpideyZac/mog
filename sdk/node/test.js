@@ -4,7 +4,7 @@
 
 const assert = require("node:assert");
 const { PassThrough } = require("node:stream");
-const { Plugin, Reader, status, edit, change } = require("./mog-plugin");
+const { Plugin, Reader, status, edit, change, command, span } = require("./mog-plugin");
 
 const toPlugin = new PassThrough();
 const fromPlugin = new PassThrough();
@@ -15,6 +15,17 @@ plugin.command("count", { title: "Count", keys: ["alt+c"] }, async (context) => 
 });
 plugin.on("before_save", () => [change(0, 1, "")]);
 plugin.provide("hover", ["md"], () => ({ text: "hi" }));
+plugin.onKey((key) => {
+  if (key === "j") return [command("move_down")];
+  if (key === "i") return { capture: { keys: ["esc"] } };
+  return false;
+});
+let ticks = 0;
+plugin.every(250, () => {
+  ticks += 1;
+  plugin.draw("eye", [[span("o", { fg: "red" }), "_o"]], { anchor: "cursor" });
+}, "blink");
+plugin.capture("all", ["ctrl+s"]);
 plugin.run();
 
 const replies = [];
@@ -38,6 +49,10 @@ send({ id: 1, method: "command", params: { command: "count", context: { path: "a
 send({ id: 2, method: "before_save", params: { text: "xy" } });
 send({ id: 3, method: "provide/hover", params: {} });
 send({ id: 4, method: "command", params: { command: "nope", context: {} } });
+send({ id: 5, method: "key", params: { key: "j", char: "j" } });
+send({ id: 6, method: "key", params: { key: "i", char: "i" } });
+send({ id: 7, method: "key", params: { key: "x", char: "x" } });
+send({ method: "event", params: { kind: "timer", id: "blink" } });
 
 setTimeout(() => {
   const byId = (id) => replies.find((reply) => reply.id === id && reply.method === undefined);
@@ -50,6 +65,14 @@ setTimeout(() => {
   assert.deepStrictEqual(byId(2).result.changes, [change(0, 1, "")]);
   assert.strictEqual(byId(3).result.text, "hi");
   assert.match(byId(4).error.message, /no command/);
+  assert.deepStrictEqual(byId(5).result, { actions: [command("move_down")] });
+  assert.deepStrictEqual(byId(6).result, { capture: { keys: ["esc"] } });
+  assert.deepStrictEqual(byId(7).result, { handled: false });
+  const notes = replies.filter((reply) => reply.method !== undefined && reply.id === undefined);
+  assert.deepStrictEqual(notes[0].params, { id: "blink", every: 250 });
+  assert.deepStrictEqual(notes[1].params, { keys: "all", except: ["ctrl+s"] });
+  assert.strictEqual(notes[notes.length - 1].method, "draw");
+  assert.strictEqual(ticks, 1);
   assert.deepStrictEqual(edit([], "a", 2), { type: "edit", changes: [], path: "a", version: 2 });
   console.log("node sdk ok");
   process.exit(0);

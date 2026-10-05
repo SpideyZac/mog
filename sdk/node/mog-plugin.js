@@ -60,6 +60,17 @@ const save = (path) => ({ type: "save", path });
 /** An action that shows text in the output panel. */
 const output = (text, title = "plugin") => ({ type: "output", title, text });
 
+/** A piece of a widget row in one style. Colors are theme color names or hex codes. */
+const span = (text, { fg, bg, bold, italic, underline } = {}) => {
+  const piece = { text };
+  if (fg !== undefined) piece.fg = fg;
+  if (bg !== undefined) piece.bg = bg;
+  if (bold) piece.bold = true;
+  if (italic) piece.italic = true;
+  if (underline) piece.underline = true;
+  return piece;
+};
+
 /** Splits framed JSON-RPC messages out of a byte stream. */
 class Reader {
   constructor(onMessage) {
@@ -95,6 +106,10 @@ class Plugin {
     this.providers = new Map();
     this.pending = new Map();
     this.cancelled = new Set();
+    this.keyHandler = null;
+    this.timers = new Map();
+    this.early = [];
+    this.ready = false;
     this.nextId = 0;
     this.root = null;
     this.settings = {};
@@ -121,6 +136,23 @@ class Plugin {
     return this;
   }
 
+  /**
+   * Registers the handler for keys this plugin takes, see capture(). It gets (key, char,
+   * context) and returns a list of actions, nothing when it used the key, false to let the
+   * editor have it, or an object like { actions, capture }.
+   */
+  onKey(handler) {
+    this.keyHandler = handler;
+    return this;
+  }
+
+  /** Registers a handler mog calls every ms milliseconds. */
+  every(ms, handler, id = "timer") {
+    this.timers.set(id, handler);
+    this.timer(id, ms);
+    return this;
+  }
+
   write(message) {
     const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...message }), "utf8");
     this.output.write(`Content-Length: ${body.length}\r\n\r\n`);
@@ -136,9 +168,10 @@ class Plugin {
     });
   }
 
-  /** Sends mog a notification, like "segment" or "diagnostics". */
+  /** Sends mog a notification. Ones sent before mog said hello go out right after. */
   notify(method, params = {}) {
-    this.write({ method, params });
+    if (this.ready) this.write({ method, params });
+    else this.early.push({ method, params });
   }
 
   /** Asks mog to do actions now. */
@@ -176,6 +209,37 @@ class Plugin {
     this.notify("decorations", { path, decorations });
   }
 
+  /**
+   * Puts a widget on the screen, or replaces the one with this id. lines is a list of rows,
+   * each a string or a list of span(). Options: frames, fps, anchor, x, y, flair,
+   * transparent, clickable, fg, bg, z, motion and restart.
+   */
+  draw(id, lines, options = {}) {
+    const params = { id, anchor: "top_left", x: 0, y: 0, ...options };
+    if (params.frames === undefined) params.lines = lines || [];
+    this.notify("draw", params);
+  }
+
+  /** Removes the widget with this id, or every widget of this plugin. */
+  clear(id) {
+    this.notify("clear", id === undefined ? {} : { id });
+  }
+
+  /** Sets the cursor shape: default, block, bar or underline. */
+  cursor(shape = "default", blink = false) {
+    this.notify("cursor", { shape, blink });
+  }
+
+  /** Takes keys before the editor: "all", a list like ["esc"], or null for none. */
+  capture(keys, except = []) {
+    this.notify("capture", except.length ? { keys, except } : { keys });
+  }
+
+  /** Starts a timer that sends the "timer" event every ms milliseconds, 0 stops it. */
+  timer(id, ms) {
+    this.notify("timer", { id, every: ms });
+  }
+
   hello(params) {
     this.root = params.root;
     this.settings = params.settings || {};
@@ -193,6 +257,13 @@ class Plugin {
 
   async answer(method, params) {
     if (method === "initialize") return this.hello(params);
+    if (method === "key") {
+      if (!this.keyHandler) return { handled: false };
+      const answer = await this.keyHandler(params.key, params.char, params);
+      if (answer === false) return { handled: false };
+      if (answer && !Array.isArray(answer)) return answer;
+      return { actions: answer || [] };
+    }
     if (method === "command") {
       const handler = this.commands.get(params.command);
       if (!handler) throw new Error(`no command called ${params.command}`);
@@ -229,12 +300,17 @@ class Plugin {
         process.stderr.write(`${error.stack || error}\n`);
         reply = { id, error: { code: -32000, message: String(error.message || error) } };
       }
-      if (this.cancelled.delete(id)) return;
-      this.write(reply);
+      if (!this.cancelled.delete(id)) this.write(reply);
+      if (method === "initialize") {
+        this.ready = true;
+        for (const early of this.early) this.write(early);
+        this.early = [];
+      }
       return;
     }
     if (method === "event") {
-      const handler = this.events.get(params.kind);
+      const timer = params.kind === "timer" && this.timers.get(params.id);
+      const handler = timer ? () => timer() : this.events.get(params.kind);
       if (handler) {
         try {
           await handler(params);
@@ -274,4 +350,5 @@ module.exports = {
   select,
   save,
   output,
+  span,
 };
