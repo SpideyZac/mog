@@ -39,7 +39,7 @@ use mog_lsp::{
     LspEvent, convert,
     features::{CodeAction, FileEdits},
 };
-use mog_plugin::{Action, PluginEvent};
+use mog_plugin::{Action, PluginEvent, parse_actions};
 use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CommandInfo, CompletionMenu, Compositor, Context, ContextMenu,
@@ -51,7 +51,7 @@ use mog_tui::{
     debug_panel::{self, FrameEntry},
     ghost, git_panel, input,
     menu::{self, MenuAction, MenuItem},
-    popups::SYMBOL_SEARCH_COMMAND,
+    popups::{PLUGIN_PICKED_COMMAND, SYMBOL_SEARCH_COMMAND},
     project_search as project_search_panel,
     release_notes::{self, ReleaseNotes},
     search::{self, Toggle},
@@ -258,6 +258,8 @@ pub struct App {
     debug_frames: Vec<Frame>,
     /// The running plugins.
     plugins: Plugins,
+    /// A plugin waiting for the user to pick or type something, with its request id.
+    plugin_waiting: Option<(String, Value)>,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -406,6 +408,7 @@ impl App {
             debug_after_task: None,
             debug_frames: Vec::new(),
             plugins: Plugins::new(),
+            plugin_waiting: None,
             quit: false,
         };
         for name in startup {
@@ -910,6 +913,7 @@ impl App {
             self.sync_signature();
             self.sync_git();
             self.watch_focus();
+            self.sync_plugin_ui();
             self.sync_breakpoints();
             self.restore_undo();
             self.play_sounds();
@@ -1485,6 +1489,89 @@ impl App {
             PluginUpdate::Ran(plugin, Err(err)) => {
                 self.editor.set_status(format!("{plugin}: {err}"));
             }
+            PluginUpdate::Event(PluginEvent::Request {
+                plugin,
+                id,
+                method,
+                params,
+            }) => self.answer_plugin(plugin, id, &method, &params),
+        }
+    }
+
+    /// Answers a question a plugin asked, right away or once the user did what it asks for.
+    fn answer_plugin(&mut self, plugin: String, id: Value, method: &str, params: &Value) {
+        let result = match method {
+            "editor/context" => Ok(self.plugin_context()),
+            "editor/text" => {
+                let wanted = params["path"].as_str().map(PathBuf::from);
+                let open = self.editor.documents().iter().find(|document| {
+                    wanted
+                        .as_deref()
+                        .map_or(document.path() == self.editor.document().path(), |path| {
+                            document.path() == Some(path)
+                        })
+                });
+                match (open, &wanted) {
+                    (Some(document), _) => Ok(json!({ "text": document.text().to_string() })),
+                    (None, Some(path)) => fs::read_to_string(path)
+                        .map(|text| json!({ "text": text }))
+                        .map_err(|err| format!("could not read {}: {err}", path.display())),
+                    (None, None) => Err("no file is open".to_owned()),
+                }
+            }
+            "actions" => {
+                self.apply_actions(parse_actions(params));
+                Ok(json!({}))
+            }
+            "ui/pick" | "ui/prompt"
+                if self.plugin_waiting.is_some() || self.ui.overlay.is_some() =>
+            {
+                Err("mog is already asking something, try again later".to_owned())
+            }
+            "ui/pick" => {
+                let title = params["title"].as_str().unwrap_or("pick one").to_owned();
+                let items: Vec<String> = params["items"]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|item| {
+                                item.as_str()
+                                    .map_or_else(|| item.to_string(), str::to_owned)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.ui.plugin_pick = Some((title, items));
+                self.ui.open(Overlay::PluginPick);
+                self.plugin_waiting = Some((plugin, id));
+                return;
+            }
+            "ui/prompt" => {
+                let title = params["title"].as_str().unwrap_or("type something");
+                let text = params["text"].as_str().unwrap_or_default();
+                let hint = params["hint"]
+                    .as_str()
+                    .unwrap_or("enter to send, esc to cancel");
+                self.ui.ask(PromptKind::Plugin, title, text, hint);
+                self.plugin_waiting = Some((plugin, id));
+                return;
+            }
+            other => Err(format!("mog does not know {other}")),
+        };
+        self.plugins.respond(&plugin, id, result);
+    }
+
+    /// Tells a waiting plugin the user closed the picker or prompt without an answer.
+    fn sync_plugin_ui(&mut self) {
+        let asking = matches!(self.ui.overlay, Some(Overlay::PluginPick))
+            || self
+                .ui
+                .prompt
+                .as_ref()
+                .is_some_and(|prompt| prompt.kind == PromptKind::Plugin);
+        if !asking && let Some((plugin, id)) = self.plugin_waiting.take() {
+            self.plugins.respond(&plugin, id, Ok(Value::Null));
         }
     }
 
@@ -2157,6 +2244,13 @@ impl App {
             }
             PromptKind::SaveTheme => {
                 self.save_theme(text);
+                return;
+            }
+            PromptKind::Plugin => {
+                if let Some((plugin, id)) = self.plugin_waiting.take() {
+                    self.plugins
+                        .respond(&plugin, id, Ok(json!({ "text": text })));
+                }
                 return;
             }
             PromptKind::Commit => {
@@ -3361,6 +3455,21 @@ impl App {
             }
             "debug.panel" => self.ui.debug.open = !self.ui.debug.open,
             debug_panel::FRAME_COMMAND => self.show_frame(self.ui.debug.frame),
+            PLUGIN_PICKED_COMMAND => {
+                let picked = self.ui.plugin_picked.take();
+                let item = picked.and_then(|index| {
+                    self.ui
+                        .plugin_pick
+                        .as_ref()
+                        .and_then(|(_, items)| items.get(index).cloned())
+                });
+                if let (Some((plugin, id)), Some(index), Some(item)) =
+                    (self.plugin_waiting.take(), picked, item)
+                {
+                    self.plugins
+                        .respond(&plugin, id, Ok(json!({ "index": index, "item": item })));
+                }
+            }
             plugin if plugin.starts_with(plugins::PREFIX) => {
                 if !self.plugins.run(plugin, self.plugin_context()) {
                     self.editor.set_status(format!("{plugin} is not running"));
@@ -3635,7 +3744,7 @@ mod tests {
     use serde_json::{json, to_string};
     use tokio::time;
 
-    use super::{App, FRAME_TIME, IDLE_FRAME_TIME};
+    use super::{App, FRAME_TIME, IDLE_FRAME_TIME, Overlay, PLUGIN_PICKED_COMMAND};
     use crate::{
         cli::Args,
         debug::DebugUpdate,
@@ -4194,6 +4303,18 @@ mod tests {
             app.editor.document().text().to_string(),
             "HELLO there mog\n"
         );
+        // the filler command asks mog to show a list and waits for the pick
+        let end = app.editor.document().text().len_chars();
+        app.editor.select(end, end);
+        app.execute_command("plugin.words.filler".parse().expect("command"));
+        plugins_until(&mut app, |app| app.ui.overlay == Some(Overlay::PluginPick)).await;
+        app.ui.plugin_picked = Some(2);
+        app.ui.close();
+        app.execute_command(PLUGIN_PICKED_COMMAND.parse().expect("command"));
+        plugins_until(&mut app, |app| {
+            app.editor.document().text().to_string().ends_with("mog")
+        })
+        .await;
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -132,6 +132,13 @@ impl Plugins {
         true
     }
 
+    /// Answers the request `id` that `plugin` sent.
+    pub fn respond(&self, plugin: &str, id: Value, result: Result<Value, String>) {
+        if let Some(running) = self.running.get(plugin) {
+            running.respond(id, result);
+        }
+    }
+
     /// Tells every plugin something happened, like `opened` or `saved`.
     pub fn event(&self, kind: &str, path: Option<&Path>) {
         for plugin in self.running.values() {
