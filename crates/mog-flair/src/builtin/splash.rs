@@ -80,8 +80,8 @@ impl Default for Splash {
         let mut rng = Rng::default();
         Self {
             elapsed: Duration::ZERO,
-            tagline: rng.pick(TAGLINES),
-            tip: rng.pick(TIPS),
+            tagline: *rng.pick(TAGLINES),
+            tip: *rng.pick(TIPS),
             still: false,
             shown: false,
         }
