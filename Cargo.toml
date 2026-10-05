@@ -45,6 +45,7 @@ mog-syntax = { path = "crates/mog-syntax" }
 mog-term = { path = "crates/mog-term" }
 mog-tui = { path = "crates/mog-tui" }
 notify = "8"
+proptest = { version = "1", default-features = false, features = ["std"] }
 open = "5"
 portable-pty = "0.9"
 ratatui = "0.30"

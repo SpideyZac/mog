@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    env, fs, mem,
+    env, fs, io, mem,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -3017,7 +3017,10 @@ impl App {
             }
             let result = Document::open(&path).and_then(|mut document| {
                 let changes = lsp::to_changes(&document, &edits);
-                let tx = Transaction::new(changes);
+                // a server can send edits that overlap, which must not take mog down
+                let tx = Transaction::try_new(changes)
+                    .and_then(|tx| tx.check_bounds(document.text().len_chars()).map(|()| tx))
+                    .map_err(io::Error::other)?;
                 document.apply(tx, Range::point(0), false);
                 document.save()
             });

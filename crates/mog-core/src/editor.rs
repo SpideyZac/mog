@@ -13,7 +13,7 @@ use crate::{
     movement,
     range::Range,
     search,
-    transaction::{Change, Transaction},
+    transaction::{Change, Transaction, TransactionError},
     view::{self, View},
 };
 
@@ -434,7 +434,31 @@ impl Editor {
         if kept.is_empty() {
             return;
         }
-        let tx = Transaction::new(kept);
+        let len = self.document().text().len_chars();
+        for change in &mut kept {
+            change.end = change.end.min(len);
+            change.start = change.start.min(change.end);
+        }
+        self.apply_transaction(Transaction::new(kept));
+    }
+
+    /// Applies `changes` as one undo step keeping the cursor put, or changes nothing if any of
+    /// them overlap or reach past the end.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the changes cannot be applied.
+    pub fn try_apply_changes(&mut self, changes: Vec<Change>) -> Result<(), TransactionError> {
+        let tx = Transaction::try_new(changes)?;
+        tx.check_bounds(self.document().text().len_chars())?;
+        if !tx.is_empty() {
+            self.apply_transaction(tx);
+        }
+        Ok(())
+    }
+
+    /// Applies `tx` to the focused document as one undo step, mapping the selection through it.
+    fn apply_transaction(&mut self, tx: Transaction) {
         let selection = self.document().selection();
         let after = Range::new(tx.map_pos(selection.anchor), tx.map_pos(selection.head));
         self.document_mut().apply(tx, after, false);
@@ -1140,6 +1164,31 @@ mod tests {
         ]);
         assert_eq!(text(&editor), "a b");
         assert_eq!(editor.document().selection().head, 3);
+    }
+
+    /// Strict changes from outside mog are refused whole when they overlap or run off the end.
+    #[test]
+    fn try_applies_changes() {
+        let change = |start, end, text: &str| Change {
+            start,
+            end,
+            text: text.into(),
+        };
+        let mut editor = editor_with("abcd", 0);
+        assert!(
+            editor
+                .try_apply_changes(vec![change(0, 2, "x"), change(1, 3, "y")])
+                .is_err()
+        );
+        assert!(editor.try_apply_changes(vec![change(3, 9, "z")]).is_err());
+        assert!(editor.try_apply_changes(vec![change(3, 1, "z")]).is_err());
+        assert_eq!(text(&editor), "abcd");
+        editor
+            .try_apply_changes(vec![change(3, 4, "D"), change(0, 1, "A")])
+            .expect("valid");
+        assert_eq!(text(&editor), "AbcD");
+        assert!(editor.document_mut().undo());
+        assert_eq!(text(&editor), "abcd");
     }
 
     /// Replacing several ranges is one undo step.

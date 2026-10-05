@@ -1,5 +1,7 @@
 //! Atomic groups of text changes.
 
+use std::{error::Error, fmt};
+
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
 
@@ -23,21 +25,106 @@ pub struct Transaction {
     changes: Vec<Change>,
 }
 
+/// Why a set of changes cannot make a [`Transaction`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionError {
+    /// A change starts after it ends.
+    Backwards {
+        /// Where the change starts.
+        start: usize,
+        /// Where it ends.
+        end: usize,
+    },
+    /// Two changes touch the same chars.
+    Overlap {
+        /// Where the first one ends.
+        end: usize,
+        /// Where the second one starts, before `end`.
+        start: usize,
+    },
+    /// A change reaches past the end of the text.
+    OutOfBounds {
+        /// Where the change ends.
+        end: usize,
+        /// How many chars the text has.
+        len: usize,
+    },
+}
+
+impl fmt::Display for TransactionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backwards { start, end } => {
+                write!(f, "a change starts at {start} after it ends at {end}")
+            }
+            Self::Overlap { end, start } => {
+                write!(
+                    f,
+                    "a change starts at {start} before the one before it ends at {end}"
+                )
+            }
+            Self::OutOfBounds { end, len } => {
+                write!(
+                    f,
+                    "a change ends at {end} but the text has only {len} chars"
+                )
+            }
+        }
+    }
+}
+
+impl Error for TransactionError {}
+
 impl Transaction {
     /// Creates a transaction from `changes` in any order.
     ///
     /// # Panics
     ///
-    /// Panics if any two changes overlap or a change has `start > end`.
-    pub fn new(mut changes: Vec<Change>) -> Self {
+    /// Panics if any two changes overlap or a change has `start > end`. Use
+    /// [`Transaction::try_new`] for changes that come from outside mog.
+    pub fn new(changes: Vec<Change>) -> Self {
+        match Self::try_new(changes) {
+            Ok(tx) => tx,
+            Err(err) => panic!("{err}"),
+        }
+    }
+
+    /// Creates a transaction from `changes` in any order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any two changes overlap or a change has `start > end`.
+    pub fn try_new(mut changes: Vec<Change>) -> Result<Self, TransactionError> {
         changes.sort_by_key(|change| change.start);
-        for change in &changes {
-            assert!(change.start <= change.end, "change starts after it ends");
+        if let Some(change) = changes.iter().find(|change| change.start > change.end) {
+            return Err(TransactionError::Backwards {
+                start: change.start,
+                end: change.end,
+            });
         }
-        for pair in changes.windows(2) {
-            assert!(pair[0].end <= pair[1].start, "changes overlap");
+        if let Some(pair) = changes.windows(2).find(|pair| pair[0].end > pair[1].start) {
+            return Err(TransactionError::Overlap {
+                end: pair[0].end,
+                start: pair[1].start,
+            });
         }
-        Self { changes }
+        Ok(Self { changes })
+    }
+
+    /// Checks that every change fits in a text of `len` chars, so [`Transaction::apply`] cannot
+    /// panic.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming the first change that reaches past the end.
+    pub fn check_bounds(&self, len: usize) -> Result<(), TransactionError> {
+        match self.changes.last() {
+            Some(change) if change.end > len => Err(TransactionError::OutOfBounds {
+                end: change.end,
+                len,
+            }),
+            _ => Ok(()),
+        }
     }
 
     /// Creates a transaction that inserts `text` at `pos`.
@@ -184,7 +271,7 @@ mod tests {
 
     /// Overlapping changes are rejected.
     #[test]
-    #[should_panic(expected = "changes overlap")]
+    #[should_panic(expected = "before the one before it ends")]
     fn overlapping_changes_panic() {
         Transaction::new(vec![
             Change {
