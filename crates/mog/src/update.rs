@@ -25,11 +25,12 @@ const LATEST_URL: &str = "https://api.github.com/repos/SpideyZac/mog/releases/la
 /// Where GitHub answers with a release by tag, with the tag appended.
 const TAG_URL: &str = "https://api.github.com/repos/SpideyZac/mog/releases/tags/";
 
-/// The minisign key every release archive must be signed with.
+/// The minisign keys a release archive may be signed with.
 ///
-/// The secret half lives only in the release workflow, so a release uploaded by anyone else does
-/// not install even if its checksum matches.
-const RELEASE_KEY: &str = "RWQEyQrj2l2VtRVkLbwHBkVxhMbDdbOGc7wHR8hjR27Ry+epMjmzedE0";
+/// The secret halves live only in the release workflow, so a release uploaded by anyone else does
+/// not install even if its checksum matches. To rotate, ship a release that trusts the old and the
+/// new key, sign later releases with the new one, then drop the old one.
+const RELEASE_KEYS: &[&str] = &["RWQEyQrj2l2VtRVkLbwHBkVxhMbDdbOGc7wHR8hjR27Ry+epMjmzedE0"];
 
 /// The version of this build.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -295,12 +296,20 @@ fn verify(data: &[u8], sums: &str) -> Result<(), String> {
 /// Checks that `signature` signs `data` with `key` and names the archive `name`.
 ///
 /// Checking the name stops an old signed archive from being passed off as a newer release.
-fn verify_signature(data: &[u8], signature: &str, name: &str, key: &str) -> Result<(), String> {
-    let key = PublicKey::from_base64(key).map_err(|err| format!("bad release key: {err}"))?;
+fn verify_signature(data: &[u8], signature: &str, name: &str, keys: &[&str]) -> Result<(), String> {
     let signature =
         Signature::decode(signature).map_err(|err| format!("bad release signature: {err}"))?;
-    key.verify(data, &signature, false)
-        .map_err(|_| "the download is not signed by the mog release key".to_owned())?;
+    let mut signed = false;
+    for key in keys {
+        let key = PublicKey::from_base64(key).map_err(|err| format!("bad release key: {err}"))?;
+        if key.verify(data, &signature, false).is_ok() {
+            signed = true;
+            break;
+        }
+    }
+    if !signed {
+        return Err("the download is not signed by a mog release key".to_owned());
+    }
     let file = format!("file:{name}");
     if signature
         .trusted_comment()
@@ -472,7 +481,7 @@ async fn install(client: &Client, release: Release) -> Result<Release, String> {
         &archive,
         &String::from_utf8_lossy(&signature),
         &name,
-        RELEASE_KEY,
+        RELEASE_KEYS,
     )?;
     task::spawn_blocking(move || {
         let binary = extract(&archive)?;
@@ -530,7 +539,7 @@ mod tests {
     };
 
     use super::{
-        MAX_SIZE, RELEASE_KEY, Release, archive_name, download, extract, is_cargo_build, is_newer,
+        MAX_SIZE, RELEASE_KEYS, Release, archive_name, download, extract, is_cargo_build, is_newer,
         package_manager, read_capped, stage, verify, verify_signature,
     };
 
@@ -607,11 +616,16 @@ trusted comment: timestamp:1\tfile:mog-v1.0.0-test.zip
     #[test]
     fn verifies_signatures() {
         let name = "mog-v1.0.0-test.zip";
-        assert!(verify_signature(b"mog", TEST_SIGNATURE, name, TEST_KEY).is_ok());
-        assert!(verify_signature(b"mug", TEST_SIGNATURE, name, TEST_KEY).is_err());
-        assert!(verify_signature(b"mog", TEST_SIGNATURE, "mog-v0.1.0-test.zip", TEST_KEY).is_err());
-        assert!(verify_signature(b"mog", TEST_SIGNATURE, name, RELEASE_KEY).is_err());
-        assert!(verify_signature(b"mog", "nonsense", name, TEST_KEY).is_err());
+        assert!(verify_signature(b"mog", TEST_SIGNATURE, name, &[TEST_KEY]).is_ok());
+        assert!(verify_signature(b"mug", TEST_SIGNATURE, name, &[TEST_KEY]).is_err());
+        assert!(
+            verify_signature(b"mog", TEST_SIGNATURE, "mog-v0.1.0-test.zip", &[TEST_KEY]).is_err()
+        );
+        assert!(verify_signature(b"mog", TEST_SIGNATURE, name, RELEASE_KEYS).is_err());
+        // a release that trusts an old and a new key takes either
+        let rotating = [RELEASE_KEYS[0], TEST_KEY];
+        assert!(verify_signature(b"mog", TEST_SIGNATURE, name, &rotating).is_ok());
+        assert!(verify_signature(b"mog", "nonsense", name, &[TEST_KEY]).is_err());
     }
 
     /// Installs from package managers are left to them.
