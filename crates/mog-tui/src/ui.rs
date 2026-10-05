@@ -146,6 +146,8 @@ pub enum PromptKind {
     ReplaceAll,
     /// Confirmation to run a command that installs a missing language server.
     InstallServer(String),
+    /// Whether to bring back unsaved work from a mog that crashed.
+    RecoverSwaps,
 }
 
 /// The signature of the call around the cursor.

@@ -1,7 +1,7 @@
 //! The application state and event loop.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs, mem,
     path::{Path, PathBuf},
     sync::{
@@ -27,8 +27,8 @@ use mog_config::{
     project_config_path, save_setting, theme::COLOR_NAMES,
 };
 use mog_core::{
-    Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity, Transaction,
-    movement,
+    Change, Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity,
+    Transaction, movement,
     project_search::{self, ProjectResults},
     search::{self as core_search, Matcher},
 };
@@ -72,6 +72,7 @@ use crate::{
     discord::{Presence, Status},
     git::{self, Git},
     lsp::{self, LanguageServers, LspReply},
+    session::{Session, SessionFile, State, Swap},
     settings::{self, ProjectStatus},
     terminal::Tui,
     update::{self, Release, UpdateEvent, Updater},
@@ -213,6 +214,18 @@ pub struct App {
     project_results: UnboundedReceiver<ProjectReply>,
     /// The generation of the newest project search, so older ones stop early.
     project_generation: Arc<AtomicU64>,
+    /// Where sessions, unsaved work and undo history are kept, if anywhere.
+    state: Option<State>,
+    /// Whether the open files are remembered for next time.
+    session_enabled: bool,
+    /// The session saved last, to skip writing the same one again.
+    last_session: Option<Session>,
+    /// The swap files this mog wrote, by document key, with the version they hold.
+    swaps: HashMap<String, (u64, PathBuf)>,
+    /// Files whose saved undo history was already looked for.
+    undo_checked: HashSet<PathBuf>,
+    /// Unsaved work from a mog that crashed, waiting for the user to say what to do with it.
+    recoverable: Vec<(PathBuf, Swap)>,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -225,11 +238,17 @@ impl App {
             problems.push(err.to_string());
             Config::default()
         });
-        Self::with_config(args, config, problems)
+        Self::with_config(args, config, problems, State::open())
     }
 
-    /// Creates a new app from `config`, showing `problems` found while loading it.
-    fn with_config(args: Args, mut config: Config, mut problems: Vec<String>) -> Self {
+    /// Creates a new app from `config`, showing `problems` found while loading it and keeping
+    /// sessions and unsaved work in `state`.
+    fn with_config(
+        args: Args,
+        mut config: Config,
+        mut problems: Vec<String>,
+        state: Option<State>,
+    ) -> Self {
         let (keymap, key_problems) = settings::keymap(&config);
         problems.extend(key_problems);
         let (theme, theme_problem) = settings::theme(&config);
@@ -339,6 +358,12 @@ impl App {
             project_sender,
             project_results,
             project_generation: Arc::new(AtomicU64::new(0)),
+            state,
+            session_enabled: false,
+            last_session: None,
+            swaps: HashMap::new(),
+            undo_checked: HashSet::new(),
+            recoverable: Vec::new(),
             quit: false,
         };
         for name in startup {
@@ -379,6 +404,244 @@ impl App {
     /// Tells the app whether the terminal sends keys the old way, which loses some chords.
     pub fn set_legacy_keys(&mut self, legacy: bool) {
         self.ui.legacy_keys = legacy;
+    }
+
+    /// Opens the files from the last time this folder was open and offers to bring back unsaved
+    /// work from a mog that crashed.
+    ///
+    /// Not part of [`App::new`] so snapshots and tests start clean.
+    pub fn restore_session(&mut self) {
+        let Some(state) = self.state.clone() else {
+            return;
+        };
+        let root = self.ui.root.clone();
+        let wanted = self.ui.config.editor.restore_session && self.ui.has_explorer;
+        // a file given on the command line is a one off, not the project session
+        let opened_file = self.editor.document().path().is_some();
+        if wanted && !opened_file {
+            self.session_enabled = true;
+            if let Some(session) = state.load_session(&root) {
+                self.apply_session(&session);
+                self.last_session = Some(session);
+            }
+        }
+        self.recoverable = state
+            .orphaned_swaps(&root)
+            .into_iter()
+            .filter(|(_, swap)| {
+                // a swap that matches the file on disk has nothing to recover
+                swap.path.as_ref().is_none_or(|path| {
+                    fs::read_to_string(path).ok().as_deref() != Some(swap.text.as_str())
+                })
+            })
+            .collect();
+        if self.recoverable.is_empty() {
+            return;
+        }
+        let names: Vec<String> = self
+            .recoverable
+            .iter()
+            .map(|(_, swap)| {
+                swap.path
+                    .as_ref()
+                    .and_then(|path| path.file_name())
+                    .map_or_else(|| "untitled".into(), |name| name.to_string_lossy().into())
+            })
+            .collect();
+        self.ui.ask(
+            PromptKind::RecoverSwaps,
+            "\u{26a0} mog did not close cleanly, recover unsaved work?",
+            "",
+            format!("y brings back {}, n throws it away", names.join(", ")),
+        );
+    }
+
+    /// Opens the files in `session` and puts the cursors, scroll and split back.
+    fn apply_session(&mut self, session: &Session) {
+        let mut opened = Vec::new();
+        for file in &session.files {
+            if !file.path.is_file() || self.editor.open(&file.path).is_err() {
+                opened.push(None);
+                continue;
+            }
+            let len = self.editor.document().text().len_chars();
+            self.editor.select(file.anchor.min(len), file.head.min(len));
+            let lines = self.editor.document().text().len_lines();
+            self.editor.view_mut().scroll_line = file.scroll_line.min(lines.saturating_sub(1));
+            opened.push(Some(self.editor.active()));
+        }
+        let index = |at: usize| opened.get(at).copied().flatten();
+        if let Some(split) = session.split.and_then(index) {
+            self.ui.split = Some(SplitState {
+                focused: Pane::Main,
+                other_document: split,
+                other_view: self.editor.view().clone(),
+            });
+        }
+        if let Some(active) = index(session.active) {
+            self.editor.focus(active);
+        }
+        self.ui.explorer_open = session.explorer_open && self.ui.has_explorer;
+    }
+
+    /// Returns what is open now as a session.
+    fn current_session(&self) -> Session {
+        let mut files = Vec::new();
+        let mut indexes = HashMap::new();
+        for (index, document) in self.editor.documents().iter().enumerate() {
+            let Some(path) = document.path() else {
+                continue;
+            };
+            let view = if index == self.editor.active() {
+                self.editor.view().scroll_line
+            } else {
+                0
+            };
+            let selection = document.selection();
+            indexes.insert(index, files.len());
+            files.push(SessionFile {
+                path: path.to_owned(),
+                anchor: selection.anchor,
+                head: selection.head,
+                scroll_line: view,
+            });
+        }
+        Session {
+            active: indexes.get(&self.editor.active()).copied().unwrap_or(0),
+            split: self
+                .ui
+                .split
+                .as_ref()
+                .and_then(|split| indexes.get(&split.other_document).copied()),
+            explorer_open: self.ui.explorer_open,
+            files,
+        }
+    }
+
+    /// Saves the open files for next time if they changed.
+    fn save_session(&mut self) {
+        let Some(state) = self.state.as_ref().filter(|_| self.session_enabled) else {
+            return;
+        };
+        let session = self.current_session();
+        if self.last_session.as_ref() != Some(&session) {
+            state.save_session(&self.ui.root, &session);
+            self.last_session = Some(session);
+        }
+    }
+
+    /// Writes unsaved documents to swap files and removes the swaps of ones that were saved or
+    /// closed.
+    fn write_swaps(&mut self) {
+        let Some(state) = &self.state else {
+            return;
+        };
+        let mut wanted = HashSet::new();
+        for (index, document) in self.editor.documents().iter().enumerate() {
+            if !document.is_modified() {
+                continue;
+            }
+            let key = document.path().map_or_else(
+                || format!("untitled-{index}"),
+                |path| path.to_string_lossy().into_owned(),
+            );
+            if self.swaps.get(&key).map(|(version, _)| *version) != Some(document.version()) {
+                let text = document.text().to_string();
+                let file = state.write_swap(&key, document.path(), &self.ui.root, text);
+                self.swaps.insert(key.clone(), (document.version(), file));
+            }
+            wanted.insert(key);
+        }
+        self.swaps.retain(|key, (_, file)| {
+            let keep = wanted.contains(key);
+            if !keep {
+                let _ = fs::remove_file(file);
+            }
+            keep
+        });
+    }
+
+    /// Puts back the undo history saved for files that were just opened.
+    fn restore_undo(&mut self) {
+        let Some(state) = self
+            .state
+            .as_ref()
+            .filter(|_| self.ui.config.editor.persistent_undo)
+        else {
+            return;
+        };
+        for document in self.editor.documents_mut() {
+            let Some(path) = document.path().map(ToOwned::to_owned) else {
+                continue;
+            };
+            if document.version() != 0 || !self.undo_checked.insert(path.clone()) {
+                continue;
+            }
+            if let Some(history) = state.load_undo(&path, &document.text().to_string()) {
+                document.restore_history(history);
+            }
+        }
+    }
+
+    /// Saves the undo history of the focused file, which was just saved.
+    fn save_undo(&self) {
+        let Some(state) = self
+            .state
+            .as_ref()
+            .filter(|_| self.ui.config.editor.persistent_undo)
+        else {
+            return;
+        };
+        let document = self.editor.document();
+        if let Some(path) = document.path() {
+            state.save_undo(path, &document.text().to_string(), document.history());
+        }
+    }
+
+    /// Brings back the unsaved work the user chose to recover.
+    fn recover_swaps(&mut self) {
+        for (file, swap) in mem::take(&mut self.recoverable) {
+            match &swap.path {
+                Some(path) => {
+                    if let Err(err) = self.editor.open(path) {
+                        self.editor
+                            .set_status(format!("could not open {}: {err}", path.display()));
+                        continue;
+                    }
+                }
+                None => self.editor.new_document(),
+            }
+            let end = self.editor.document().text().len_chars();
+            self.editor.apply_changes(vec![Change {
+                start: 0,
+                end,
+                text: swap.text,
+            }]);
+            let _ = fs::remove_file(file);
+        }
+        self.editor
+            .set_status("recovered, save to keep it. ctrl+z goes back to the file on disk");
+    }
+
+    /// Saves what should outlive this run and cleans up swap files, right before quitting.
+    fn shut_down(&mut self) {
+        self.save_session();
+        if let Some(state) = self
+            .state
+            .as_ref()
+            .filter(|_| self.ui.config.editor.persistent_undo)
+        {
+            for document in self.editor.documents() {
+                if let Some(path) = document.path().filter(|_| !document.is_modified()) {
+                    state.save_undo(path, &document.text().to_string(), document.history());
+                }
+            }
+        }
+        // quitting with unsaved changes was confirmed, so they are meant to go
+        for (_, file) in self.swaps.values() {
+            let _ = fs::remove_file(file);
+        }
+        self.swaps.clear();
     }
 
     /// Shows what is new after an update and looks for the next one.
@@ -595,6 +858,7 @@ impl App {
             self.sync_signature();
             self.sync_git();
             self.watch_focus();
+            self.restore_undo();
             self.play_sounds();
             self.draw(terminal)?;
             let animating = self.compositor.is_animating();
@@ -622,6 +886,7 @@ impl App {
             }
             self.run_requests();
         }
+        self.shut_down();
         Ok(())
     }
 
@@ -1050,6 +1315,8 @@ impl App {
             self.git.refresh();
             self.git_refreshed = Instant::now();
         }
+        self.write_swaps();
+        self.save_session();
     }
 
     /// Asks where to save the focused document.
@@ -1179,6 +1446,16 @@ impl App {
             }
             PromptKind::SaveTheme => {
                 self.save_theme(text);
+                return;
+            }
+            PromptKind::RecoverSwaps => {
+                if matches!(text, "y" | "yes") {
+                    self.recover_swaps();
+                } else {
+                    for (file, _) in mem::take(&mut self.recoverable) {
+                        let _ = fs::remove_file(file);
+                    }
+                }
                 return;
             }
             PromptKind::InstallServer(command) => {
@@ -2033,6 +2310,7 @@ impl App {
     /// Reacts to the focused document being saved.
     fn saved(&mut self) {
         self.ui.events.push(UiEvent::Saved);
+        self.save_undo();
         // a save as needs the new path opened on the server before it hears about the save
         self.sync_language_servers();
         let Some(path) = self.editor.document().path().map(ToOwned::to_owned) else {
@@ -2511,9 +2789,13 @@ mod tests {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use mog_config::Config;
     use mog_core::{Key, KeyChord};
+    use mog_tui::PromptKind;
 
     use super::App;
-    use crate::cli::Args;
+    use crate::{
+        cli::Args,
+        session::{State, Swap},
+    };
 
     /// Counts temp folders so parallel tests never share one.
     static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
@@ -2527,6 +2809,16 @@ mod tests {
         dir
     }
 
+    /// Starts the app on `path` with a quiet config, keeping sessions in `state`.
+    fn start_with_state(path: &Path, state: State) -> App {
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.ui.git_blame = false;
+        let args = Args::parse_from([Path::new("mog"), path]);
+        App::with_config(args, config, Vec::new(), Some(state))
+    }
+
     /// Starts the app on `path` with a quiet config that has no flair, sound or updates.
     fn start(path: &Path) -> App {
         let mut config = Config::default();
@@ -2534,7 +2826,7 @@ mod tests {
         config.updates.check = false;
         config.ui.git_blame = false;
         let args = Args::parse_from([Path::new("mog"), path]);
-        App::with_config(args, config, Vec::new())
+        App::with_config(args, config, Vec::new(), None)
     }
 
     /// Returns the terminal event for pressing `chord`, like `ctrl+s` or `x`.
@@ -2598,6 +2890,63 @@ mod tests {
         app.handle_event(press("ctrl+q"));
         assert!(app.quit);
         assert_eq!(fs::read_to_string(&path).expect("read"), "");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Reopening a folder brings back the open file and its cursor.
+    #[tokio::test]
+    async fn restores_the_session() {
+        let dir = temp_dir();
+        let project = dir.join("project");
+        fs::create_dir_all(&project).expect("project");
+        let file = project.join("main.txt");
+        fs::write(&file, "one\ntwo\n").expect("write");
+        let state = State::at(dir.join("state"));
+        let mut app = start_with_state(&project, state.clone());
+        app.restore_session();
+        app.editor.open(&file).expect("open");
+        app.editor.select(4, 6);
+        app.shut_down();
+        let mut again = start_with_state(&project, state);
+        again.restore_session();
+        assert_eq!(again.editor.document().path(), Some(file.as_path()));
+        let selection = again.editor.document().selection();
+        assert_eq!((selection.anchor, selection.head), (4, 6));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Unsaved work left by a mog that crashed is offered back and restored.
+    #[tokio::test]
+    async fn recovers_unsaved_work() {
+        let dir = temp_dir();
+        let project = dir.join("project");
+        fs::create_dir_all(&project).expect("project");
+        let file = project.join("draft.txt");
+        fs::write(&file, "saved\n").expect("write");
+        let state = State::at(dir.join("state"));
+        let swap = Swap {
+            path: Some(file.clone()),
+            root: project.clone(),
+            // no process has this id so the swap counts as left behind
+            pid: u32::MAX,
+            text: "saved\nand more\n".into(),
+        };
+        let swap_file = dir.join("state").join("swap").join("left.json");
+        fs::create_dir_all(swap_file.parent().expect("folder")).expect("swap dir");
+        fs::write(&swap_file, serde_json::to_string(&swap).expect("json")).expect("swap");
+        let mut app = start_with_state(&project, state);
+        app.restore_session();
+        assert_eq!(
+            app.ui.prompt.as_ref().map(|prompt| prompt.kind.clone()),
+            Some(PromptKind::RecoverSwaps)
+        );
+        type_text(&mut app, "y");
+        app.handle_event(press("enter"));
+        app.run_requests();
+        let document = app.editor.document();
+        assert_eq!(document.text().to_string(), "saved\nand more\n");
+        assert!(document.is_modified());
+        assert!(!swap_file.exists());
         let _ = fs::remove_dir_all(dir);
     }
 
