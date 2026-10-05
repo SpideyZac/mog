@@ -16,9 +16,7 @@ use ropey::Rope;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::provider::{
-    AiError, AiProvider, BoxFuture, ChatMessage, CompletionFile, CompletionRequest,
-};
+use crate::provider::{AiError, AiProvider, BoxFuture, CompletionFile, CompletionRequest};
 
 /// The server name used in events and errors.
 const NAME: &str = "copilot";
@@ -227,10 +225,6 @@ impl Copilot {
 impl AiProvider for Copilot {
     fn id(&self) -> &str {
         NAME
-    }
-
-    fn chat<'a>(&'a self, _messages: &'a [ChatMessage]) -> BoxFuture<'a, Result<String, AiError>> {
-        Box::pin(async { Err(AiError::Unsupported("copilot chat".into())) })
     }
 
     fn complete<'a>(

@@ -23,13 +23,48 @@ use crate::settings::AiProviders;
 const CHAT_SYSTEM: &str = "You are the assistant inside mog, a terminal code editor. Keep answers \
 short and practical. Plain text renders best, avoid big markdown tables.";
 
+/// The most chars of conversation sent with a chat, counted from the newest message back.
+const MAX_CHAT_CHARS: usize = 400_000;
+
 /// How long typing has to pause before a ghost suggestion is requested.
 const GHOST_DELAY: Duration = Duration::from_millis(650);
+
+/// Turns the chat `history`, as `(from_user, text)` pairs, into messages that fit in `budget`
+/// chars, dropping the oldest first.
+///
+/// The conversation always starts with something the user said, as the API wants.
+fn chat_messages(history: &[(bool, String)], budget: usize) -> Vec<ChatMessage> {
+    let mut used = 0;
+    let mut start = history.len();
+    for (index, (_, text)) in history.iter().enumerate().rev() {
+        if used + text.len() > budget && start < history.len() {
+            break;
+        }
+        used += text.len();
+        start = index;
+    }
+    while history.get(start).is_some_and(|(from_user, _)| !from_user) {
+        start += 1;
+    }
+    history[start..]
+        .iter()
+        .map(|(from_user, text)| ChatMessage {
+            role: if *from_user {
+                Role::User
+            } else {
+                Role::Assistant
+            },
+            text: text.clone(),
+        })
+        .collect()
+}
 
 /// What a finished request produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AiReply {
-    /// A chat answer.
+    /// More of the chat answer that is streaming in.
+    ChatText(String),
+    /// The whole chat answer, once it is done.
     Chat(String),
     /// A chat that failed, with the reason.
     ChatFailed(String),
@@ -176,26 +211,14 @@ impl Assistant {
         let Some(provider) = self.providers.chat.first().cloned() else {
             return false;
         };
-        let messages: Vec<ChatMessage> = history
-            .iter()
-            .enumerate()
-            .map(|(i, (from_user, text))| ChatMessage {
-                role: if *from_user {
-                    Role::User
-                } else {
-                    Role::Assistant
-                },
-                // the provider takes no system prompt so the first message carries it
-                text: if i == 0 {
-                    format!("{CHAT_SYSTEM}\n\n{text}")
-                } else {
-                    text.clone()
-                },
-            })
-            .collect();
+        let messages = chat_messages(history, MAX_CHAT_CHARS);
         let sender = self.sender.clone();
         tokio::spawn(async move {
-            let reply = match provider.chat(&messages).await {
+            let streamed = sender.clone();
+            let on_text = move |text: &str| {
+                let _ = streamed.send(AiReply::ChatText(text.to_owned()));
+            };
+            let reply = match provider.chat(CHAT_SYSTEM, &messages, &on_text).await {
                 Ok(text) => AiReply::Chat(text.trim().to_owned()),
                 Err(err) => AiReply::ChatFailed(err.to_string()),
             };
@@ -254,5 +277,33 @@ impl Assistant {
             reply = self.replies.recv() => reply,
             Some(event) = copilot => Some(AiReply::Copilot(event)),
         }
+    }
+}
+
+#[cfg(test)]
+/// Tests for the assistant.
+mod tests {
+    use mog_ai::Role;
+
+    use super::chat_messages;
+
+    /// Long chats drop their oldest messages and still start with the user.
+    #[test]
+    fn trims_chat_history() {
+        let history = [
+            (true, "a".repeat(10)),
+            (false, "b".repeat(10)),
+            (true, "c".repeat(10)),
+            (false, "d".repeat(10)),
+            (true, "e".repeat(10)),
+        ];
+        assert_eq!(chat_messages(&history, 100).len(), 5);
+        let trimmed = chat_messages(&history, 35);
+        assert_eq!(trimmed.len(), 3);
+        assert_eq!(trimmed[0].role, Role::User);
+        assert!(trimmed[0].text.starts_with('c'));
+        let tiny = chat_messages(&history, 1);
+        assert_eq!(tiny.len(), 1);
+        assert!(tiny[0].text.starts_with('e'));
     }
 }

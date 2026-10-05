@@ -77,17 +77,32 @@ pub struct CompletionFile {
     pub insert_spaces: bool,
 }
 
-/// An AI backend that can chat and complete code.
+/// Gets each piece of a chat reply as it streams in.
+pub type OnText<'a> = &'a (dyn Fn(&str) + Send + Sync);
+
+/// An AI backend that can chat, complete code, or both.
 pub trait AiProvider: Send + Sync {
     /// Returns a short unique name like `claude`.
     fn id(&self) -> &str;
 
-    /// Sends a conversation and returns the reply text.
-    fn chat<'a>(&'a self, messages: &'a [ChatMessage]) -> BoxFuture<'a, Result<String, AiError>>;
+    /// Sends a conversation with `system` instructions, passing the reply to `on_text` as it
+    /// arrives, and returns the whole reply text.
+    fn chat<'a>(
+        &'a self,
+        system: &'a str,
+        messages: &'a [ChatMessage],
+        on_text: OnText<'a>,
+    ) -> BoxFuture<'a, Result<String, AiError>> {
+        let _ = (system, messages, on_text);
+        Box::pin(async move { Err(AiError::Unsupported(format!("{} chat", self.id()))) })
+    }
 
     /// Suggests texts to insert at the cursor, best first, or none if nothing is worth suggesting.
     fn complete<'a>(
         &'a self,
         request: &'a CompletionRequest,
-    ) -> BoxFuture<'a, Result<Vec<String>, AiError>>;
+    ) -> BoxFuture<'a, Result<Vec<String>, AiError>> {
+        let _ = request;
+        Box::pin(async move { Err(AiError::Unsupported(format!("{} completion", self.id()))) })
+    }
 }

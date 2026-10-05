@@ -260,6 +260,8 @@ pub struct App {
     plugins: Plugins,
     /// A plugin waiting for the user to pick or type something, with its request id.
     plugin_waiting: Option<(String, Value)>,
+    /// Whether the last chat message is a reply still streaming in.
+    chat_streaming: bool,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -409,6 +411,7 @@ impl App {
             debug_frames: Vec::new(),
             plugins: Plugins::new(),
             plugin_waiting: None,
+            chat_streaming: false,
             quit: false,
         };
         for name in startup {
@@ -2603,17 +2606,31 @@ impl App {
     /// Acts on a finished AI request.
     fn handle_ai_reply(&mut self, reply: AiReply) {
         match reply {
+            AiReply::ChatText(text) => {
+                if mem::replace(&mut self.chat_streaming, true) {
+                    if let Some((_, reply)) = self.ui.chat.messages.last_mut() {
+                        reply.push_str(&text);
+                    }
+                } else {
+                    self.ui.chat.messages.push((false, text));
+                }
+            }
             AiReply::Chat(text) => {
                 self.ui.chat.waiting = false;
+                if mem::take(&mut self.chat_streaming) {
+                    self.ui.chat.messages.pop();
+                }
                 self.ui.chat.messages.push((false, text));
-                self.ui.chat.scroll = 0;
             }
             AiReply::ChatFailed(reason) => {
                 self.ui.chat.waiting = false;
-                self.ui
-                    .chat
-                    .messages
-                    .push((false, format!("that failed: {reason}")));
+                let failed = format!("that failed: {reason}");
+                match self.ui.chat.messages.last_mut() {
+                    Some((_, reply)) if mem::take(&mut self.chat_streaming) => {
+                        reply.push_str(&format!("\n\n({failed})"));
+                    }
+                    _ => self.ui.chat.messages.push((false, failed)),
+                }
             }
             AiReply::Ghost {
                 document,
