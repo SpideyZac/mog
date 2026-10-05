@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Document, Severity, View, movement, view};
+use mog_core::{Command, Document, Severity, TokenKind, View, movement, view};
 use mog_git::{LineChange, line_changes};
 use mog_syntax::{Highlighter, Kind, Span, language_for};
 use ratatui::{
@@ -14,6 +14,7 @@ use ratatui::{
     layout::{Position, Rect},
     style::{Modifier, Style},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
@@ -74,6 +75,25 @@ fn kind_style(theme: &Theme, kind: Kind) -> Style {
         Kind::Namespace => theme.namespace,
         Kind::Markup => theme.markup,
     }
+}
+
+/// Returns the style for a semantic token `kind`, or `None` to keep the syntax color.
+fn token_style(theme: &Theme, kind: TokenKind) -> Option<Style> {
+    Some(match kind {
+        TokenKind::Namespace => theme.namespace,
+        TokenKind::Type => theme.type_name,
+        TokenKind::Function => theme.function,
+        TokenKind::Macro => theme.attribute,
+        TokenKind::Property => theme.property,
+        TokenKind::EnumMember | TokenKind::Constant => theme.constant,
+        TokenKind::Parameter => theme.parameter,
+        TokenKind::Keyword => theme.keyword,
+        TokenKind::String => theme.string,
+        TokenKind::Number => theme.number,
+        TokenKind::Comment => theme.comment,
+        TokenKind::Operator => theme.operator,
+        TokenKind::Variable => return None,
+    })
 }
 
 /// Returns the bracket depth at the start of every line, skipping strings and comments.
@@ -374,6 +394,12 @@ impl Layer for EditorView {
             let mut span = span_index;
             let mut depth = self.cache.depths.get(line).copied().unwrap_or(0);
             let mut col = 0;
+            let tokens = if settings.semantic_highlighting && settings.syntax_highlighting {
+                document.semantic_tokens(line)
+            } else {
+                &[]
+            };
+            let mut token = 0;
             for (i, ch) in text.slice(start..line_end).chars().enumerate() {
                 let pos = start + i;
                 let width = view::char_width(ch, col, tab_width);
@@ -386,8 +412,18 @@ impl Layer for EditorView {
                     .get(span)
                     .filter(|s| s.from <= pos)
                     .map(|s| s.kind);
-                let mut style =
-                    kind.map_or(theme.text, |kind| theme.text.patch(kind_style(theme, kind)));
+                while tokens.get(token).is_some_and(|t| t.to <= i) {
+                    token += 1;
+                }
+                let semantic = tokens
+                    .get(token)
+                    .filter(|t| t.from <= i)
+                    .and_then(|t| token_style(theme, t.kind));
+                let mut style = match (semantic, kind) {
+                    (Some(semantic), _) => theme.text.patch(semantic),
+                    (None, Some(kind)) => theme.text.patch(kind_style(theme, kind)),
+                    (None, None) => theme.text,
+                };
                 let quoted = matches!(kind, Some(Kind::String | Kind::Comment));
                 if !quoted {
                     if movement::BRACKETS.iter().any(|(open, _)| *open == ch) {
@@ -494,6 +530,28 @@ impl Layer for EditorView {
                 }
                 ghost_below = Some((y, suggestion.collect()));
                 continue;
+            }
+            let hints = if settings.inlay_hints {
+                document.inlay_hints(line)
+            } else {
+                &[]
+            };
+            if !hints.is_empty() {
+                let label = hints
+                    .iter()
+                    .map(|hint| hint.label.trim())
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                let label = format!(" {label} ");
+                let cell = col + 2;
+                if cell >= scroll.scroll_col {
+                    let x = cell - scroll.scroll_col;
+                    let room = usize::from(text_width).saturating_sub(x);
+                    if room > 0 {
+                        buf.set_stringn(text_x + cells(x), y, &label, room, theme.inlay_hint);
+                    }
+                }
+                col = cell + label.width();
             }
             let inline = match diagnostic {
                 Some(d) if settings.error_lens => {
@@ -655,7 +713,10 @@ impl EditorView {
 #[cfg(test)]
 /// Tests for [`EditorView`].
 mod tests {
-    use mog_core::{Diagnostic, Editor, MemoryClipboard, Range, Severity, Transaction};
+    use mog_core::{
+        Diagnostic, Editor, InlayHint, MemoryClipboard, Range, SemanticToken, Severity, TokenKind,
+        Transaction,
+    };
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Position};
 
     use super::EditorView;
@@ -703,6 +764,33 @@ mod tests {
         let buffer = draw(&mut editor, 30, 2);
         let row: String = (0..30).map(|x| buffer[(x, 0)].symbol()).collect();
         assert_eq!(row.trim_end(), "1 let x    \u{25cf} unused");
+    }
+
+    /// Inlay hints follow the line and semantic tokens color what they cover.
+    #[test]
+    fn draws_hints_and_tokens() {
+        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        let document = editor.document_mut();
+        document.apply(Transaction::insert(0, "let x = 1;"), Range::point(0), false);
+        document.set_inlay_hints(vec![(
+            0,
+            InlayHint {
+                col: 5,
+                label: "x: i32".into(),
+            },
+        )]);
+        document.set_semantic_tokens(vec![(
+            0,
+            SemanticToken {
+                from: 4,
+                to: 5,
+                kind: TokenKind::Parameter,
+            },
+        )]);
+        let buffer = draw(&mut editor, 30, 2);
+        let row: String = (0..30).map(|x| buffer[(x, 0)].symbol()).collect();
+        assert_eq!(row.trim_end(), "1 let x = 1;   x: i32");
+        assert_eq!(buffer[(6, 0)].fg, Theme::default().parameter.fg.expect("color"));
     }
 
     /// Text is drawn after the gutter with tabs expanded and the cursor placed.

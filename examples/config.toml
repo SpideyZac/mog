@@ -23,6 +23,10 @@ cursor_line = true
 indent_guides = true
 rainbow_brackets = true
 syntax_highlighting = true
+# colors from the language server on top of the syntax colors
+semantic_highlighting = true
+# inferred types and parameter names at the end of lines
+inlay_hints = true
 minimap = true
 error_lens = true
 git_gutter = true

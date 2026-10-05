@@ -456,6 +456,10 @@ pub struct Theme {
     pub minimap_view: Style,
     /// Suggested text that is not inserted yet.
     pub ghost: Style,
+    /// Types and parameter names a language server shows after lines.
+    pub inlay_hint: Style,
+    /// Function parameters, told apart by the language server.
+    pub parameter: Style,
     /// Language keywords.
     pub keyword: Style,
     /// Function names.
@@ -567,6 +571,8 @@ impl Theme {
             minimap: fg(mix(p.bg, p.fg, 0.30)),
             minimap_view: Style::new().bg(p.raised),
             ghost: fg(p.dim).add_modifier(Modifier::ITALIC),
+            inlay_hint: fg(mix(p.dim, p.fg, 0.25)).bg(mix(p.bg, p.dim, 0.18)),
+            parameter: fg(mix(p.fg, p.orange, 0.3)).add_modifier(Modifier::ITALIC),
             keyword: fg(p.blue).add_modifier(bold),
             function: fg(p.cyan),
             type_name: fg(p.yellow),
@@ -606,6 +612,7 @@ impl Theme {
             tab_active: style(Modifier::BOLD | Modifier::UNDERLINED),
             minimap_view: style(Modifier::BOLD),
             ghost: style(Modifier::DIM | Modifier::ITALIC),
+            inlay_hint: style(Modifier::DIM),
             ..Self::from_palette("no color", plain)
         }
     }

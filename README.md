@@ -204,6 +204,8 @@ API keys are never read from or written to the config file.
 | `indent_guides` | `true` | Thin guides at each indent level |
 | `rainbow_brackets` | `true` | Color nested brackets by depth |
 | `syntax_highlighting` | `true` | Syntax colors |
+| `semantic_highlighting` | `true` | Colors from the language server on top, so parameters, macros and types stand out |
+| `inlay_hints` | `true` | Inferred types and parameter names from the language server, shown at the end of the line |
 | `minimap` | `true` | Zoomed out view of the file on the right |
 | `error_lens` | `true` | Write diagnostics at the end of their line |
 | `git_gutter` | `true` | Mark changed lines next to the line numbers |

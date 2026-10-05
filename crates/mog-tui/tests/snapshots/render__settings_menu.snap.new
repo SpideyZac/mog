@@ -1,5 +1,6 @@
 ---
 source: crates/mog-tui/tests/render.rs
+assertion_line: 124
 expression: "screen(&mut editor, &mut ui, 100, 34)"
 ---
  [scratch] ×

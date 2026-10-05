@@ -22,6 +22,10 @@ pub struct UiConfig {
     pub rainbow_brackets: bool,
     /// Whether code is colored by syntax.
     pub syntax_highlighting: bool,
+    /// Whether colors from the language server refine the syntax colors.
+    pub semantic_highlighting: bool,
+    /// Whether types and parameter names from the language server are shown after lines.
+    pub inlay_hints: bool,
     /// Whether a zoomed out view of the file is shown on the right.
     pub minimap: bool,
     /// Whether diagnostics are written out at the end of their line.
@@ -54,6 +58,8 @@ impl Default for UiConfig {
             indent_guides: true,
             rainbow_brackets: true,
             syntax_highlighting: true,
+            semantic_highlighting: true,
+            inlay_hints: true,
             minimap: true,
             error_lens: true,
             git_gutter: true,
