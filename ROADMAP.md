@@ -43,8 +43,8 @@
 - [x] Restore open tabs, splits and cursors between sessions
 - [x] Swap files to recover unsaved buffers after a crash
 - [x] Persistent undo history
-- [ ] Run and build tasks with output in the problems list
-- [ ] Debugger (DAP)
+- [x] Run and build tasks with output in the problems list
+- [x] Debugger (DAP)
 
 ## Look and feel
 

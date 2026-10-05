@@ -29,7 +29,8 @@ pub struct DebugConfig {
     pub request: String,
     /// The arguments of the launch or attach request, which differ for every adapter.
     ///
-    /// `${file}` and `${root}` in strings are replaced with the focused file and the project.
+    /// `${root}`, `${rootName}`, `${file}`, `${fileDirname}`, `${fileBasenameNoExtension}` and
+    /// `${exe}` in strings are filled in when debugging starts.
     pub arguments: Value,
     /// A task to run first, like a build, by name.
     pub before: String,

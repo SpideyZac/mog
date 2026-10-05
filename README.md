@@ -354,7 +354,77 @@ enabled = false
 ```
 
 Since a project config can pick programs to run, mog asks before using one and asks again
-whenever it changes. Saving it applies it right away.
+whenever it changes. Saving it applies it right away. Project configs can also hold
+[`[tasks]`](#tasks) and [`[debug]`](#debug) tables.
+
+### `[tasks]`
+
+`Tasks: Run task` (`ctrl+shift+b`) lists the project's tasks and runs the one you pick, `alt+b`
+runs the last one again. mog finds these on its own:
+
+| project | tasks |
+| --- | --- |
+| `Cargo.toml` | `build`, `check` (clippy), `test`, `run` |
+| `go.mod` | `build`, `test`, `check` (vet) |
+| `package.json` | every script, with npm, pnpm, yarn or bun |
+| `Makefile` | `build` (make), `test` (make test) |
+| `pyproject.toml`, `pytest.ini` | `test` (pytest) |
+
+Add your own or replace those by name. The command runs through the shell.
+
+| key | default | |
+| --- | --- | --- |
+| `command` | | The command line, like `cargo build --release` |
+| `cwd` | project | Folder to run it in, relative to the project |
+
+```toml
+[tasks.lint]
+command = "cargo clippy --all-targets"
+```
+
+The output shows in `Tasks: Show output`, and errors and warnings in it (rustc, gcc, clang, go,
+TypeScript, mypy, ruff, eslint and Python tracebacks) go to the problems list (`alt+m`), even
+for files that are not open.
+
+### `[debug]`
+
+mog debugs with any debugger that speaks the
+[debug adapter protocol](https://microsoft.github.io/debug-adapter-protocol/) over stdio. `f5`
+picks one by the extension of the focused file. Two work out of the box once installed:
+
+| name | adapter | files | launches |
+| --- | --- | --- | --- |
+| `lldb` | `lldb-dap` (comes with LLVM) | Rust, C, C++, Zig, Swift | `target/debug/<folder name>`, after the `build` task |
+| `python` | `python -m debugpy.adapter` (`pip install debugpy`) | Python | the focused file |
+
+| key | default | |
+| --- | --- | --- |
+| `command` | | The adapter program |
+| `args` | `[]` | Its arguments |
+| `extensions` | `[]` | Files it is picked for, no dot |
+| `request` | `"launch"` | `launch` to start the program or `attach` to join one |
+| `arguments` | | The launch or attach arguments, which every adapter names its own way |
+| `before` | `""` | A task to run first, like `build`. Debugging starts if it passes |
+
+Strings in `arguments` can use `${root}`, `${rootName}` (the folder name), `${file}`,
+`${fileDirname}`, `${fileBasenameNoExtension}` and `${exe}` (`.exe` on Windows).
+
+```toml
+# a C program built with make
+[debug.lldb]
+command = "lldb-dap"
+extensions = ["c"]
+before = "build"
+
+[debug.lldb.arguments]
+program = "${root}/build/app${exe}"
+args = ["--verbose"]
+cwd = "${root}"
+```
+
+`f9` sets a breakpoint on the cursor line. When the program stops, the line is marked, and the
+debug panel (`ctrl+shift+d`) shows the call stack, the variables and what the program printed.
+Click a frame to look at it.
 
 ### `[ai]`
 
@@ -538,6 +608,23 @@ The selecting versions are named `select_*`, like `select_word_left` and `select
 | `alt+shift+r` | `git.revert_hunk` | Put the change at the cursor back to the last commit |
 | | `git.stage_file` | Stage the whole file |
 | | `git.commit` | Commit what is staged |
+
+### Tasks and debugging
+
+| keys | command | |
+| --- | --- | --- |
+| `ctrl+shift+b` | `task.run` | Pick a task like build or test and run it |
+| `alt+b` | `task.rerun` | Run the last task again |
+| | `task.stop` | Stop the running task |
+| | `task.output` | Show the task output |
+| `f5` | `debug.start` | Start debugging, or continue when paused |
+| `shift+f5` | `debug.stop` | Stop debugging |
+| `f9` | `debug.toggle_breakpoint` | Toggle a breakpoint on the cursor line |
+| `f10` | `debug.step_over` | Step over |
+| `f11` | `debug.step_into` | Step into |
+| `shift+f11` | `debug.step_out` | Step out |
+| `f6` | `debug.pause` | Pause |
+| `ctrl+shift+d` | `debug.panel` | Show or hide the debug panel |
 
 ### AI
 
