@@ -48,6 +48,15 @@ fn display_path(path: &Path, root: &Path) -> String {
     parts.join("/")
 }
 
+/// Where a row of the problems list points.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProblemAt {
+    /// A char offset in an open document, by index.
+    Document(usize, usize),
+    /// A line and column in a file from task output, from 0.
+    File(PathBuf, usize, usize),
+}
+
 /// The popups that pick from a list, plus the go to line prompt.
 #[derive(Debug, Default)]
 pub struct Popups {
@@ -61,8 +70,8 @@ pub struct Popups {
     commands: Vec<String>,
     /// The symbols version the picker was last filled with.
     symbols_version: u64,
-    /// The documents and offsets behind the problem rows.
-    problems: Vec<(usize, usize)>,
+    /// Where each problem row points.
+    problems: Vec<ProblemAt>,
     /// The box drawn in the last frame.
     area: Rect,
     /// Where the text cursor goes.
@@ -92,6 +101,7 @@ impl Popups {
                     | Overlay::References
                     | Overlay::Symbols
                     | Overlay::WorkspaceSymbols
+                    | Overlay::Tasks
             )
         )
     }
@@ -246,15 +256,44 @@ impl Popups {
                                 .detail(format!("{}:{line}", document.name()))
                                 .hint(kind)
                                 .marker(style),
-                            (index, diagnostic.from),
+                            ProblemAt::Document(index, diagnostic.from),
                         ));
                     }
                 }
+                for problem in &ui.task_problems {
+                    let kind = theme_marks
+                        .iter()
+                        .find(|(severity, _)| *severity == problem.severity)
+                        .map_or("", |(_, name)| name);
+                    let style = match problem.severity {
+                        Severity::Error => cx.theme.error,
+                        Severity::Warning => cx.theme.warning,
+                        _ => cx.theme.info,
+                    };
+                    let place = format!(
+                        "{}:{}",
+                        display_path(&problem.path, &ui.root),
+                        problem.line + 1
+                    );
+                    rows.push((
+                        problem.severity,
+                        PickerItem::new(&problem.message)
+                            .detail(place)
+                            .hint(format!("{kind}, {}", ui.output.title))
+                            .marker(style),
+                        ProblemAt::File(problem.path.clone(), problem.line, problem.column),
+                    ));
+                }
                 // worst first, keeping file order within a severity
                 rows.sort_by_key(|(severity, _, _)| *severity);
-                self.problems = rows.iter().map(|(_, _, at)| *at).collect();
+                self.problems = rows.iter().map(|(_, _, at)| at.clone()).collect();
                 rows.into_iter().map(|(_, item, _)| item).collect()
             }
+            Some(Overlay::Tasks) => ui
+                .tasks
+                .iter()
+                .map(|(name, command)| PickerItem::new(name).hint(command))
+                .collect(),
             Some(Overlay::References) => ui
                 .references
                 .iter()
@@ -325,12 +364,29 @@ impl Popups {
                     text.line_to_char(line) + symbol.column.min(movement::line_len(text, line));
                 cx.editor.select(pos, pos);
             }
-            Some(Overlay::Problems) => {
-                if let Some(&(document, pos)) = self.problems.get(index) {
+            Some(Overlay::Problems) => match self.problems.get(index).cloned() {
+                Some(ProblemAt::Document(document, pos)) => {
                     cx.ui.focus = Focus::Editor;
                     cx.editor.focus(document);
                     cx.editor.select(pos, pos);
                 }
+                Some(ProblemAt::File(path, line, column)) => {
+                    cx.ui.focus = Focus::Editor;
+                    if let Err(err) = cx.editor.open(path.clone()) {
+                        cx.editor
+                            .set_status(format!("could not open {}: {err}", path.display()));
+                        return;
+                    }
+                    let text = cx.editor.document().text();
+                    let line = line.min(text.len_lines() - 1);
+                    let pos = text.line_to_char(line) + column.min(movement::line_len(text, line));
+                    cx.editor.select(pos, pos);
+                }
+                None => {}
+            },
+            Some(Overlay::Tasks) => {
+                cx.ui.picked_task = Some(index);
+                cx.ui.request(Command::Custom("task.start".into()));
             }
             Some(Overlay::Finder) => {
                 let Some(path) = self.files.get(index) else {
@@ -469,6 +525,7 @@ impl Layer for Popups {
             Some(Overlay::Problems) => ("\u{26a0} problems", "search problems..."),
             Some(Overlay::References) => ("\u{21c4} references", "search references..."),
             Some(Overlay::Symbols) => ("\u{2261} symbols in this file", "search symbols..."),
+            Some(Overlay::Tasks) => ("\u{2699} run a task", "build, test, run..."),
             Some(Overlay::WorkspaceSymbols) => {
                 ("\u{2261} symbols in the project", "type a symbol name...")
             }

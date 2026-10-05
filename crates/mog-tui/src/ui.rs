@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use mog_config::Config;
-use mog_core::{Command, View};
+use mog_core::{Command, TaskProblem, View};
 use mog_git::FileStatus;
 use ratatui::{
     layout::{Position, Rect},
@@ -12,9 +12,9 @@ use ratatui::{
 
 use crate::{
     annotate::AnnotateState, chat::ChatState, completion::CompletionState, ghost::Ghost,
-    git_panel::GitPanelState, menu::MenuState, project_search::ProjectSearchState,
-    release_notes::ReleaseNotes, search::SearchState, settings::SettingKey,
-    status_line::STATUS_HEIGHT, theme_editor::ThemeDraft,
+    git_panel::GitPanelState, menu::MenuState, output::OutputState,
+    project_search::ProjectSearchState, release_notes::ReleaseNotes, search::SearchState,
+    settings::SettingKey, status_line::STATUS_HEIGHT, theme_editor::ThemeDraft,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -108,6 +108,10 @@ pub enum Overlay {
     WorkspaceSymbols,
     /// The source control panel.
     Git,
+    /// The tasks that can be run, like build and test.
+    Tasks,
+    /// The output of the task that ran last.
+    Output,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -316,6 +320,14 @@ pub struct Ui {
     pub idle: bool,
     /// The source control panel.
     pub git_panel: GitPanelState,
+    /// The tasks that can be run, as `(name, command)`.
+    pub tasks: Vec<(String, String)>,
+    /// The task picked to run, by index into `tasks`.
+    pub picked_task: Option<usize>,
+    /// The output of the task that ran last.
+    pub output: OutputState,
+    /// Problems found in the output of the task that ran last.
+    pub task_problems: Vec<TaskProblem>,
     /// Status line pieces added by layers this frame.
     pub segments: Vec<Segment>,
     /// Set when files changed on disk so the explorer reads its folders again.
