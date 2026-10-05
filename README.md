@@ -105,7 +105,14 @@ mog --version
 
 ## Language servers
 
-mog starts a server when you open a file it handles, if the program is on your `PATH`.
+mog starts a server when you open a file it handles, if the program is on your `PATH`. When it
+is not, mog says how to install it and, where one command does it, offers to run that command in
+the built in terminal. Run `Code: Restart language servers` once it is done.
+
+Besides diagnostics, completion, hover, go to definition, references, rename, formatting and code
+actions, mog shows inferred types at the end of lines (inlay hints), colors from the server on top
+of the syntax colors (semantic tokens), the signature of the call you are typing, and an outline
+of the file and project wide symbol search.
 
 | name | program | extensions |
 | --- | --- | --- |
@@ -483,6 +490,8 @@ The selecting versions are named `select_*`, like `select_word_left` and `select
 | `ctrl+g` | `goto.prompt` | Go to line |
 | `f12` | `lsp.definition` | Go to definition |
 | `shift+f12` | `lsp.references` | Find references |
+| `ctrl+shift+o` `alt+o` | `lsp.symbols` | Go to a symbol in the file, an outline |
+| `ctrl+t` `alt+t` | `lsp.workspace_symbols` | Go to a symbol anywhere in the project |
 | `f8` | `problems.next` | Next problem |
 | `shift+f8` | `problems.prev` | Previous problem |
 
@@ -495,6 +504,8 @@ The selecting versions are named `select_*`, like `select_word_left` and `select
 | `f2` | `lsp.rename` | Rename symbol |
 | `alt+shift+f` | `lsp.format` | Format file |
 | `ctrl+.` `alt+enter` | `lsp.actions` | Quick fixes and refactors |
+| `ctrl+shift+space` | `lsp.signature` | Signature of the call, also shown after typing `(` or `,` |
+| | `lsp.restart` | Restart language servers |
 
 ### View
 

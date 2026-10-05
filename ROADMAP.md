@@ -83,11 +83,11 @@
 - [x] Formatting
 - [x] Code actions
 - [x] Per project language server settings
-- [ ] Inlay hints
-- [ ] Signature help
-- [ ] Document and workspace symbols (outline and go to symbol)
-- [ ] Semantic tokens
-- [ ] Suggest installing a language server that isn't on `PATH`
+- [x] Inlay hints
+- [x] Signature help
+- [x] Document and workspace symbols (outline and go to symbol)
+- [x] Semantic tokens
+- [x] Suggest installing a language server that isn't on `PATH`
 
 ## AI
 
