@@ -868,7 +868,7 @@ mod tests {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig};
     use mog_core::{Command, Key, KeyChord};
-    use mog_tui::{Context, PromptKind, popups::PLUGIN_PICKED_COMMAND};
+    use mog_tui::{Context, CursorShape, PromptKind, popups::PLUGIN_PICKED_COMMAND};
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::{json, to_string};
     use tokio::time;
@@ -1473,6 +1473,108 @@ mod tests {
         app.execute_command(Command::Save);
         plugins_until(&mut app, |app| !app.editor.document().is_modified()).await;
         assert_eq!(fs::read_to_string(&file).expect("saved"), "first\nlast\n");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Presses `keys` one after another, then lets plugins work until every key is handled.
+    async fn press_keys(app: &mut App, keys: &[&str]) {
+        for key in keys {
+            app.handle_event(press(key));
+            app.run_requests();
+        }
+        plugins_until(app, |app| !app.plugin_keys_pending()).await;
+        app.run_requests();
+    }
+
+    /// The vim example takes the keyboard: motions, operators, insert mode, undo and the keys
+    /// typed so far drawn on the screen.
+    #[tokio::test]
+    async fn runs_the_vim_plugin() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let file = dir.join("notes.txt");
+        fs::write(
+            &file,
+            "one two
+three
+",
+        )
+        .expect("write");
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/vim");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.plugins.insert(
+            "vim".into(),
+            PluginConfig {
+                path: Some(example),
+                command: python.into(),
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), file.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        plugins_until(&mut app, |app| {
+            app.ui.plugin_segments.iter().any(|s| s.text == "NORMAL")
+        })
+        .await;
+        assert_eq!(app.ui.cursor_style.shape, CursorShape::Block);
+        let text = |app: &App| app.editor.document().text().to_string();
+        let head = |app: &App| app.editor.document().selection().head;
+        press_keys(&mut app, &["w"]).await;
+        assert_eq!(head(&app), 4);
+        // a key waiting for its motion shows on the screen
+        press_keys(&mut app, &["d"]).await;
+        plugins_until(&mut app, |app| !app.ui.plugin_widgets.is_empty()).await;
+        assert_eq!(app.ui.plugin_widgets[0].id, "keys");
+        press_keys(&mut app, &["w"]).await;
+        assert_eq!(
+            text(&app),
+            "one 
+three
+"
+        );
+        // keys typed right after i go into the file, not to vim
+        press_keys(&mut app, &["j", "shift+i", "x", "y", "esc"]).await;
+        assert_eq!(
+            text(&app),
+            "one 
+xythree
+"
+        );
+        assert_eq!(head(&app), 6);
+        press_keys(&mut app, &["d", "d", "u"]).await;
+        assert_eq!(
+            text(&app),
+            "one 
+xythree
+"
+        );
+        press_keys(&mut app, &["0", "2", "x"]).await;
+        assert_eq!(
+            text(&app),
+            "one 
+three
+"
+        );
+        // ctrl keys still reach mog
+        press_keys(&mut app, &["ctrl+s"]).await;
+        assert_eq!(
+            fs::read_to_string(&file).expect("saved"),
+            "one 
+three
+"
+        );
+        app.execute_command("plugin.vim.toggle".parse().expect("command"));
+        plugins_until(&mut app, |app| {
+            app.ui.cursor_style.shape == CursorShape::Default
+        })
+        .await;
+        press_keys(&mut app, &["z"]).await;
+        assert!(text(&app).contains('z'));
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -399,13 +399,18 @@ mod tests {
         assert!(check_name("a.b").is_err());
     }
 
-    /// The example plugin's copy of the python sdk is the current one.
+    /// The example plugins' copies of the python sdk are the current one.
     #[test]
     fn example_sdk_is_current() {
         assert_eq!(
             super::PYTHON_SDK,
             include_str!("../../../examples/plugins/todo/mog_plugin.py"),
             "copy sdk/python/mog_plugin.py into examples/plugins/todo"
+        );
+        assert_eq!(
+            super::PYTHON_SDK,
+            include_str!("../../../examples/plugins/vim/mog_plugin.py"),
+            "copy sdk/python/mog_plugin.py into examples/plugins/vim"
         );
     }
 

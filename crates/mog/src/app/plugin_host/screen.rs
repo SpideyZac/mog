@@ -429,6 +429,13 @@ impl App {
         }
     }
 
+    /// Returns whether keys are waiting for a plugin to decide about them.
+    #[cfg(test)]
+    pub(in crate::app) fn plugin_keys_pending(&self) -> bool {
+        let screen = &self.plugin_state.screen;
+        screen.key_waiting || !screen.queued_keys.is_empty()
+    }
+
     /// Returns the plugin that takes `chord` right now, if any.
     fn key_taker(&self, chord: &KeyChord) -> Option<String> {
         let ui = &self.ui;

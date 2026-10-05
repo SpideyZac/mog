@@ -1,0 +1,21 @@
+name = "vim"
+version = "1.0.0"
+description = "Vim motions: normal, insert and visual modes, counts, operators, registers, search and ex commands."
+protocol = 2
+command = "python3"
+command_windows = "python"
+args = ["${plugin_dir}/vim.py"]
+activation = ["startup"]
+timeout = 10
+
+[[commands]]
+name = "toggle"
+title = "Vim: Turn vim motions on or off"
+
+[[commands]]
+name = "ex"
+title = "Vim: Run an ex command like :w"
+
+[[commands]]
+name = "search"
+title = "Vim: Search"
