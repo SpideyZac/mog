@@ -84,12 +84,28 @@ impl Message {
     }
 }
 
+/// The biggest message a language server may send, so a broken header cannot exhaust memory.
+pub const MAX_MESSAGE: usize = 512 << 20;
+
 /// Reads one message, or `None` if the stream ended cleanly before it.
 ///
 /// # Errors
 ///
-/// Returns an error on a broken header, bad JSON or a failed read.
+/// Returns an error on a broken header, bad JSON, a message over [`MAX_MESSAGE`] or a failed
+/// read.
 pub async fn read_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<Option<Message>> {
+    read_message_limited(reader, MAX_MESSAGE).await
+}
+
+/// Reads one message of at most `max` bytes, or `None` if the stream ended cleanly before it.
+///
+/// # Errors
+///
+/// Returns an error on a broken header, bad JSON, a message over `max` or a failed read.
+pub async fn read_message_limited<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max: usize,
+) -> io::Result<Option<Message>> {
     let mut length = None;
     let mut line = String::new();
     loop {
@@ -113,6 +129,12 @@ pub async fn read_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result
     }
     let length =
         length.ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing content length"))?;
+    if length > max {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            format!("a message of {length} bytes is over the limit of {max}"),
+        ));
+    }
     let mut body = vec![0; length];
     reader.read_exact(&mut body).await?;
     let value = serde_json::from_slice(&body)?;
@@ -141,7 +163,7 @@ mod tests {
     use serde_json::json;
     use tokio::io::BufReader;
 
-    use super::{Message, read_message, write_message};
+    use super::{Message, read_message, read_message_limited, write_message};
 
     /// A written message reads back the same.
     #[tokio::test]
@@ -171,5 +193,13 @@ mod tests {
             assert_eq!(read, Some(message));
         }
         assert_eq!(read_message(&mut reader).await.expect("eof"), None);
+    }
+
+    /// A message that claims to be bigger than the limit is refused before it is read.
+    #[tokio::test]
+    async fn refuses_huge_messages() {
+        let framed = b"Content-Length: 99999999999\r\n\r\n{}";
+        let mut reader = BufReader::new(&framed[..]);
+        assert!(read_message_limited(&mut reader, 1024).await.is_err());
     }
 }
