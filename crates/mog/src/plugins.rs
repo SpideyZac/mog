@@ -199,13 +199,14 @@ fn resolve(
         (Some(path), _) => Some(Manifest::read(path)?),
         (None, manifest) => manifest,
     };
-    let (command, args) = if config.command.is_empty() {
-        let manifest = manifest
-            .as_ref()
-            .ok_or_else(|| format!("plugin {name} needs a command or a path"))?;
-        (manifest.command.clone(), manifest.args.clone())
-    } else {
-        (config.command.clone(), config.args.clone())
+    let (command, args) = match (&manifest, config.command.is_empty()) {
+        (Some(manifest), true) => (manifest.command.clone(), manifest.args.clone()),
+        // naming just the program, like python instead of python3, keeps the manifest args
+        (Some(manifest), false) if config.args.is_empty() => {
+            (config.command.clone(), manifest.args.clone())
+        }
+        (_, false) => (config.command.clone(), config.args.clone()),
+        (None, true) => return Err(format!("plugin {name} needs a command or a path")),
     };
     let timeout = config
         .timeout
