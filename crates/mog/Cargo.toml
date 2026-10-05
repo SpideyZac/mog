@@ -40,6 +40,7 @@ mog-dap.workspace = true
 mog-flair.workspace = true
 mog-git.workspace = true
 mog-lsp.workspace = true
+mog-plugin.workspace = true
 mog-term.workspace = true
 mog-tui.workspace = true
 notify.workspace = true

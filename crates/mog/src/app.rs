@@ -39,12 +39,14 @@ use mog_lsp::{
     LspEvent, convert,
     features::{CodeAction, FileEdits},
 };
+use mog_plugin::{Action, PluginEvent};
 use mog_term::TerminalPanel;
 use mog_tui::{
-    Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
-    DebugPanel, EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap, OutputPanel,
-    Overlay, Pane, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar,
-    SettingsPanel, SignatureHint, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
+    Annotations, ChatPanel, CommandInfo, CompletionMenu, Compositor, Context, ContextMenu,
+    CopilotState, DebugPanel, EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap,
+    OutputPanel, Overlay, Pane, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup,
+    SearchBar, SettingsPanel, SignatureHint, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui,
+    UiEvent,
     completion::{self, CompletionState},
     debug_panel::{self, FrameEntry},
     ghost, git_panel, input,
@@ -62,6 +64,7 @@ use ratatui::{
     backend::TestBackend,
     layout::{Position, Rect},
 };
+use serde_json::{Value, json};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task,
@@ -76,6 +79,7 @@ use crate::{
     discord::{Presence, Status},
     git::{self, Git, GitUpdate},
     lsp::{self, LanguageServers, LspReply},
+    plugins::{self, PluginUpdate, Plugins},
     session::{Session, SessionFile, State, Swap},
     settings::{self, ProjectStatus},
     tasks::{self, Runner, Task, TaskEvent},
@@ -252,6 +256,8 @@ pub struct App {
     debug_after_task: Option<(String, DebugConfig)>,
     /// The call stack of the stopped program, innermost first.
     debug_frames: Vec<Frame>,
+    /// The running plugins.
+    plugins: Plugins,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -399,6 +405,7 @@ impl App {
             debugger: Debugger::new(),
             debug_after_task: None,
             debug_frames: Vec::new(),
+            plugins: Plugins::new(),
             quit: false,
         };
         for name in startup {
@@ -909,6 +916,7 @@ impl App {
                 Some(update) = self.git.update() => self.handle_git(update),
                 Some(event) = self.updater.event() => self.handle_update(event),
                 Some(event) = self.runner.event() => self.handle_task(event),
+                Some(update) = self.plugins.update() => self.handle_plugin(update),
                 Some(update) = self.debugger.update() => match update {
                     DebugUpdate::Event(event) => self.handle_debug_event(event),
                     DebugUpdate::Reply(reply) => self.handle_debug_reply(reply),
@@ -1165,8 +1173,7 @@ impl App {
         }
         let (keymap, problems) = settings::keymap(&self.ui.config);
         self.keymap = keymap;
-        self.ui.commands = commands::palette(&self.keymap);
-        self.ui.bindings = commands::bindings(&self.keymap);
+        self.refresh_commands();
         // reopening refills the list with the new keys
         self.ui.open(Overlay::Keys);
         self.editor.set_status(if problems.is_empty() {
@@ -1226,8 +1233,7 @@ impl App {
             self.ui.copilot = None;
         }
         self.keymap = keymap;
-        self.ui.commands = commands::palette(&self.keymap);
-        self.ui.bindings = commands::bindings(&self.keymap);
+        self.refresh_commands();
         self.lsp.reconfigure(config.language_servers());
         self.ui.config = config;
         self.editor.set_status("config reloaded");
@@ -1317,6 +1323,7 @@ impl App {
     fn watch_focus(&mut self) {
         let path = self.editor.document().path().map(ToOwned::to_owned);
         if path != self.last_focus {
+            self.plugins.event("opened", path.as_deref());
             self.last_focus = path;
             self.ui.events.push(UiEvent::Opened);
             if self.editor.document().is_large() {
@@ -1361,6 +1368,170 @@ impl App {
             self.git.request_blame(path, line, document.version(), || {
                 document.text().to_string()
             });
+        }
+    }
+
+    /// Starts the plugins from the config.
+    ///
+    /// Not part of [`App::new`] so snapshots and tests do not run other programs.
+    pub fn start_plugins(&mut self) {
+        let problems = self.plugins.start(&self.ui.config.plugins, &self.ui.root);
+        if !problems.is_empty() {
+            self.editor.set_status(problems.join("; "));
+        }
+    }
+
+    /// Rebuilds the palette and key list from the keymap and the plugin commands, binding the
+    /// keys plugins suggest when nothing else uses them.
+    fn refresh_commands(&mut self) {
+        for (name, _, keys) in self.plugins.palette() {
+            for key in keys {
+                let Ok(chord) = key.parse::<KeyChord>() else {
+                    continue;
+                };
+                let configured = self
+                    .ui
+                    .config
+                    .keys
+                    .keys()
+                    .any(|other| other.parse::<KeyChord>().ok() == Some(chord));
+                if self
+                    .keymap
+                    .resolve(&chord)
+                    .is_none_or(|bound| bound.to_string() == name)
+                    && !configured
+                {
+                    self.keymap.bind(chord, Command::Custom(name.clone()));
+                }
+            }
+        }
+        let mut palette = commands::palette(&self.keymap);
+        for (name, title, _) in self.plugins.palette() {
+            let keys = self
+                .keymap
+                .chords_for(&Command::Custom(name.clone()))
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            palette.push(CommandInfo { name, title, keys });
+        }
+        self.ui.commands = palette;
+        self.ui.bindings = commands::bindings(&self.keymap);
+    }
+
+    /// Returns what the editor looks like, for a plugin command.
+    fn plugin_context(&self) -> Value {
+        let document = self.editor.document();
+        let text = document.text();
+        let selection = document.selection();
+        let line = text.char_to_line(selection.head);
+        json!({
+            "root": self.ui.root.to_string_lossy(),
+            "path": document.path().map(|path| path.to_string_lossy()),
+            "language": document
+                .path()
+                .and_then(|path| path.extension())
+                .map(|ext| ext.to_string_lossy()),
+            // a huge file would be slow to copy and to send
+            "text": (!document.is_large()).then(|| text.to_string()),
+            "selection": { "anchor": selection.anchor, "head": selection.head },
+            "line": line,
+            "column": selection.head - text.line_to_char(line),
+            "modified": document.is_modified(),
+        })
+    }
+
+    /// Acts on something a plugin did or a plugin command that finished.
+    fn handle_plugin(&mut self, update: PluginUpdate) {
+        match update {
+            PluginUpdate::Event(PluginEvent::Ready { plugin, commands }) => {
+                self.plugins.ready(plugin, commands);
+                self.refresh_commands();
+            }
+            PluginUpdate::Event(PluginEvent::Actions { actions, .. })
+            | PluginUpdate::Ran(_, Ok(actions)) => self.apply_actions(actions),
+            PluginUpdate::Event(PluginEvent::Segment { plugin, text }) => {
+                self.ui
+                    .plugin_segments
+                    .retain(|(other, _)| *other != plugin);
+                if !text.is_empty() {
+                    self.ui.plugin_segments.push((plugin, text));
+                }
+            }
+            PluginUpdate::Event(PluginEvent::Exited { plugin, reason }) => {
+                self.plugins.exited(&plugin);
+                self.ui
+                    .plugin_segments
+                    .retain(|(other, _)| *other != plugin);
+                self.refresh_commands();
+                let reason = reason
+                    .map(|reason| format!(": {reason}"))
+                    .unwrap_or_default();
+                self.editor
+                    .set_status(format!("plugin {plugin} stopped{reason}"));
+            }
+            PluginUpdate::Ran(plugin, Err(err)) => {
+                self.editor.set_status(format!("{plugin}: {err}"));
+            }
+        }
+    }
+
+    /// Does what a plugin asked for.
+    fn apply_actions(&mut self, actions: Vec<Action>) {
+        for action in actions {
+            match action {
+                Action::Status(text) => self.editor.set_status(text),
+                Action::Insert(text) => self.execute_command(Command::InsertText(text)),
+                Action::Command(name) => match name.parse() {
+                    Ok(command) => self.execute_command(command),
+                    Err(err) => self.editor.set_status(err.to_string()),
+                },
+                Action::Open { path, line } => {
+                    let path = if path.is_absolute() {
+                        path
+                    } else {
+                        self.ui.root.join(path)
+                    };
+                    if let Err(err) = self.editor.open(&path) {
+                        self.editor
+                            .set_status(format!("could not open {}: {err}", path.display()));
+                        continue;
+                    }
+                    if let Some(line) = line {
+                        let text = self.editor.document().text();
+                        let pos = text.line_to_char(line.min(text.len_lines().saturating_sub(1)));
+                        self.editor.select(pos, pos);
+                    }
+                }
+                Action::Edit { path, changes } => {
+                    let focused = self.editor.active();
+                    let target = match &path {
+                        Some(path) => self
+                            .editor
+                            .documents()
+                            .iter()
+                            .position(|document| document.path() == Some(path.as_path())),
+                        None => Some(focused),
+                    };
+                    let Some(target) = target else {
+                        self.editor
+                            .set_status("a plugin tried to edit a file that is not open");
+                        continue;
+                    };
+                    self.editor.focus(target);
+                    let len = self.editor.document().text().len_chars();
+                    let changes = changes
+                        .into_iter()
+                        .map(|edit| Change {
+                            start: edit.start.min(len),
+                            end: edit.end.min(len).max(edit.start.min(len)),
+                            text: edit.text,
+                        })
+                        .collect();
+                    self.editor.apply_changes(changes);
+                    self.editor.focus(focused);
+                }
+            }
         }
     }
 
@@ -1495,7 +1666,7 @@ impl App {
         let arguments = if arguments.is_object() {
             arguments
         } else {
-            serde_json::json!({})
+            json!({})
         };
         if let Err(err) = self.debugger.start(name, config, arguments, &self.ui.root) {
             self.editor.set_status(err);
@@ -2828,6 +2999,7 @@ impl App {
             return;
         };
         self.lsp.saved(&path);
+        self.plugins.event("saved", Some(&path));
         let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
         if Self::is_config(&path)
             || canonical(&path) == canonical(&project_config_path(&self.ui.root))
@@ -3142,6 +3314,11 @@ impl App {
             }
             "debug.panel" => self.ui.debug.open = !self.ui.debug.open,
             debug_panel::FRAME_COMMAND => self.show_frame(self.ui.debug.frame),
+            plugin if plugin.starts_with(plugins::PREFIX) => {
+                if !self.plugins.run(plugin, self.plugin_context()) {
+                    self.editor.set_status(format!("{plugin} is not running"));
+                }
+            }
             "task.run" => self.pick_task(),
             "task.start" => {
                 let task = self
@@ -3404,10 +3581,11 @@ mod tests {
 
     use clap::Parser;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use mog_config::{Config, DebugConfig, TaskConfig};
+    use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig};
     use mog_core::{Key, KeyChord};
     use mog_tui::{Context, PromptKind};
     use ratatui::{Terminal, backend::TestBackend};
+    use serde_json::{json, to_string};
     use tokio::time;
 
     use super::{App, FRAME_TIME, IDLE_FRAME_TIME};
@@ -3556,7 +3734,7 @@ mod tests {
         };
         let swap_file = dir.join("state").join("swap").join("left.json");
         fs::create_dir_all(swap_file.parent().expect("folder")).expect("swap dir");
-        fs::write(&swap_file, serde_json::to_string(&swap).expect("json")).expect("swap");
+        fs::write(&swap_file, to_string(&swap).expect("json")).expect("swap");
         let mut app = start_with_state(&project, state);
         app.restore_session();
         assert_eq!(
@@ -3753,7 +3931,7 @@ mod tests {
             DebugConfig {
                 command: "lldb-dap".into(),
                 extensions: vec!["c".into()],
-                arguments: serde_json::json!({ "program": "${root}/main${exe}", "cwd": "${root}" }),
+                arguments: json!({ "program": "${root}/main${exe}", "cwd": "${root}" }),
                 ..DebugConfig::default()
             },
         );
@@ -3832,7 +4010,7 @@ mod tests {
                 .map(String::from)
                 .to_vec(),
                 extensions: vec!["py".into()],
-                arguments: serde_json::json!({ "program": "${file}", "cwd": "${root}",
+                arguments: json!({ "program": "${file}", "cwd": "${root}",
                     "console": "internalConsole" }),
                 ..DebugConfig::default()
             },
@@ -3860,6 +4038,97 @@ mod tests {
         );
         app.execute_command("debug.start".parse().expect("command"));
         debug_until(&mut app, |app| !app.ui.debug.active).await;
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Returns the Python program on this machine, if there is one.
+    fn python() -> Option<&'static str> {
+        ["python3", "python"].into_iter().find(|program| {
+            process::Command::new(program)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        })
+    }
+
+    /// Feeds the app plugin updates until `done` says to stop.
+    async fn plugins_until(app: &mut App, done: impl Fn(&App) -> bool) {
+        while !done(app) {
+            let update = time::timeout(Duration::from_secs(20), app.plugins.update())
+                .await
+                .expect("the plugin answered in time")
+                .expect("an update");
+            app.handle_plugin(update);
+        }
+    }
+
+    /// The example plugin adds commands that count, edit and insert, and fills the status line.
+    #[tokio::test]
+    async fn runs_the_example_plugin() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let file = dir.join("notes.txt");
+        fs::write(&file, "hello there mog\n").expect("write");
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/plugins/words.py")
+            .canonicalize()
+            .expect("the example exists");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.plugins.insert(
+            "words".into(),
+            PluginConfig {
+                command: python.into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        plugins_until(&mut app, |app| {
+            app.ui
+                .commands
+                .iter()
+                .any(|info| info.name == "plugin.words.count")
+        })
+        .await;
+        let count = app
+            .ui
+            .commands
+            .iter()
+            .find(|info| info.name == "plugin.words.count")
+            .expect("count");
+        assert_eq!(count.keys, ["alt+shift+w"]);
+        app.editor.open(&file).expect("open");
+        app.watch_focus();
+        plugins_until(&mut app, |app| !app.ui.plugin_segments.is_empty()).await;
+        assert_eq!(app.ui.plugin_segments[0].1, "3w");
+        app.handle_event(press("alt+shift+w"));
+        plugins_until(&mut app, |app| {
+            app.editor
+                .status()
+                .is_some_and(|status| status.contains("words"))
+        })
+        .await;
+        assert_eq!(app.editor.status(), Some("3 words, nice"));
+        app.editor.select(0, 5);
+        app.execute_command("plugin.words.shout".parse().expect("command"));
+        plugins_until(&mut app, |app| {
+            app.editor
+                .document()
+                .text()
+                .to_string()
+                .starts_with("HELLO")
+        })
+        .await;
+        assert_eq!(
+            app.editor.document().text().to_string(),
+            "HELLO there mog\n"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

@@ -9,6 +9,7 @@ mod debug;
 mod discord;
 mod git;
 mod lsp;
+mod plugins;
 mod session;
 mod settings;
 mod tasks;
@@ -57,6 +58,7 @@ async fn main() -> Result<()> {
     // windows reads keys from the console directly so it never loses chords
     app.set_legacy_keys(!cfg!(windows) && !terminal::keys_enhanced());
     app.restore_session();
+    app.start_plugins();
     app.start_updates();
     let result = app.run(&mut tui).await;
     terminal::restore()?;

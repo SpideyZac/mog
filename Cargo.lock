@@ -1889,6 +1889,7 @@ dependencies = [
  "mog-flair",
  "mog-git",
  "mog-lsp",
+ "mog-plugin",
  "mog-term",
  "mog-tui",
  "notify",
