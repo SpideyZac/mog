@@ -136,7 +136,7 @@ const TOGGLES: &[(&str, SettingKey, &str, &str)] = &[
         "code",
         SettingKey::Ui("inlay_hints"),
         "Inlay hints",
-        "Show inferred types and parameter names at the end of lines.",
+        "Show inferred types and parameter names in the code, greyed out.",
     ),
     (
         "code",

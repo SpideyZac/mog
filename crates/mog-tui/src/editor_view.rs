@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Document, Severity, TokenKind, View, movement, view};
+use mog_core::{Command, Document, InlayHint, Severity, TokenKind, View, movement, view};
 use mog_git::LineChange;
 use mog_syntax::{Kind, Span, language_for};
 use ratatui::{
@@ -82,6 +82,63 @@ fn kind_style(theme: &Theme, kind: Kind) -> Style {
         Kind::Property => theme.property,
         Kind::Namespace => theme.namespace,
         Kind::Markup => theme.markup,
+    }
+}
+
+/// Returns how many cells the inlay hints before char column `col` of a line take up.
+///
+/// A hint at `col` itself sits before that char, so it counts only when `at` is set. The cursor
+/// stays in front of such a hint, like in other editors.
+fn hint_cells(hints: &[InlayHint], col: usize, at: bool) -> usize {
+    hints
+        .iter()
+        .filter(|hint| hint.col < col || (at && hint.col == col))
+        .map(|hint| hint.label.width())
+        .sum()
+}
+
+/// Turns a visual cell on `line` into the cell it would be without inlay hints, so clicks land on
+/// the text under the mouse. A click on a hint lands just before the code it is about.
+fn cell_without_hints(document: &Document, line: usize, cell: usize, tab_width: usize) -> usize {
+    let hints = document.inlay_hints(line);
+    if hints.is_empty() {
+        return cell;
+    }
+    let text = document.text();
+    let start = text.line_to_char(line);
+    let mut shift = 0;
+    for hint in hints {
+        let at = view::visual_col(text, start + hint.col, tab_width) + shift;
+        let width = hint.label.width();
+        if cell < at {
+            break;
+        }
+        if cell < at + width {
+            return at - shift;
+        }
+        shift += width;
+    }
+    cell - shift
+}
+
+/// Draws the inlay hint `label` starting at visual cell `col`, keeping to the visible cells.
+fn draw_hint(
+    buf: &mut Buffer,
+    origin: Position,
+    col: usize,
+    label: &str,
+    style: Style,
+    scroll_col: usize,
+    width: usize,
+) {
+    let mut cell = col;
+    for ch in label.chars() {
+        let cells_wide = ch.to_string().width().max(1);
+        if cell >= scroll_col && cell + cells_wide <= scroll_col + width {
+            let x = origin.x + cells(cell - scroll_col);
+            buf.set_string(x, origin.y, ch.to_string(), style);
+        }
+        cell += cells_wide;
     }
 }
 
@@ -299,6 +356,14 @@ impl Layer for EditorView {
             cx.editor
                 .view_mut()
                 .resize(usize::from(text_width), usize::from(area.height));
+            // inlay hints push the cursor right, past where the view thinks it is
+            let cursor = Self::cursor_cell(cx);
+            let view = cx.editor.view_mut();
+            let right = view.scroll_col + usize::from(text_width);
+            if text_width > 0 && cursor >= right {
+                view.scroll_col = cursor + 1 - usize::from(text_width);
+            }
+            shown_view.scroll_col = cx.editor.view().scroll_col;
             cx.ui.cursor_screen = self.cursor_position(area, cx);
         } else if let Some(split) = cx.ui.split.as_mut() {
             split.other_view = shown_view.clone();
@@ -456,17 +521,39 @@ impl Layer for EditorView {
             };
             let mut token = 0;
             let right_edge = scroll.scroll_col + usize::from(text_width);
+            let hints = if settings.inlay_hints {
+                document.inlay_hints(line)
+            } else {
+                &[]
+            };
+            let mut hint = 0;
+            let hint_origin = Position::new(text_x, y);
+            let text_cells = usize::from(text_width);
             // a plain ascii start scrolled off to the left is one cell per char, so jump over it
-            let skip = plain_prefix(document, start, scroll.scroll_col.min(len));
+            let skip = if hints.is_empty() {
+                plain_prefix(document, start, scroll.scroll_col.min(len))
+            } else {
+                0
+            };
             col += skip;
+            // tabs line up on the columns of the text itself, hints aside
+            let mut plain = skip;
             for (i, ch) in text.slice(start + skip..line_end).chars().enumerate() {
                 let i = i + skip;
+                while let Some(found) = hints.get(hint).filter(|found| found.col <= i) {
+                    let label = &found.label;
+                    let (scroll_col, style) = (scroll.scroll_col, theme.inlay_hint);
+                    draw_hint(buf, hint_origin, col, label, style, scroll_col, text_cells);
+                    col += label.width();
+                    hint += 1;
+                }
                 // the rest of a very long line is off screen, so stop instead of walking it
                 if col >= right_edge {
                     break;
                 }
                 let pos = start + i;
-                let width = view::char_width(ch, col, tab_width);
+                let width = view::char_width(ch, plain, tab_width);
+                plain += width;
                 // chars scrolled off to the left only matter for bracket depth
                 if col + width <= scroll.scroll_col {
                     if movement::BRACKETS.iter().any(|(open, _)| *open == ch) {
@@ -560,6 +647,23 @@ impl Layer for EditorView {
                 }
                 col += width;
             }
+            // hints after the last char, like a type at the end of a line
+            for found in hints.get(hint..).unwrap_or_default() {
+                if col >= right_edge {
+                    break;
+                }
+                let (scroll_col, style) = (scroll.scroll_col, theme.inlay_hint);
+                draw_hint(
+                    buf,
+                    hint_origin,
+                    col,
+                    &found.label,
+                    style,
+                    scroll_col,
+                    text_cells,
+                );
+                col += found.label.width();
+            }
 
             // show selected line breaks as one highlighted cell like most editors
             if selection.from() <= line_end && line_end < selection.to() && visible(col) {
@@ -572,7 +676,8 @@ impl Layer for EditorView {
                 .iter()
                 .filter(|r| (start..=line_end).contains(&r.head))
             {
-                let cell = view::visual_col(text, extra.head, tab_width);
+                let cell = view::visual_col(text, extra.head, tab_width)
+                    + hint_cells(hints, extra.head - start, false);
                 if visible(cell) {
                     let x = text_x + cells(cell - scroll.scroll_col);
                     let block = Style::new().bg(theme.palette.accent).fg(theme.palette.bg);
@@ -596,7 +701,8 @@ impl Layer for EditorView {
                 if ghost.items.len() > 1 {
                     first.push_str(&format!("  {}/{}", ghost.index + 1, ghost.items.len()));
                 }
-                let head_col = view::visual_col(text, selection.head, tab_width);
+                let head_col = view::visual_col(text, selection.head, tab_width)
+                    + hint_cells(hints, selection.head - start, false);
                 if visible(head_col) {
                     let x = text_x + cells(head_col - scroll.scroll_col);
                     let room = usize::from(text_x + text_width).saturating_sub(usize::from(x));
@@ -604,28 +710,6 @@ impl Layer for EditorView {
                 }
                 ghost_below = Some((y, suggestion.collect()));
                 continue;
-            }
-            let hints = if settings.inlay_hints {
-                document.inlay_hints(line)
-            } else {
-                &[]
-            };
-            if !hints.is_empty() {
-                let label = hints
-                    .iter()
-                    .map(|hint| hint.label.trim())
-                    .collect::<Vec<_>>()
-                    .join("  ");
-                let label = format!(" {label} ");
-                let cell = col + 2;
-                if cell >= scroll.scroll_col {
-                    let x = cell - scroll.scroll_col;
-                    let room = usize::from(text_width).saturating_sub(x);
-                    if room > 0 {
-                        buf.set_stringn(text_x + cells(x), y, &label, room, theme.inlay_hint);
-                    }
-                }
-                col = cell + label.width();
             }
             let inline = match diagnostic {
                 Some(d) if settings.error_lens => {
@@ -693,8 +777,17 @@ impl Layer for EditorView {
         }
         let text_x = area.x + self.gutter_width;
         let in_gutter = event.column < text_x;
-        let col = usize::from(event.column.saturating_sub(text_x));
         let row = usize::from(event.row.saturating_sub(area.y));
+        let col = {
+            // clicks are on screen cells, which inlay hints push away from the text
+            let scroll = cx.editor.view();
+            let (scroll_col, scroll_line) = (scroll.scroll_col, scroll.scroll_line);
+            let cell = usize::from(event.column.saturating_sub(text_x)) + scroll_col;
+            let document = cx.editor.document();
+            let line = (scroll_line + row).min(document.text().len_lines().saturating_sub(1));
+            let tab_width = cx.editor.options().tab_width;
+            cell_without_hints(document, line, cell, tab_width).saturating_sub(scroll_col)
+        };
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 cx.ui.focus = Focus::Editor;
@@ -770,6 +863,24 @@ impl Layer for EditorView {
 }
 
 impl EditorView {
+    /// Returns the visual cell of the cursor on its line, counting inlay hints in front of it.
+    fn cursor_cell(cx: &Context<'_>) -> usize {
+        let document = cx.editor.document();
+        let text = document.text();
+        let head = document.selection().head;
+        let line = text.char_to_line(head);
+        let col = view::visual_col(text, head, cx.editor.options().tab_width);
+        if cx.ui.config.ui.inlay_hints {
+            col + hint_cells(
+                document.inlay_hints(line),
+                head - text.line_to_char(line),
+                false,
+            )
+        } else {
+            col
+        }
+    }
+
     /// Returns where the text cursor is on screen, if it is visible.
     fn cursor_position(&self, area: Rect, cx: &Context<'_>) -> Option<Position> {
         let gutter = Self::gutter_width_for(cx.editor.document().text().len_lines(), cx.ui);
@@ -779,8 +890,7 @@ impl EditorView {
         let head = document.selection().head;
         let scroll = cx.editor.view();
         let line = text.char_to_line(head).checked_sub(scroll.scroll_line)?;
-        let col = view::visual_col(text, head, cx.editor.options().tab_width)
-            .checked_sub(scroll.scroll_col)?;
+        let col = Self::cursor_cell(cx).checked_sub(scroll.scroll_col)?;
         let x = usize::from(gutter) + col;
         if line >= usize::from(area.height) || x >= usize::from(area.width) {
             return None;
@@ -792,11 +902,17 @@ impl EditorView {
 #[cfg(test)]
 /// Tests for [`EditorView`].
 mod tests {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use mog_core::{
         Diagnostic, Editor, InlayHint, MemoryClipboard, Range, SemanticToken, Severity, TokenKind,
         Transaction,
     };
-    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Position};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        buffer::Buffer,
+        layout::{Position, Rect},
+    };
 
     use super::EditorView;
     use crate::{
@@ -855,7 +971,7 @@ mod tests {
             0,
             InlayHint {
                 col: 5,
-                label: "x: i32".into(),
+                label: ": i32".into(),
             },
         )]);
         document.set_semantic_tokens(vec![(
@@ -868,11 +984,65 @@ mod tests {
         )]);
         let buffer = draw(&mut editor, 30, 2);
         let row: String = (0..30).map(|x| buffer[(x, 0)].symbol()).collect();
-        assert_eq!(row.trim_end(), "1 let x = 1;   x: i32");
+        assert_eq!(row.trim_end(), "1 let x: i32 = 1;");
         assert_eq!(
             buffer[(6, 0)].fg,
             Theme::default().parameter.fg.expect("color")
         );
+        assert_eq!(
+            buffer[(8, 0)].fg,
+            Theme::default().inlay_hint.fg.expect("color")
+        );
+    }
+
+    /// The cursor skips over inlay hints and clicks past one land on the code after it.
+    #[test]
+    fn cursor_and_clicks_skip_hints() {
+        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        let document = editor.document_mut();
+        document.apply(Transaction::insert(0, "let x = 1;"), Range::point(0), false);
+        document.set_inlay_hints(vec![(
+            0,
+            InlayHint {
+                col: 5,
+                label: ": i32".into(),
+            },
+        )]);
+        // after `=` the cursor sits past the hint
+        editor.select(7, 7);
+        let mut compositor = Compositor::new();
+        compositor.push(Box::new(EditorView::new()));
+        let theme = Theme::default();
+        let mut ui = Ui::default();
+        ui.config.ui.tabs = false;
+        ui.config.ui.minimap = false;
+        ui.config.ui.git_gutter = false;
+        let mut terminal = Terminal::new(TestBackend::new(30, 2)).expect("test terminal");
+        let mut cursor = None;
+        terminal
+            .draw(|frame| {
+                let mut cx = Context {
+                    editor: &mut editor,
+                    theme: &theme,
+                    ui: &mut ui,
+                };
+                cursor = compositor.render(frame, &mut cx);
+            })
+            .expect("draw");
+        assert_eq!(cursor, Some(Position::new(14, 0)));
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 15,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        let mut cx = Context {
+            editor: &mut editor,
+            theme: &theme,
+            ui: &mut ui,
+        };
+        compositor.handle_mouse(click, Rect::new(0, 0, 30, 2), &mut cx);
+        assert_eq!(editor.document().selection().head, 8);
     }
 
     /// Text is drawn after the gutter with tabs expanded and the cursor placed.
