@@ -28,7 +28,7 @@ use mog_config::{
 };
 use mog_core::{
     Change, Command, Document, Editor, FileTree, KeyChord, Keymap, Outcome, Range, Severity,
-    Transaction, movement,
+    Transaction, movement, parse_problems,
     project_search::{self, ProjectResults},
     search::{self as core_search, Matcher},
 };
@@ -41,9 +41,9 @@ use mog_lsp::{
 use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CopilotState,
-    EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap, Overlay, Pane, Popups,
-    ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel, SignatureHint,
-    SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
+    EditorView, EventResult, Explorer, Focus, Ghost, GitPanel, Minimap, OutputPanel, Overlay, Pane,
+    Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel,
+    SignatureHint, SplitState, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent,
     completion::{self, CompletionState},
     ghost, git_panel, input,
     menu::{self, MenuAction, MenuItem},
@@ -75,6 +75,7 @@ use crate::{
     lsp::{self, LanguageServers, LspReply},
     session::{Session, SessionFile, State, Swap},
     settings::{self, ProjectStatus},
+    tasks::{self, Runner, Task, TaskEvent},
     terminal::Tui,
     update::{self, Release, UpdateEvent, Updater},
     watch::FolderWatcher,
@@ -236,6 +237,12 @@ pub struct App {
     undo_checked: HashSet<PathBuf>,
     /// Unsaved work from a mog that crashed, waiting for the user to say what to do with it.
     recoverable: Vec<(PathBuf, Swap)>,
+    /// Runs tasks like build and test.
+    runner: Runner,
+    /// The tasks offered in the picker.
+    task_list: Vec<Task>,
+    /// The task that ran last, to run again.
+    last_task: Option<Task>,
     /// Whether the event loop should stop after the current iteration.
     quit: bool,
 }
@@ -312,6 +319,7 @@ impl App {
         compositor.push(Box::new(ProjectSearchPanel::new()));
         compositor.push(Box::new(GraphView::new()));
         compositor.push(Box::new(GitPanel::new()));
+        compositor.push(Box::new(OutputPanel::new()));
         compositor.push(Box::new(ContextMenu::new()));
         compositor.push(Box::new(Annotations::new()));
 
@@ -375,6 +383,9 @@ impl App {
             swaps: HashMap::new(),
             undo_checked: HashSet::new(),
             recoverable: Vec::new(),
+            runner: Runner::new(),
+            task_list: Vec::new(),
+            last_task: None,
             quit: false,
         };
         for name in startup {
@@ -884,6 +895,7 @@ impl App {
                 Some(reply) = self.assistant.reply() => self.handle_ai_reply(reply),
                 Some(update) = self.git.update() => self.handle_git(update),
                 Some(event) = self.updater.event() => self.handle_update(event),
+                Some(event) = self.runner.event() => self.handle_task(event),
                 Some((generation, results)) = self.project_results.recv() => {
                     self.show_project_results(generation, results);
                 }
@@ -1331,6 +1343,89 @@ impl App {
             self.git.request_blame(path, line, document.version(), || {
                 document.text().to_string()
             });
+        }
+    }
+
+    /// Offers the project's tasks in a picker.
+    fn pick_task(&mut self) {
+        self.task_list = tasks::tasks(&self.ui.root, &self.ui.config.tasks);
+        if self.task_list.is_empty() {
+            self.editor.set_status(
+                "no tasks found, add [tasks.<name>] command = \"...\" to the config or the project",
+            );
+            return;
+        }
+        self.ui.tasks = self
+            .task_list
+            .iter()
+            .map(|task| (task.name.clone(), task.command.clone()))
+            .collect();
+        self.ui.open(Overlay::Tasks);
+    }
+
+    /// Starts `task`, showing its output as it runs.
+    fn start_task(&mut self, task: Task) {
+        // tasks build what is on disk, so unsaved files would be left out
+        let unsaved = self
+            .editor
+            .documents()
+            .iter()
+            .filter(|document| document.is_modified() && document.path().is_some())
+            .count();
+        if let Err(err) = self.runner.start(&task) {
+            self.editor.set_status(err);
+            return;
+        }
+        self.ui.output.start(&task.name);
+        self.ui.task_problems.clear();
+        let note = if unsaved > 0 {
+            format!(", {unsaved} unsaved files are not part of it")
+        } else {
+            String::new()
+        };
+        self.editor.set_status(format!(
+            "running {}: {}{note}, Tasks: Show output to watch",
+            task.name, task.command
+        ));
+        self.last_task = Some(task);
+    }
+
+    /// Shows a task's output and, once it finishes, the problems it reported.
+    fn handle_task(&mut self, event: TaskEvent) {
+        match event {
+            TaskEvent::Line(line) => self.ui.output.push(line),
+            TaskEvent::Done(code) => {
+                for line in self.runner.drain() {
+                    self.ui.output.push(line);
+                }
+                self.ui.output.running = false;
+                let Some(task) = self.last_task.clone() else {
+                    return;
+                };
+                let output = self.ui.output.lines.join("\n");
+                self.ui.task_problems = parse_problems(&output, &task.cwd, |path| path.is_file());
+                let count = |severity| {
+                    self.ui
+                        .task_problems
+                        .iter()
+                        .filter(|problem| problem.severity == severity)
+                        .count()
+                };
+                let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+                let outcome = match code {
+                    Some(0) => "passed".to_owned(),
+                    Some(code) => format!("failed with code {code}"),
+                    None => "was stopped".to_owned(),
+                };
+                let found = match (errors, warnings) {
+                    (0, 0) => String::new(),
+                    (errors, warnings) => {
+                        format!(", {errors} errors and {warnings} warnings, alt+m lists them")
+                    }
+                };
+                self.editor
+                    .set_status(format!("{} {outcome}{found}", task.name));
+            }
         }
     }
 
@@ -2799,6 +2894,30 @@ impl App {
                     self.editor.set_status(title);
                 }
             }
+            "task.run" => self.pick_task(),
+            "task.start" => {
+                let task = self
+                    .ui
+                    .picked_task
+                    .take()
+                    .and_then(|index| self.task_list.get(index).cloned());
+                if let Some(task) = task {
+                    self.start_task(task);
+                }
+            }
+            "task.rerun" => match self.last_task.clone() {
+                Some(task) => self.start_task(task),
+                None => self.pick_task(),
+            },
+            "task.stop" => {
+                if self.runner.is_running() {
+                    self.runner.stop();
+                    self.editor.set_status("stopping the task");
+                } else {
+                    self.editor.set_status("no task is running");
+                }
+            }
+            "task.output" => self.ui.open(Overlay::Output),
             "git.panel" => self.open_git_panel(),
             "git.stage_hunk" => self.stage_hunk(),
             "git.unstage_hunk" => self.unstage_hunk(),
@@ -3037,15 +3156,17 @@ mod tests {
 
     use clap::Parser;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use mog_config::Config;
+    use mog_config::{Config, TaskConfig};
     use mog_core::{Key, KeyChord};
     use mog_tui::{Context, PromptKind};
     use ratatui::{Terminal, backend::TestBackend};
+    use tokio::time;
 
     use super::{App, FRAME_TIME, IDLE_FRAME_TIME};
     use crate::{
         cli::Args,
         session::{State, Swap},
+        tasks::TaskEvent,
     };
 
     /// Counts temp folders so parallel tests never share one.
@@ -3294,6 +3415,51 @@ mod tests {
             .expect("panel");
         assert!(screen.contains("STAGED"), "{screen}");
         assert!(screen.contains("+1 one"), "{screen}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A task's errors land in the problems list, pointing at the right file and line.
+    #[tokio::test]
+    async fn task_errors_become_problems() {
+        let dir = temp_dir();
+        fs::create_dir_all(dir.join("src")).expect("src");
+        fs::write(dir.join("src").join("lib.c"), "int x\n").expect("write");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.tasks.insert(
+            "build".into(),
+            TaskConfig {
+                command: "echo src/lib.c:1:6: error: expected ';'".into(),
+                cwd: String::new(),
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.execute_command("task.run".parse().expect("command"));
+        let index = app
+            .ui
+            .tasks
+            .iter()
+            .position(|(name, _)| name == "build")
+            .expect("build task");
+        app.ui.picked_task = Some(index);
+        app.execute_command("task.start".parse().expect("command"));
+        loop {
+            let event = time::timeout(Duration::from_secs(10), app.runner.event())
+                .await
+                .expect("in time")
+                .expect("event");
+            let done = matches!(event, TaskEvent::Done(_));
+            app.handle_task(event);
+            if done {
+                break;
+            }
+        }
+        let problem = app.ui.task_problems.first().expect("a problem");
+        assert_eq!((problem.line, problem.column), (0, 5));
+        assert_eq!(problem.message, "expected ';'");
+        assert!(problem.path.ends_with("lib.c"));
         let _ = fs::remove_dir_all(dir);
     }
 

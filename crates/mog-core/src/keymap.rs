@@ -87,6 +87,8 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl+shift+o", "lsp.symbols"),
     ("alt+o", "lsp.symbols"),
     ("ctrl+t", "lsp.workspace_symbols"),
+    ("ctrl+shift+b", "task.run"),
+    ("alt+b", "task.rerun"),
     ("ctrl+shift+g", "git.panel"),
     ("alt+shift+g", "git.panel"),
     ("alt+s", "git.stage_hunk"),

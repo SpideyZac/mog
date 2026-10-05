@@ -10,6 +10,7 @@ mod git;
 mod lsp;
 mod session;
 mod settings;
+mod tasks;
 mod terminal;
 mod update;
 mod watch;
