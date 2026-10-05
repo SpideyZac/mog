@@ -3,9 +3,13 @@
 //! Wraps tree-sitter grammars and turns their highlight captures into a small set of
 //! [`Kind`]s that themes know how to color.
 
-use std::{collections::HashMap, iter, path::Path};
+use std::path::Path;
 
-use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter};
+use tree_sitter::Language;
+
+pub mod engine;
+
+pub use engine::{Edit, Highlighter, Incremental};
 
 /// The capture names highlights are recognized by, paired with the kind they map to.
 ///
@@ -112,12 +116,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("makefile", "make"),
 ];
 
-/// Languages whose injected blocks are always in one of a few known languages.
-const INJECTS: &[(&str, &[&str])] = &[
-    ("vue", &["javascript", "typescript", "tsx", "jsx", "css"]),
-    ("html", &["javascript", "css"]),
-];
-
 /// Returns the language called `name` by an injection, by name, alias or file extension.
 fn resolve_language(name: &str) -> Option<&'static str> {
     let name = name.trim().to_lowercase();
@@ -131,27 +129,6 @@ fn resolve_language(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(_, extensions)| extensions.contains(&name.as_str()))
         .map(|(language, _)| *language)
-}
-
-/// Returns the languages `text` written in `language` may inject, so they can be loaded first.
-///
-/// Markdown can fence any language, so its fences are read to load only the ones used.
-fn injected_languages(language: &str, text: &str) -> Vec<&'static str> {
-    if language == "markdown" {
-        let mut found: Vec<&'static str> = text
-            .lines()
-            .filter_map(|line| line.trim_start().strip_prefix("```"))
-            .filter_map(|info| resolve_language(info.split_whitespace().next().unwrap_or("")))
-            .collect();
-        found.sort_unstable();
-        found.dedup();
-        return found;
-    }
-    INJECTS
-        .iter()
-        .find(|(name, _)| *name == language)
-        .map(|(_, languages)| languages.to_vec())
-        .unwrap_or_default()
 }
 
 /// Languages for files known by their whole name instead of an extension.
@@ -221,8 +198,14 @@ pub fn language_for(path: &Path) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-/// Builds the highlight config for `language`, or `None` if it is unknown or broken.
-fn config_for(language: &str) -> Option<HighlightConfiguration> {
+/// Returns the grammar, highlight query and injection query of `language`.
+fn source_for(language: &str) -> Option<(Language, String, &'static str)> {
+    let (lang, highlights, injections, _locals) = grammar_parts(language)?;
+    Some((lang, highlights, injections))
+}
+
+/// Returns the grammar and the highlight, injection and locals queries of `language`.
+fn grammar_parts(language: &str) -> Option<(Language, String, &'static str, &'static str)> {
     let js = tree_sitter_javascript::HIGHLIGHT_QUERY;
     let jsx = tree_sitter_javascript::JSX_HIGHLIGHT_QUERY;
     let ts = tree_sitter_typescript::HIGHLIGHTS_QUERY;
@@ -431,85 +414,7 @@ fn config_for(language: &str) -> Option<HighlightConfiguration> {
         ),
         _ => return None,
     };
-    let mut config =
-        HighlightConfiguration::new(lang, language, &highlights, injections, locals).ok()?;
-    let names: Vec<&str> = CAPTURES.iter().map(|(name, _)| *name).collect();
-    config.configure(&names);
-    Some(config)
-}
-
-/// Highlights documents, keeping the parsed grammar configs around between calls.
-#[derive(Default)]
-pub struct Highlighter {
-    /// The tree-sitter highlighter, which holds reusable parser state.
-    inner: TsHighlighter,
-    /// Grammar configs by language, `None` for ones that failed to load.
-    configs: HashMap<&'static str, Option<HighlightConfiguration>>,
-}
-
-impl Highlighter {
-    /// Creates a highlighter. Grammars are loaded the first time they are needed.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Returns the highlighted spans of `text` written in `language`, sorted by position.
-    ///
-    /// Nested captures produce overlapping spans with the innermost last. Unknown languages and
-    /// parse failures give no spans.
-    pub fn highlight(&mut self, language: &'static str, text: &str) -> Vec<Span> {
-        // injected grammars have to be loaded up front since highlighting borrows them
-        for name in iter::once(language).chain(injected_languages(language, text)) {
-            self.configs.entry(name).or_insert_with(|| config_for(name));
-        }
-        let Self { inner, configs } = self;
-        let Some(config) = configs.get(language).and_then(Option::as_ref) else {
-            return Vec::new();
-        };
-        let injection = |name: &str| {
-            resolve_language(name)
-                .and_then(|name| configs.get(name))
-                .and_then(Option::as_ref)
-        };
-        let Ok(events) = inner.highlight(config, text.as_bytes(), None, None, injection) else {
-            return Vec::new();
-        };
-        let mut spans = Vec::new();
-        let mut stack: Vec<Kind> = Vec::new();
-        // byte offsets come in increasing order so chars can be counted incrementally
-        let mut byte_pos = 0;
-        let mut char_pos = 0;
-        for event in events {
-            let Ok(event) = event else {
-                break;
-            };
-            match event {
-                HighlightEvent::HighlightStart(highlight) => {
-                    if let Some((_, kind)) = CAPTURES.get(highlight.0) {
-                        stack.push(*kind);
-                    }
-                }
-                HighlightEvent::HighlightEnd => {
-                    stack.pop();
-                }
-                HighlightEvent::Source { start, end } => {
-                    let skipped = text.get(byte_pos..start).map_or(0, |s| s.chars().count());
-                    let from = char_pos + skipped;
-                    let len = text.get(start..end).map_or(0, |s| s.chars().count());
-                    byte_pos = end;
-                    char_pos = from + len;
-                    if let Some(kind) = stack.last() {
-                        spans.push(Span {
-                            from,
-                            to: from + len,
-                            kind: *kind,
-                        });
-                    }
-                }
-            }
-        }
-        spans
-    }
+    Some((lang, highlights, injections, locals))
 }
 
 #[cfg(test)]
@@ -633,8 +538,7 @@ fn main() {}
     fn every_language_loads() {
         let mut highlighter = Highlighter::new();
         for (name, _) in LANGUAGES {
-            highlighter.highlight(name, "x");
-            assert!(highlighter.configs[name].is_some(), "{name} failed to load");
+            assert!(highlighter.grammar(name).is_some(), "{name} failed to load");
         }
     }
 }

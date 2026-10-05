@@ -7,7 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tree-sitter-highlight.workspace = true
+ropey.workspace = true
+tree-sitter.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-python.workspace = true
 tree-sitter-javascript.workspace = true
