@@ -82,6 +82,15 @@ use crate::{
 /// The time between animation frames, about 30 per second.
 const FRAME_TIME: Duration = Duration::from_millis(33);
 
+/// The time between animation frames once nobody has touched mog for [`IDLE_AFTER`].
+const IDLE_FRAME_TIME: Duration = Duration::from_millis(200);
+
+/// The time between frames of the screensaver, which is the only thing on screen then.
+const SCREENSAVER_FRAME_TIME: Duration = Duration::from_millis(66);
+
+/// How long without input before ambient animations slow down to save power.
+const IDLE_AFTER: Duration = Duration::from_secs(10);
+
 /// How often housekeeping like refreshing git runs.
 const HOUSEKEEPING_TIME: Duration = Duration::from_secs(1);
 
@@ -840,8 +849,6 @@ impl App {
     /// Returns an error if drawing or reading terminal events fails.
     pub async fn run(&mut self, terminal: &mut Tui) -> Result<()> {
         let mut events = EventStream::new();
-        let mut frames = time::interval(FRAME_TIME);
-        frames.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut housekeeping = time::interval(HOUSEKEEPING_TIME);
         housekeeping.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut last_tick = Instant::now();
@@ -861,8 +868,10 @@ impl App {
             self.watch_focus();
             self.restore_undo();
             self.play_sounds();
+            self.ui.idle = self.last_input.elapsed() >= IDLE_AFTER;
             self.draw(terminal)?;
             let animating = self.compositor.is_animating();
+            let next_frame = last_tick + self.frame_time();
             tokio::select! {
                 event = events.next() => match event {
                     Some(event) => self.handle_event(event?),
@@ -879,7 +888,7 @@ impl App {
                 () = changed(self.watcher.as_ref()) => self.files_changed = true,
                 () = time::sleep_until(idle_at.into()), if typing => {}
                 _ = housekeeping.tick() => self.housekeeping(),
-                _ = frames.tick(), if animating => {
+                () = time::sleep_until(next_frame.into()), if animating => {
                     let now = Instant::now();
                     self.compositor.tick(now - last_tick);
                     last_tick = now;
@@ -982,6 +991,17 @@ impl App {
         }
         execute!(backend, EndSynchronizedUpdate)?;
         Ok(())
+    }
+
+    /// Returns how long to wait between animation frames, slower once mog sits idle.
+    fn frame_time(&self) -> Duration {
+        if self.screensaver_showing() {
+            SCREENSAVER_FRAME_TIME
+        } else if self.ui.idle {
+            IDLE_FRAME_TIME
+        } else {
+            FRAME_TIME
+        }
     }
 
     /// Returns `true` while the matrix screensaver covers the screen.
@@ -2961,6 +2981,50 @@ mod tests {
         assert_eq!(document.text().to_string(), "saved\nand more\n");
         assert!(document.is_modified());
         assert!(!swap_file.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Prints what one animation frame costs with every flair on, to check idle cpu use.
+    #[tokio::test]
+    #[ignore = "a timing, run by hand with --nocapture"]
+    async fn frame_cost() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        use super::{FRAME_TIME, IDLE_FRAME_TIME};
+
+        let dir = temp_dir();
+        let path = dir.join("frames.rs");
+        fs::write(&path, "fn main() {\n    println!(\"hi\");\n}\n".repeat(200)).expect("write");
+        let mut config = Config::default();
+        config.updates.check = false;
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.editor.open(&path).expect("open");
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).expect("terminal");
+        let frames = 300;
+        let start = std::time::Instant::now();
+        for _ in 0..frames {
+            app.compositor.tick(FRAME_TIME);
+            terminal
+                .draw(|frame| {
+                    let mut cx = mog_tui::Context {
+                        editor: &mut app.editor,
+                        theme: &app.theme,
+                        ui: &mut app.ui,
+                    };
+                    let _ = app.compositor.render(frame, &mut cx);
+                })
+                .expect("draw");
+        }
+        let each = start.elapsed() / frames;
+        let busy = |gap: Duration| each.as_secs_f64() / gap.as_secs_f64() * 100.0;
+        println!(
+            "one frame takes {each:?}, about {:.1}% of a core while typing and {:.1}% idle, \
+             animating: {}",
+            busy(FRAME_TIME),
+            busy(IDLE_FRAME_TIME),
+            app.compositor.is_animating()
+        );
         let _ = fs::remove_dir_all(dir);
     }
 
