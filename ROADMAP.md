@@ -137,8 +137,8 @@
 
 ## Quality
 
-- [ ] Snapshot tests for `mog-tui` with `TestBackend` and `insta`
-- [ ] Scripted event loop tests (open, edit, save, quit)
+- [x] Snapshot tests for `mog-tui` with `TestBackend` and `insta`
+- [x] Scripted event loop tests (open, edit, save, quit)
 - [ ] Benchmark a 100 MB file and a very long single line
 - [ ] Make sure tree-sitter parsing is incremental and off the UI thread
 - [ ] Profile idle CPU use of audio, flair ticks and the resource monitor
