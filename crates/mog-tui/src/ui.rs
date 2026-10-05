@@ -12,9 +12,9 @@ use ratatui::{
 
 use crate::{
     annotate::AnnotateState, chat::ChatState, completion::CompletionState, ghost::Ghost,
-    menu::MenuState, project_search::ProjectSearchState, release_notes::ReleaseNotes,
-    search::SearchState, settings::SettingKey, status_line::STATUS_HEIGHT,
-    theme_editor::ThemeDraft,
+    git_panel::GitPanelState, menu::MenuState, project_search::ProjectSearchState,
+    release_notes::ReleaseNotes, search::SearchState, settings::SettingKey,
+    status_line::STATUS_HEIGHT, theme_editor::ThemeDraft,
 };
 
 /// The widest the file explorer gets, in cells.
@@ -106,6 +106,8 @@ pub enum Overlay {
     Symbols,
     /// Symbols from the whole project, searched as you type.
     WorkspaceSymbols,
+    /// The source control panel.
+    Git,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -148,6 +150,8 @@ pub enum PromptKind {
     InstallServer(String),
     /// Whether to bring back unsaved work from a mog that crashed.
     RecoverSwaps,
+    /// The message for a commit of what is staged.
+    Commit,
 }
 
 /// The signature of the call around the cursor.
@@ -310,6 +314,8 @@ pub struct Ui {
     pub events: Vec<UiEvent>,
     /// Whether nobody has touched mog for a while, so ambient work can slow down.
     pub idle: bool,
+    /// The source control panel.
+    pub git_panel: GitPanelState,
     /// Status line pieces added by layers this frame.
     pub segments: Vec<Segment>,
     /// Set when files changed on disk so the explorer reads its folders again.
