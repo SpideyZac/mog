@@ -23,9 +23,18 @@ pub fn char_width(ch: char, col: usize, tab_width: usize) -> usize {
 /// Returns the visual column of `pos` on its line.
 pub fn visual_col(text: &Rope, pos: usize, tab_width: usize) -> usize {
     let start = movement::line_start(text, pos);
-    text.slice(start..pos)
-        .chars()
-        .fold(0, |col, ch| col + char_width(ch, col, tab_width))
+    let mut col = 0;
+    for chunk in text.slice(start..pos).chunks() {
+        // plain ascii is one cell per byte, which matters on huge minified lines
+        if chunk.is_ascii() && !chunk.contains('\t') {
+            col += chunk.len();
+            continue;
+        }
+        col = chunk
+            .chars()
+            .fold(col, |col, ch| col + char_width(ch, col, tab_width));
+    }
+    col
 }
 
 /// Returns the offset on `line` whose cell contains visual column `col`.
