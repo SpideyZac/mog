@@ -138,7 +138,13 @@ impl Manifest {
                 raw.protocol
             ));
         }
-        let fill = |text: &str| text.replace(DIR_PLACEHOLDER, &dir.to_string_lossy());
+        let dir_text = dir.to_string_lossy();
+        // a verbatim windows path cannot take the forward slash a manifest writes after it
+        let dir_text = dir_text
+            .strip_prefix(r"\\?\")
+            .filter(|rest| rest.as_bytes().get(1) == Some(&b':'))
+            .unwrap_or(&dir_text);
+        let fill = |text: &str| text.replace(DIR_PLACEHOLDER, dir_text);
         let commands = raw
             .commands
             .into_iter()
