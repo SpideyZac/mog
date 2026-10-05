@@ -91,6 +91,14 @@ fn see_through(buf: &mut Buffer, palette: &Palette, opacity: u8) {
     }
 }
 
+/// Drops every color from `buf`, keeping bold, underline and the other modifiers.
+pub fn strip_colors(buf: &mut Buffer) {
+    for cell in &mut buf.content {
+        cell.fg = Color::Reset;
+        cell.bg = Color::Reset;
+    }
+}
+
 /// The ordered stack of [`Layer`]s, bottom first.
 #[derive(Default)]
 pub struct Compositor {
@@ -147,6 +155,10 @@ impl Compositor {
             &cx.theme.palette,
             cx.ui.config.ui.opacity,
         );
+        // flair and the terminal panel draw raw colors so the theme alone is not enough
+        if cx.theme.monochrome {
+            strip_colors(frame.buffer_mut());
+        }
         let cursor = self.layers.iter().rev().find_map(|layer| {
             let area = layer.area(&layout, cx.ui);
             (!area.is_empty()).then(|| layer.cursor(area, cx)).flatten()

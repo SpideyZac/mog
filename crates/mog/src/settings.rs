@@ -158,10 +158,21 @@ pub fn apply_project(config: &mut Config, root: &Path) -> ProjectStatus {
     }
 }
 
+/// Returns whether the `NO_COLOR` environment variable asks for no colors.
+///
+/// See <https://no-color.org>, any value but an empty one counts.
+fn no_color() -> bool {
+    env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty())
+}
+
 /// Builds the theme named in `config`, falling back to the default with a problem message.
 ///
-/// Custom themes from `[themes]` win over built in ones with the same name.
+/// Custom themes from `[themes]` win over built in ones with the same name, and `NO_COLOR` wins
+/// over everything.
 pub fn theme(config: &Config) -> (Theme, Option<String>) {
+    if no_color() {
+        return (Theme::monochrome(), None);
+    }
     let name = &config.ui.theme;
     let custom = config
         .themes

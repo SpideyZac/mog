@@ -372,6 +372,8 @@ pub struct Theme {
     pub name: String,
     /// The palette the theme was built from, for flair that wants raw colors.
     pub palette: Palette,
+    /// Whether every color is dropped when drawing, for `NO_COLOR`.
+    pub monochrome: bool,
     /// The background behind everything.
     pub background: Style,
     /// Plain document text.
@@ -521,6 +523,7 @@ impl Theme {
         Self {
             name: name.to_owned(),
             palette: p,
+            monochrome: false,
             background: Style::new().bg(p.bg),
             text: fg(p.fg),
             selection: Style::new().bg(p.select),
@@ -577,6 +580,33 @@ impl Theme {
             property: fg(mix(p.fg, p.cyan, 0.35)),
             namespace: fg(p.purple),
             markup: fg(p.accent).add_modifier(bold),
+        }
+    }
+
+    /// Returns a theme without colors that marks things with bold, underline and reverse
+    /// instead, for terminals and people that set `NO_COLOR`.
+    pub fn monochrome() -> Self {
+        let plain = Palette::from_slots([Color::Reset; 16]);
+        let style = |modifier| Style::new().add_modifier(modifier);
+        let reversed = style(Modifier::REVERSED);
+        Self {
+            monochrome: true,
+            selection: reversed,
+            gutter_active: style(Modifier::BOLD),
+            status: reversed,
+            status_badge: style(Modifier::BOLD),
+            error: style(Modifier::BOLD | Modifier::UNDERLINED),
+            warning: style(Modifier::UNDERLINED),
+            sidebar_active: reversed,
+            matching_bracket: style(Modifier::BOLD | Modifier::UNDERLINED),
+            search_match: style(Modifier::UNDERLINED),
+            search_current: reversed,
+            popup_selected: reversed,
+            popup_match: style(Modifier::BOLD | Modifier::UNDERLINED),
+            tab_active: style(Modifier::BOLD | Modifier::UNDERLINED),
+            minimap_view: style(Modifier::BOLD),
+            ghost: style(Modifier::DIM | Modifier::ITALIC),
+            ..Self::from_palette("no color", plain)
         }
     }
 
@@ -673,6 +703,16 @@ mod tests {
         }
         assert!(Theme::named("SYNTHWAVE").is_some());
         assert!(Theme::named("nope").is_none());
+    }
+
+    /// The no color theme has no colors but still marks the selection.
+    #[test]
+    fn monochrome_has_no_colors() {
+        let theme = Theme::monochrome();
+        assert!(theme.monochrome);
+        assert_eq!(theme.text.fg, Some(Color::Reset));
+        assert_eq!(theme.selection.bg, None);
+        assert!(!theme.selection.add_modifier.is_empty());
     }
 
     /// Mixing goes from one color to the other.

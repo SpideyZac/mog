@@ -60,7 +60,7 @@
 - [x] File icons
 - [x] Serious mode preset that turns off all flair
 - [x] Reduced motion setting for sparks, combo counter and matrix rain
-- [ ] Respect `NO_COLOR`
+- [x] Respect `NO_COLOR`
 
 ## Git
 
