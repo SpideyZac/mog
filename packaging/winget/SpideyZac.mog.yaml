@@ -1,6 +1,6 @@
 # rendered by packaging/render.sh, goes to microsoft/winget-pkgs under manifests/s/SpideyZac/mog
 PackageIdentifier: SpideyZac.mog
-PackageVersion: {{version}}
+PackageVersion: "{{version}}"
 DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: 1.6.0

@@ -1,5 +1,5 @@
 PackageIdentifier: SpideyZac.mog
-PackageVersion: {{version}}
+PackageVersion: "{{version}}"
 PackageLocale: en-US
 Publisher: SpideyZac
 PublisherUrl: https://github.com/SpideyZac
