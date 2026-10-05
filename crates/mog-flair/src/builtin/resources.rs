@@ -123,7 +123,13 @@ impl Flair for Resources {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &FlairContext<'_>) {
-        self.refresh();
+        // reading the system costs cpu, which an idle editor should not spend
+        if let Some(monitor) = &self.monitor {
+            monitor.set_paused(cx.ui.idle);
+        }
+        if !cx.ui.idle || self.refreshed.is_none() {
+            self.refresh();
+        }
         let theme = cx.theme;
         let inner = sidebar_frame(area, buf, theme, "system");
         let width = usize::from(inner.width);

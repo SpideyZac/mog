@@ -71,6 +71,8 @@ pub struct Splash {
     tip: &'static str,
     /// Whether the logo holds still for reduced motion.
     still: bool,
+    /// Whether the welcome screen was shown in the last frame, so it only animates then.
+    shown: bool,
 }
 
 impl Default for Splash {
@@ -81,6 +83,7 @@ impl Default for Splash {
             tagline: rng.pick(TAGLINES),
             tip: rng.pick(TIPS),
             still: false,
+            shown: false,
         }
     }
 }
@@ -130,11 +133,12 @@ impl Flair for Splash {
     }
 
     fn is_animating(&self) -> bool {
-        !self.still
+        self.shown && !self.still
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &FlairContext<'_>) {
-        if !Self::wanted(cx) {
+        self.shown = Self::wanted(cx);
+        if !self.shown {
             return;
         }
         let p = cx.theme.palette;

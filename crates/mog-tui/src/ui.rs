@@ -308,6 +308,8 @@ pub struct Ui {
     pub requests: Vec<Command>,
     /// Things that happened since the last frame.
     pub events: Vec<UiEvent>,
+    /// Whether nobody has touched mog for a while, so ambient work can slow down.
+    pub idle: bool,
     /// Status line pieces added by layers this frame.
     pub segments: Vec<Segment>,
     /// Set when files changed on disk so the explorer reads its folders again.

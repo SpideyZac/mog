@@ -156,6 +156,8 @@ pub struct GpuMonitor {
     reading: Arc<Mutex<GpuReading>>,
     /// Set when the monitor is dropped so the thread stops.
     stop: Arc<AtomicBool>,
+    /// Set while nobody needs fresh numbers, so no tools are run.
+    paused: Arc<AtomicBool>,
 }
 
 impl GpuMonitor {
@@ -163,11 +165,21 @@ impl GpuMonitor {
     pub fn start() -> Self {
         let reading = Arc::new(Mutex::new(GpuReading::Detecting));
         let stop = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
         {
-            let (reading, stop) = (reading.clone(), stop.clone());
-            thread::spawn(move || watch(&reading, &stop));
+            let (reading, stop, paused) = (reading.clone(), stop.clone(), paused.clone());
+            thread::spawn(move || watch(&reading, &stop, &paused));
         }
-        Self { reading, stop }
+        Self {
+            reading,
+            stop,
+            paused,
+        }
+    }
+
+    /// Stops or resumes reading the GPU. The last reading stays available while paused.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
     }
 
     /// Returns the newest reading.
@@ -182,8 +194,9 @@ impl Drop for GpuMonitor {
     }
 }
 
-/// Finds a source that works, then keeps `reading` fresh until `stop` is set.
-fn watch(reading: &Mutex<GpuReading>, stop: &AtomicBool) {
+/// Finds a source that works, then keeps `reading` fresh until `stop` is set, skipping reads
+/// while `paused` is set.
+fn watch(reading: &Mutex<GpuReading>, stop: &AtomicBool, paused: &AtomicBool) {
     let set = |value| *reading.lock().unwrap_or_else(PoisonError::into_inner) = value;
     let found = Source::candidates()
         .into_iter()
@@ -195,6 +208,9 @@ fn watch(reading: &Mutex<GpuReading>, stop: &AtomicBool) {
     set(GpuReading::Percent(percent));
     while !stop.load(Ordering::Relaxed) {
         thread::sleep(INTERVAL);
+        if paused.load(Ordering::Relaxed) {
+            continue;
+        }
         if let Some(percent) = source.read() {
             set(GpuReading::Percent(percent));
         }
