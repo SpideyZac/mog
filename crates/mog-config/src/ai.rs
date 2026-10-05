@@ -2,12 +2,32 @@
 
 use serde::Deserialize;
 
+/// Files that usually hold secrets, kept away from every AI unless the config says otherwise.
+pub const DEFAULT_EXCLUDE: &[&str] = &[
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa*",
+    "id_ed25519*",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "*.tfvars",
+    "secrets.*",
+    "credentials*",
+];
+
 /// Settings for every AI provider.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AiConfig {
     /// Whether Copilot suggests code in gray after the cursor when typing pauses.
     pub ghost_text: bool,
+    /// Files never sent to an AI, as gitignore style patterns relative to the project.
+    pub exclude: Vec<String>,
     /// Claude settings.
     pub claude: ClaudeConfig,
     /// GitHub Copilot settings.
@@ -18,6 +38,10 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             ghost_text: true,
+            exclude: DEFAULT_EXCLUDE
+                .iter()
+                .map(|&pattern| pattern.to_owned())
+                .collect(),
             claude: ClaudeConfig::default(),
             copilot: CopilotConfig::default(),
         }

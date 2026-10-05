@@ -463,6 +463,7 @@ Only your own config can add plugins, a project config cannot.
 | key | default | |
 | --- | --- | --- |
 | `ghost_text` | `true` | Master switch for Copilot ghost text |
+| `exclude` | `.env`, keys, certificates and other usual secret files | Gitignore style patterns of files never sent to an AI, not for ghost text and not to explain |
 
 `[ai.claude]`
 

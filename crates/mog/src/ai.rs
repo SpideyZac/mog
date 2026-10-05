@@ -1,6 +1,7 @@
 //! Running AI requests in the background.
 
 use std::{
+    path::Path,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -9,6 +10,7 @@ use std::{
 };
 
 use futures::future;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use mog_ai::{
     ChatMessage, CompletionRequest, Copilot, CopilotEvent, CopilotStatus, DeviceCode, Role,
 };
@@ -59,6 +61,40 @@ fn chat_messages(history: &[(bool, String)], budget: usize) -> Vec<ChatMessage> 
         .collect()
 }
 
+/// Decides which files are never sent to an AI.
+pub struct Exclusions {
+    /// The patterns, rooted at the project.
+    matcher: Gitignore,
+}
+
+impl Exclusions {
+    /// Builds the exclusions from gitignore style `patterns` for the project at `root`.
+    ///
+    /// Patterns that do not parse are skipped.
+    pub fn new(root: &Path, patterns: &[String]) -> Self {
+        let mut builder = GitignoreBuilder::new(root);
+        for pattern in patterns {
+            let _ = builder.add_line(None, pattern);
+        }
+        Self {
+            matcher: builder.build().unwrap_or_else(|_| Gitignore::empty()),
+        }
+    }
+
+    /// Returns whether `path` must not be sent to an AI.
+    pub fn excludes(&self, path: &Path) -> bool {
+        if path.starts_with(self.matcher.path()) {
+            return self
+                .matcher
+                .matched_path_or_any_parents(path, false)
+                .is_ignore();
+        }
+        // outside the project only the name can match
+        path.file_name()
+            .is_some_and(|name| self.matcher.matched(Path::new(name), false).is_ignore())
+    }
+}
+
 /// What a finished request produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AiReply {
@@ -101,13 +137,15 @@ pub struct Assistant {
     ghost_generation: Arc<AtomicU64>,
     /// Copilot, if it is running.
     copilot: Option<Arc<Copilot>>,
+    /// Files never sent to an AI.
+    exclusions: Exclusions,
     /// What the Copilot server reports.
     copilot_events: Option<UnboundedReceiver<CopilotEvent>>,
 }
 
 impl Assistant {
-    /// Creates an assistant over `providers`.
-    pub fn new(mut providers: AiProviders) -> Self {
+    /// Creates an assistant over `providers` that never sends files matching `exclusions`.
+    pub fn new(mut providers: AiProviders, exclusions: Exclusions) -> Self {
         let (sender, replies) = mpsc::unbounded_channel();
         Self {
             copilot: providers.copilot.take(),
@@ -116,7 +154,13 @@ impl Assistant {
             sender,
             replies,
             ghost_generation: Arc::new(AtomicU64::new(0)),
+            exclusions,
         }
+    }
+
+    /// Returns whether `path` must not be sent to an AI.
+    pub fn excludes(&self, path: &Path) -> bool {
+        self.exclusions.excludes(path)
     }
 
     /// Starts signing in to Copilot. The answer is a [`AiReply::CopilotCode`] or, if someone is
@@ -283,9 +327,27 @@ impl Assistant {
 #[cfg(test)]
 /// Tests for the assistant.
 mod tests {
-    use mog_ai::Role;
+    use std::path::Path;
 
-    use super::chat_messages;
+    use mog_ai::Role;
+    use mog_config::AiConfig;
+
+    use super::{Exclusions, chat_messages};
+
+    /// Secret files are kept from the ai, in and out of the project, and other files are not.
+    #[test]
+    fn excludes_secrets() {
+        let root = Path::new("/code/app");
+        let exclusions = Exclusions::new(root, &AiConfig::default().exclude);
+        assert!(exclusions.excludes(&root.join(".env")));
+        assert!(exclusions.excludes(&root.join("config/.env.local")));
+        assert!(exclusions.excludes(&root.join("certs/server.pem")));
+        assert!(exclusions.excludes(Path::new("/home/me/.ssh/id_rsa")));
+        assert!(!exclusions.excludes(&root.join("src/main.rs")));
+        let custom = Exclusions::new(root, &["private/".to_owned()]);
+        assert!(custom.excludes(&root.join("private/notes.md")));
+        assert!(!custom.excludes(&root.join(".env")));
+    }
 
     /// Long chats drop their oldest messages and still start with the user.
     #[test]

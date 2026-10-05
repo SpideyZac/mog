@@ -35,6 +35,7 @@ mog-config.workspace = true
 crossterm.workspace = true
 discord-rich-presence.workspace = true
 futures.workspace = true
+ignore.workspace = true
 mog-core.workspace = true
 mog-dap.workspace = true
 mog-flair.workspace = true

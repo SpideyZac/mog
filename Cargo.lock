@@ -1879,6 +1879,7 @@ dependencies = [
  "discord-rich-presence",
  "flate2",
  "futures",
+ "ignore",
  "lsp-types",
  "minisign-verify",
  "mog-ai",

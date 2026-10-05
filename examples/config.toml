@@ -67,6 +67,8 @@ enabled = false
 
 [ai]
 ghost_text = true
+# files never sent to an ai, gitignore style. this replaces the default list
+exclude = [".env", ".env.*", "*.pem", "*.key", "secrets/"]
 
 # claude chats, copilot suggests ghost text
 [ai.claude]

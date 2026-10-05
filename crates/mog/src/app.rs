@@ -72,7 +72,7 @@ use tokio::{
 };
 
 use crate::{
-    ai::{AiReply, Assistant},
+    ai::{AiReply, Assistant, Exclusions},
     cli::Args,
     clipboard, commands,
     debug::{self, DebugReply, DebugUpdate, Debugger},
@@ -306,6 +306,7 @@ impl App {
         );
         let project = settings::apply_project(&mut config, &root);
         let (providers, ai_problems) = settings::ai_providers(&config, &root);
+        let exclusions = Exclusions::new(&root, &config.ai.exclude);
         problems.extend(ai_problems);
 
         let mut ui = Ui::new(config.clone());
@@ -376,7 +377,7 @@ impl App {
             pending_diagnostics: Vec::new(),
             code_actions: Vec::new(),
             marks_requested: None,
-            assistant: Assistant::new(providers),
+            assistant: Assistant::new(providers, exclusions),
             copilot_code: None,
             git,
             watcher,
@@ -1255,7 +1256,8 @@ impl App {
         if config.ai != self.ui.config.ai {
             let (providers, ai_problems) = settings::ai_providers(&config, &self.ui.root);
             problems.extend(ai_problems);
-            self.assistant = Assistant::new(providers);
+            let exclusions = Exclusions::new(&self.ui.root, &config.ai.exclude);
+            self.assistant = Assistant::new(providers, exclusions);
             self.ui.copilot = None;
         }
         self.keymap = keymap;
@@ -2558,6 +2560,11 @@ impl App {
         if !self.ui.config.ai.ghost_text
             || !self.assistant.can_suggest()
             || self.editor.document().is_large()
+            || self
+                .editor
+                .document()
+                .path()
+                .is_some_and(|path| self.assistant.excludes(path))
         {
             return;
         }
@@ -3300,6 +3307,14 @@ impl App {
                 let selection = document.selection();
                 if selection.is_empty() {
                     self.editor.set_status("select some code to explain first");
+                    return;
+                }
+                if document
+                    .path()
+                    .is_some_and(|path| self.assistant.excludes(path))
+                {
+                    self.editor
+                        .set_status("this file is in ai.exclude, so it is not sent to the ai");
                     return;
                 }
                 let code = document
