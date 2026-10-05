@@ -2,8 +2,9 @@
 
 use std::{
     env::{self, consts::EXE_SUFFIX},
-    fs,
-    path::{Component, Path},
+    fs::{self, File, OpenOptions},
+    io::{ErrorKind, Read, Write},
+    path::{Component, Path, PathBuf},
     process,
     time::Duration,
 };
@@ -44,6 +45,9 @@ const API_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long downloading a release archive may take.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The most a download or the program inside it may weigh, in bytes.
+const MAX_SIZE: u64 = 256 * 1024 * 1024;
 
 /// A file attached to a release.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -309,23 +313,33 @@ fn verify_signature(data: &[u8], signature: &str, name: &str, key: &str) -> Resu
     }
 }
 
+/// Reads all of `reader`, failing once it passes `limit` bytes so a bomb cannot fill memory.
+fn read_capped(reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
+    let mut binary = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut binary)
+        .map_err(|err| err.to_string())?;
+    if binary.len() as u64 > limit {
+        return Err("the program in the release archive is too big".into());
+    }
+    Ok(binary)
+}
+
 /// Returns the `mog` program inside a release zip.
 #[cfg(windows)]
 fn extract(archive: &[u8]) -> Result<Vec<u8>, String> {
-    use std::io::{Cursor, Read};
+    use std::io::Cursor;
 
     use zip::ZipArchive;
 
     let mut zip = ZipArchive::new(Cursor::new(archive)).map_err(|err| err.to_string())?;
     let wanted = format!("mog{EXE_SUFFIX}");
     for index in 0..zip.len() {
-        let mut file = zip.by_index(index).map_err(|err| err.to_string())?;
+        let file = zip.by_index(index).map_err(|err| err.to_string())?;
         let name = file.name().replace('\\', "/");
         if name.rsplit('/').next() == Some(wanted.as_str()) {
-            let mut binary = Vec::new();
-            file.read_to_end(&mut binary)
-                .map_err(|err| err.to_string())?;
-            return Ok(binary);
+            return read_capped(file, MAX_SIZE);
         }
     }
     Err("the release archive has no mog in it".into())
@@ -334,26 +348,20 @@ fn extract(archive: &[u8]) -> Result<Vec<u8>, String> {
 /// Returns the `mog` program inside a release tarball.
 #[cfg(not(windows))]
 fn extract(archive: &[u8]) -> Result<Vec<u8>, String> {
-    use std::io::Read;
-
     use flate2::read::GzDecoder;
     use tar::Archive;
 
     let mut tar = Archive::new(GzDecoder::new(archive));
     let wanted = format!("mog{EXE_SUFFIX}");
     for entry in tar.entries().map_err(|err| err.to_string())? {
-        let mut entry = entry.map_err(|err| err.to_string())?;
+        let entry = entry.map_err(|err| err.to_string())?;
         let is_mog = entry
             .path()
             .ok()
             .and_then(|path| path.file_name().map(|name| name == wanted.as_str()))
             .unwrap_or(false);
         if is_mog {
-            let mut binary = Vec::new();
-            entry
-                .read_to_end(&mut binary)
-                .map_err(|err| err.to_string())?;
-            return Ok(binary);
+            return read_capped(entry, MAX_SIZE);
         }
     }
     Err("the release archive has no mog in it".into())
@@ -376,16 +384,70 @@ async fn fetch_release(client: &Client, url: &str) -> Result<Release, String> {
 
 /// Downloads the file at `url`.
 async fn download(client: &Client, url: &str) -> Result<Vec<u8>, String> {
-    let response = client
+    let mut response = client
         .get(url)
         .timeout(DOWNLOAD_TIMEOUT)
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(|err| err.to_string())?;
-    let bytes = response.bytes().await.map_err(|err| err.to_string())?;
-    Ok(bytes.to_vec())
+    let too_big = || format!("{url} is bigger than {} MB", MAX_SIZE / 1024 / 1024);
+    if response.content_length().is_some_and(|len| len > MAX_SIZE) {
+        return Err(too_big());
+    }
+    let mut data = Vec::new();
+    // the length header can lie, so count what actually arrives
+    while let Some(chunk) = response.chunk().await.map_err(|err| err.to_string())? {
+        data.extend_from_slice(&chunk);
+        if data.len() as u64 > MAX_SIZE {
+            return Err(too_big());
+        }
+    }
+    Ok(data)
 }
+
+/// Writes `binary` to a new file in `dir` that nobody else could have made first.
+///
+/// The file sits next to the running program so the swap is a rename on the same disk, and
+/// `create_new` refuses a file or link someone planted under the same name.
+fn stage(binary: &[u8], dir: &Path) -> Result<PathBuf, String> {
+    for attempt in 0..100 {
+        let path = dir.join(format!(
+            ".mog-update-{}-{attempt}{EXE_SUFFIX}",
+            process::id()
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        owner_only(&mut options);
+        let mut file: File = match options.open(&path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(format!("could not write {}: {err}", path.display())),
+        };
+        let written = file
+            .write_all(binary)
+            .and_then(|()| file.sync_all())
+            .map_err(|err| err.to_string());
+        if let Err(err) = written.and_then(|()| make_executable(&path)) {
+            let _ = fs::remove_file(&path);
+            return Err(err);
+        }
+        return Ok(path);
+    }
+    Err("could not find a free name for the update".into())
+}
+
+/// Makes files opened with `options` readable only by their owner.
+#[cfg(unix)]
+fn owner_only(options: &mut OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    options.mode(0o700);
+}
+
+/// Does nothing, since files in the user's own folders are already theirs on Windows.
+#[cfg(not(unix))]
+fn owner_only(_options: &mut OpenOptions) {}
 
 /// Downloads, checks and installs `release` over the running mog.
 async fn install(client: &Client, release: Release) -> Result<Release, String> {
@@ -414,9 +476,9 @@ async fn install(client: &Client, release: Release) -> Result<Release, String> {
     )?;
     task::spawn_blocking(move || {
         let binary = extract(&archive)?;
-        let temp = env::temp_dir().join(format!("mog-update-{}{EXE_SUFFIX}", process::id()));
-        fs::write(&temp, binary).map_err(|err| err.to_string())?;
-        make_executable(&temp)?;
+        let exe = env::current_exe().map_err(|err| err.to_string())?;
+        let dir = exe.parent().ok_or("mog is not in a folder")?;
+        let temp = stage(&binary, dir)?;
         let replaced = self_replace::self_replace(&temp).map_err(|err| err.to_string());
         let _ = fs::remove_file(&temp);
         replaced
@@ -458,14 +520,34 @@ pub fn remember_version() -> Option<String> {
 #[cfg(test)]
 /// Tests for the updater.
 mod tests {
-    use std::path::Path;
+    use std::{env, fs, path::Path, process};
 
+    use reqwest::Client;
     use sha2::{Digest, Sha256};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     use super::{
-        RELEASE_KEY, Release, archive_name, extract, is_cargo_build, is_newer, package_manager,
-        verify, verify_signature,
+        MAX_SIZE, RELEASE_KEY, Release, archive_name, download, extract, is_cargo_build, is_newer,
+        package_manager, read_capped, stage, verify, verify_signature,
     };
+
+    /// Serves one HTTP response with `head` as the headers and `body` after them, returning the
+    /// url to fetch.
+    async fn serve_once(head: String, body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!("http://{}/mog.zip", listener.local_addr().expect("addr"));
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0; 1024];
+            let _ = socket.read(&mut request).await;
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(&body).await;
+        });
+        url
+    }
 
     /// A throwaway public key whose secret half signed [`TEST_SIGNATURE`].
     const TEST_KEY: &str = "RWQev5a1U21teaH2yAvHt4DhJEW4gsX7AhqPJ0jPYD1I/SxsiUwrNrYt";
@@ -595,5 +677,48 @@ trusted comment: timestamp:1\tfile:mog-v1.0.0-test.zip
         }
         let archive = builder.into_inner().expect("tar").finish().expect("gzip");
         assert_eq!(extract(&archive).expect("found"), b"binary");
+    }
+
+    /// The update is staged in a new file and never through one already there.
+    #[test]
+    fn stages_into_a_new_file() {
+        let dir = env::temp_dir().join(format!("mog-stage-test-{}", process::id()));
+        fs::create_dir_all(&dir).expect("dir");
+        let planted = dir.join(format!(
+            ".mog-update-{}-0{}",
+            process::id(),
+            env::consts::EXE_SUFFIX
+        ));
+        fs::write(&planted, b"planted").expect("plant");
+        let staged = stage(b"binary", &dir).expect("staged");
+        assert_ne!(staged, planted);
+        assert_eq!(fs::read(&staged).expect("read"), b"binary");
+        assert_eq!(fs::read(&planted).expect("read"), b"planted");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Reading out of an archive stops at the size cap.
+    #[test]
+    fn caps_extracted_size() {
+        let data = vec![0; 16];
+        assert_eq!(read_capped(data.as_slice(), 16).expect("fits"), data);
+        assert!(read_capped(data.as_slice(), 15).is_err());
+    }
+
+    /// A download comes through whole, and one that says it is too big is refused.
+    #[tokio::test]
+    async fn downloads_with_a_cap() {
+        let client = Client::new();
+        let body = b"archive".to_vec();
+        let ok = |len: u64| {
+            format!("HTTP/1.1 200 OK\r\ncontent-length: {len}\r\nconnection: close\r\n\r\n")
+        };
+        let url = serve_once(ok(7), body.clone()).await;
+        assert_eq!(download(&client, &url).await.expect("downloaded"), body);
+        let url = serve_once(ok(MAX_SIZE + 1), Vec::new()).await;
+        assert!(download(&client, &url).await.is_err());
+        let missing = "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n";
+        let url = serve_once(missing.into(), Vec::new()).await;
+        assert!(download(&client, &url).await.is_err());
     }
 }
