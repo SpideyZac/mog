@@ -6,8 +6,9 @@ use mog_core::{Key, KeyChord, Modifiers};
 /// Converts a terminal key event to a [`KeyChord`], or `None` for keys mog does not know.
 ///
 /// With `alt_gr` set, symbols typed with `AltGr` come out as plain typed chars, see
-/// [`KeyChord::is_alt_gr`].
-pub fn key_chord(event: KeyEvent, alt_gr: bool) -> Option<KeyChord> {
+/// [`KeyChord::is_alt_gr`]. With `legacy` set, the control digits old style terminals send
+/// become the keys that sent them, see [`KeyChord::from_legacy`].
+pub fn key_chord(event: KeyEvent, alt_gr: bool, legacy: bool) -> Option<KeyChord> {
     let key = match event.code {
         KeyCode::Char(ch) => Key::Char(ch),
         KeyCode::Enter => Key::Enter,
@@ -33,6 +34,7 @@ pub fn key_chord(event: KeyEvent, alt_gr: bool) -> Option<KeyChord> {
         shift: event.modifiers.contains(KeyModifiers::SHIFT) || event.code == KeyCode::BackTab,
     };
     let chord = KeyChord::new(key, mods);
+    let chord = if legacy { chord.from_legacy() } else { chord };
     Some(if alt_gr {
         chord.without_alt_gr()
     } else {
@@ -54,7 +56,7 @@ mod tests {
             KeyCode::Char('Z'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         );
-        assert_eq!(key_chord(event, true), "ctrl+shift+z".parse().ok());
+        assert_eq!(key_chord(event, true, false), "ctrl+shift+z".parse().ok());
     }
 
     /// `AltGr` symbols type only when the setting is on.
@@ -64,14 +66,22 @@ mod tests {
             KeyCode::Char('{'),
             KeyModifiers::CONTROL | KeyModifiers::ALT,
         );
-        assert_eq!(key_chord(event, true), "{".parse().ok());
-        assert_eq!(key_chord(event, false), "ctrl+alt+{".parse().ok());
+        assert_eq!(key_chord(event, true, false), "{".parse().ok());
+        assert_eq!(key_chord(event, false, false), "ctrl+alt+{".parse().ok());
     }
 
     /// Back tab is shift plus tab.
     #[test]
     fn back_tab_is_shift_tab() {
         let event = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
-        assert_eq!(key_chord(event, true), "shift+tab".parse().ok());
+        assert_eq!(key_chord(event, true, false), "shift+tab".parse().ok());
+    }
+
+    /// Old terminals send `ctrl+/` as `ctrl+7`, which only maps back for them.
+    #[test]
+    fn legacy_control_digits() {
+        let event = KeyEvent::new(KeyCode::Char('7'), KeyModifiers::CONTROL);
+        assert_eq!(key_chord(event, true, true), "ctrl+/".parse().ok());
+        assert_eq!(key_chord(event, true, false), "ctrl+7".parse().ok());
     }
 }

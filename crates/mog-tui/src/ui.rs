@@ -258,6 +258,8 @@ pub struct Ui {
     pub commands: Vec<CommandInfo>,
     /// Every key binding as `(chord, command name)`.
     pub bindings: Vec<(String, String)>,
+    /// Whether the terminal sends keys the old way, so some chords cannot reach mog.
+    pub legacy_keys: bool,
     /// Whether a folder is open, so there is something to explore.
     pub has_explorer: bool,
     /// Whether the file explorer is shown.

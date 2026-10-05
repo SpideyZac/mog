@@ -131,6 +131,9 @@ pub struct EditorConfig {
     /// Windows reports `AltGr` as `ctrl+alt`, which layouts like QWERTZ and AZERTY need for
     /// `{`, `[`, `@` and friends.
     pub alt_gr: bool,
+    /// Whether to turn on the kitty keyboard protocol in terminals that have it, so chords like
+    /// `ctrl+shift+p` and `ctrl+i` arrive as themselves.
+    pub kitty_keyboard: bool,
 }
 
 impl Default for EditorConfig {
@@ -142,6 +145,7 @@ impl Default for EditorConfig {
             auto_complete: true,
             diagnostics_delay: 500,
             alt_gr: true,
+            kitty_keyboard: true,
         }
     }
 }

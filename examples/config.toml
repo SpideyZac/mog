@@ -10,6 +10,8 @@ auto_complete = true
 diagnostics_delay = 500
 # symbols typed with altgr, like { on qwertz, type text instead of running ctrl+alt shortcuts
 alt_gr = true
+# use the kitty keyboard protocol when the terminal has it
+kitty_keyboard = true
 
 [ui]
 # themes: mog, synthwave, matrix, sunset, ocean, forest, paper

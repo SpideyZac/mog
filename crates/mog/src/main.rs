@@ -49,8 +49,10 @@ async fn main() -> Result<()> {
         println!("{text}");
         return Ok(());
     }
-    let mut tui = terminal::init()?;
     let mut app = App::new(args);
+    let mut tui = terminal::init(app.wants_kitty_keys())?;
+    // windows reads keys from the console directly so it never loses chords
+    app.set_legacy_keys(!cfg!(windows) && !terminal::keys_enhanced());
     app.start_updates();
     let result = app.run(&mut tui).await;
     terminal::restore()?;

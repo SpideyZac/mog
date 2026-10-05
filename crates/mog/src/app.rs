@@ -362,6 +362,16 @@ impl App {
         }
     }
 
+    /// Returns whether the kitty keyboard protocol should be turned on if the terminal has it.
+    pub fn wants_kitty_keys(&self) -> bool {
+        self.ui.config.editor.kitty_keyboard
+    }
+
+    /// Tells the app whether the terminal sends keys the old way, which loses some chords.
+    pub fn set_legacy_keys(&mut self, legacy: bool) {
+        self.ui.legacy_keys = legacy;
+    }
+
     /// Shows what is new after an update and looks for the next one.
     ///
     /// Not part of [`App::new`] so snapshots stay offline.
@@ -725,7 +735,8 @@ impl App {
         match event {
             // windows reports releases too and we only care about presses
             Event::Key(key) if key.kind != KeyEventKind::Release => {
-                if let Some(chord) = input::key_chord(key, self.ui.config.editor.alt_gr) {
+                let (alt_gr, legacy) = (self.ui.config.editor.alt_gr, self.ui.legacy_keys);
+                if let Some(chord) = input::key_chord(key, alt_gr, legacy) {
                     self.handle_key(chord);
                 }
             }

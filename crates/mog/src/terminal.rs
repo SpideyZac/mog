@@ -3,28 +3,47 @@
 use std::{
     io::{self, Stdout, stdout},
     panic,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use crossterm::{
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+        supports_keyboard_enhancement,
+    },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
+
+/// Whether the kitty keyboard protocol is on, so [`restore`] turns it off again.
+static KEYS_ENHANCED: AtomicBool = AtomicBool::new(false);
 
 /// The terminal type the editor draws to.
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
 /// Puts the terminal into raw mode on the alternate screen.
 ///
-/// Also installs a panic hook that calls [`restore`] so a panic never leaves the terminal broken.
+/// With `kitty_keys` set, also turns on the kitty keyboard protocol if the terminal has it. Also
+/// installs a panic hook that calls [`restore`] so a panic never leaves the terminal broken.
 ///
 /// # Errors
 ///
 /// Returns an error if the terminal cannot be configured.
-pub fn init() -> io::Result<Tui> {
+pub fn init(kitty_keys: bool) -> io::Result<Tui> {
     install_panic_hook();
     enable_raw_mode()?;
+    // asking needs raw mode and must happen before anything else reads input
+    if kitty_keys && supports_keyboard_enhancement().unwrap_or(false) {
+        let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS;
+        if execute!(stdout(), PushKeyboardEnhancementFlags(flags)).is_ok() {
+            KEYS_ENHANCED.store(true, Ordering::Relaxed);
+        }
+    }
     execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     // some terminals cannot do bracketed paste and typing the paste out still works there
     let _ = execute!(stdout(), EnableBracketedPaste);
@@ -37,9 +56,17 @@ pub fn init() -> io::Result<Tui> {
 ///
 /// Returns an error if the terminal cannot be reset.
 pub fn restore() -> io::Result<()> {
+    if KEYS_ENHANCED.swap(false, Ordering::Relaxed) {
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
+    }
     let _ = execute!(stdout(), DisableBracketedPaste);
     execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen)?;
     disable_raw_mode()
+}
+
+/// Returns whether the kitty keyboard protocol is on, so every chord reaches mog.
+pub fn keys_enhanced() -> bool {
+    KEYS_ENHANCED.load(Ordering::Relaxed)
 }
 
 /// Chains a panic hook that restores the terminal before the default hook prints.
