@@ -6,9 +6,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AiConfig {
-    /// Whether the AI suggests code in gray after the cursor when typing pauses.
-    ///
-    /// This is the master switch, each provider can also opt out on its own.
+    /// Whether Copilot suggests code in gray after the cursor when typing pauses.
     pub ghost_text: bool,
     /// Claude settings.
     pub claude: ClaudeConfig,
@@ -34,8 +32,9 @@ pub struct ClaudeConfig {
     pub enabled: bool,
     /// Whether Claude answers in the chat panel.
     pub chat: bool,
-    /// Whether Claude suggests ghost text.
-    pub ghost_text: bool,
+    /// Ignored, Claude only chats. Kept so configs from before 1.0 still load.
+    #[doc(hidden)]
+    pub ghost_text: Option<bool>,
     /// The model id, or the provider default when unset.
     pub model: Option<String>,
     /// The environment variable holding the API key. Keys are never stored in the config.
@@ -47,7 +46,7 @@ impl Default for ClaudeConfig {
         Self {
             enabled: false,
             chat: true,
-            ghost_text: true,
+            ghost_text: None,
             model: None,
             api_key_env: "ANTHROPIC_API_KEY".into(),
         }
@@ -60,8 +59,9 @@ impl Default for ClaudeConfig {
 pub struct CopilotConfig {
     /// Whether Copilot is used at all.
     pub enabled: bool,
-    /// Whether Copilot answers in the chat panel.
-    pub chat: bool,
+    /// Ignored, Copilot only suggests ghost text. Kept so configs from before 1.0 still load.
+    #[doc(hidden)]
+    pub chat: Option<bool>,
     /// Whether Copilot suggests ghost text.
     pub ghost_text: bool,
     /// The Copilot language server program, from `npm i -g @github/copilot-language-server`.
@@ -74,7 +74,7 @@ impl Default for CopilotConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            chat: true,
+            chat: None,
             ghost_text: true,
             command: "copilot-language-server".into(),
             args: vec!["--stdio".into()],

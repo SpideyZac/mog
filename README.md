@@ -33,7 +33,7 @@ mog .
   does not lose it
 - Git gutter, branch in the status line, file colors and inline blame, plus a source control
   panel with diffs, staging of whole files or single changes, and commits
-- Claude chat, explain selection and ghost text. Copilot ghost text.
+- Claude chat and explain selection. Copilot ghost text.
 - Run build and test tasks with their errors in the problems list, and debug with any debug
   adapter (lldb-dap and debugpy work out of the box)
 - Plugins in any language, talking JSON-RPC over stdio
@@ -164,10 +164,11 @@ Add more or change these under [`[lsp]`](#lsp) in the config.
 ## AI
 
 **Claude.** Set `ANTHROPIC_API_KEY`, then turn on `ai.claude.enabled`. You get a chat panel
-(`ctrl+l`), explain the selection (`alt+e`) and ghost text.
+(`ctrl+l`) whose answers stream in, and explain the selection (`alt+e`). Claude does not do
+inline suggestions, Copilot handles those.
 
 **Copilot.** Install GitHub's language server, turn on `ai.copilot.enabled`, then run
-`Copilot: Sign in` from the command palette.
+`Copilot: Sign in` from the command palette. You get ghost text.
 
 ```sh
 npm i -g @github/copilot-language-server
@@ -461,7 +462,7 @@ Only your own config can add plugins, a project config cannot.
 
 | key | default | |
 | --- | --- | --- |
-| `ghost_text` | `true` | Master switch for ghost text from any provider |
+| `ghost_text` | `true` | Master switch for Copilot ghost text |
 
 `[ai.claude]`
 
@@ -469,7 +470,6 @@ Only your own config can add plugins, a project config cannot.
 | --- | --- | --- |
 | `enabled` | `false` | Use Claude |
 | `chat` | `true` | Answer in the chat panel |
-| `ghost_text` | `true` | Suggest ghost text |
 | `model` | provider default | Model id, like `"claude-opus-5-5"` |
 | `api_key_env` | `"ANTHROPIC_API_KEY"` | Environment variable holding the key |
 
@@ -478,7 +478,6 @@ Only your own config can add plugins, a project config cannot.
 | key | default | |
 | --- | --- | --- |
 | `enabled` | `false` | Use Copilot |
-| `chat` | `true` | Answer in the chat panel |
 | `ghost_text` | `true` | Suggest ghost text |
 | `command` | `"copilot-language-server"` | The Copilot language server |
 | `args` | `["--stdio"]` | Its arguments |

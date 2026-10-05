@@ -71,8 +71,8 @@ pub struct AiProviders {
     pub copilot_events: Option<UnboundedReceiver<CopilotEvent>>,
 }
 
-/// Builds the enabled AI providers for the project at `root`, Claude first for chat and Copilot
-/// first for ghost text.
+/// Builds the enabled AI providers for the project at `root`: Claude chats and Copilot suggests
+/// ghost text.
 ///
 /// Providers that are enabled but cannot work, like Claude without a key, are skipped and
 /// described in the returned list of problems.
@@ -87,12 +87,8 @@ pub fn ai_providers(config: &Config, root: &Path) -> (AiProviders, Vec<String>) 
                     .model
                     .clone()
                     .unwrap_or_else(|| claude::DEFAULT_MODEL.into());
-                let claude: Arc<dyn AiProvider> = Arc::new(Claude::new(key, model));
                 if claude_config.chat {
-                    providers.chat.push(Arc::clone(&claude));
-                }
-                if claude_config.ghost_text {
-                    providers.ghost.push(claude);
+                    providers.chat.push(Arc::new(Claude::new(key, model)));
                 }
             }
             _ => problems.push(format!(
@@ -106,16 +102,10 @@ pub fn ai_providers(config: &Config, root: &Path) -> (AiProviders, Vec<String>) 
         match Copilot::start(&copilot_config.command, &copilot_config.args, root) {
             Ok((copilot, events)) => {
                 let copilot = Arc::new(copilot);
-                if copilot_config.chat {
-                    providers
-                        .chat
-                        .push(Arc::clone(&copilot) as Arc<dyn AiProvider>);
-                }
                 if copilot_config.ghost_text {
-                    // copilot is built for inline suggestions so it goes ahead of claude
                     providers
                         .ghost
-                        .insert(0, Arc::clone(&copilot) as Arc<dyn AiProvider>);
+                        .push(Arc::clone(&copilot) as Arc<dyn AiProvider>);
                 }
                 providers.copilot = Some(copilot);
                 providers.copilot_events = Some(events);
