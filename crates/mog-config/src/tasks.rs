@@ -1,4 +1,4 @@
-//! Settings for tasks like building and testing, and for debuggers.
+//! Settings for tasks like building and testing, debuggers and plugins.
 
 use std::collections::BTreeMap;
 
@@ -91,6 +91,28 @@ impl Default for DebugConfig {
             request: "launch".into(),
             arguments: Value::Null,
             before: String::new(),
+        }
+    }
+}
+
+/// A plugin, a program that adds commands to mog by talking JSON over stdio.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PluginConfig {
+    /// Whether the plugin runs.
+    pub enabled: bool,
+    /// The program to run, like `python`.
+    pub command: String,
+    /// The arguments to pass to it, like the script path.
+    pub args: Vec<String>,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            command: String::new(),
+            args: Vec::new(),
         }
     }
 }

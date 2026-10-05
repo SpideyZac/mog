@@ -32,7 +32,7 @@ pub use discord::DiscordConfig;
 pub use lsp::{Install, ServerConfig, install_hint};
 pub use project::{ProjectConfig, ProjectFile, project_config_path, read_project};
 pub use save::{SettingValue, config_path, save_setting};
-pub use tasks::{DebugConfig, TaskConfig, merged_debuggers};
+pub use tasks::{DebugConfig, PluginConfig, TaskConfig, merged_debuggers};
 pub use terminal::TerminalConfig;
 pub use theme::ThemeConfig;
 pub use ui::UiConfig;
@@ -116,6 +116,8 @@ pub struct Config {
     pub tasks: BTreeMap<String, TaskConfig>,
     /// Debuggers by name.
     pub debug: BTreeMap<String, DebugConfig>,
+    /// Plugins by name. Only the global config can add plugins, never a project.
+    pub plugins: BTreeMap<String, PluginConfig>,
 }
 
 /// Settings for editing behavior.
