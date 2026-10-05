@@ -189,6 +189,7 @@ API keys are never read from or written to the config file.
 | `auto_close_brackets` | `true` | Typing `(`, `[`, `{` or a quote also types the closing one |
 | `auto_complete` | `true` | Completions pop up while typing |
 | `diagnostics_delay` | `500` | Milliseconds of no typing before language servers check the file |
+| `kitty_keyboard` | `true` | Use the kitty keyboard protocol in terminals that have it, so every chord arrives as itself |
 | `alt_gr` | `true` | Symbols typed with AltGr (`{` on QWERTZ, `@` on AZERTY) type text instead of running `ctrl+alt` shortcuts. Only matters on layouts with AltGr |
 
 ### `[ui]`
@@ -393,6 +394,13 @@ whenever it changes. Saving it applies it right away.
 `ctrl+k` lists everything and lets you rebind. `mog --keys` prints the same list. Where two
 chords are listed, either works; the `alt` versions are there for terminals that eat the `ctrl`
 ones.
+
+Terminals that speak the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+(kitty, WezTerm, foot, Ghostty, Alacritty, recent iTerm2) send every chord as itself, and mog turns
+it on when it is there. Older terminals send control keys as single bytes, so `ctrl+i` looks like
+tab, `ctrl+shift+p` arrives as `ctrl+p` and `ctrl+,` does not arrive at all. In those terminals the
+key list marks the chords that cannot get through with `(!)`, so you know to use the `alt` version
+or rebind it. Windows always gets every chord. Turn the protocol off with `editor.kitty_keyboard`.
 
 On layouts with AltGr (German, Swiss, French, Spanish, Italian, Nordic, Polish and most other
 European ones), Windows sends AltGr as `ctrl+alt`, so `editor.alt_gr` turns those into typed

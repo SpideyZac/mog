@@ -119,12 +119,16 @@ impl Popups {
                     }
                 }
                 self.commands = rows.iter().map(|(name, _, _)| name.clone()).collect();
+                let legacy = ui.legacy_keys;
                 rows.into_iter()
                     .map(|(name, title, keys)| {
                         let hint = if keys.is_empty() {
                             "unbound".to_owned()
                         } else {
-                            keys.join("  ")
+                            keys.iter()
+                                .map(|chord| mark_unsendable(chord, legacy))
+                                .collect::<Vec<_>>()
+                                .join("  ")
                         };
                         PickerItem::new(title).detail(name).hint(hint)
                     })
@@ -357,6 +361,19 @@ impl Popups {
     }
 }
 
+/// Returns `chord` with a `(!)` after it if `legacy` keys cannot send it.
+fn mark_unsendable(chord: &str, legacy: bool) -> String {
+    let unsendable = legacy
+        && chord
+            .parse::<KeyChord>()
+            .is_ok_and(|chord| chord.legacy_problem().is_some());
+    if unsendable {
+        format!("{chord} (!)")
+    } else {
+        chord.to_owned()
+    }
+}
+
 impl Layer for Popups {
     fn area(&self, layout: &Layout, ui: &Ui) -> Rect {
         if Self::owns(ui.overlay) {
@@ -376,6 +393,10 @@ impl Layer for Popups {
         let (title, placeholder) = match cx.ui.overlay {
             Some(Overlay::Palette) => ("\u{2318} command palette", "type a command..."),
             Some(Overlay::Finder) => ("\u{2315} find a file", "type part of a file name..."),
+            Some(Overlay::Keys) if cx.ui.legacy_keys => (
+                "\u{2328} key bindings, enter to change. (!) your terminal cannot send it",
+                "search keys or commands...",
+            ),
             Some(Overlay::Keys) => (
                 "\u{2328} key bindings, enter to change",
                 "search keys or commands...",

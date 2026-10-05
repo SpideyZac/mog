@@ -38,8 +38,8 @@
 - [x] Splits
 - [x] Built in terminal (`ctrl+backtick`)
 - [x] Scroll back and restart the terminal
-- [ ] Kitty keyboard protocol with a fallback for older terminals
-- [ ] Mark keys the terminal can't send in the key list
+- [x] Kitty keyboard protocol with a fallback for older terminals
+- [x] Mark keys the terminal can't send in the key list
 - [ ] Restore open tabs, splits and cursors between sessions
 - [ ] Swap files to recover unsaved buffers after a crash
 - [ ] Persistent undo history
