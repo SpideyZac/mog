@@ -196,6 +196,8 @@ API keys are never read from or written to the config file.
 | `auto_close_brackets` | `true` | Typing `(`, `[`, `{` or a quote also types the closing one |
 | `auto_complete` | `true` | Completions pop up while typing |
 | `diagnostics_delay` | `500` | Milliseconds of no typing before language servers check the file |
+| `restore_session` | `true` | Opening a folder brings back the files, split and cursors from last time |
+| `persistent_undo` | `true` | Keep undo history for each file between runs, as long as the file did not change elsewhere |
 | `kitty_keyboard` | `true` | Use the kitty keyboard protocol in terminals that have it, so every chord arrives as itself |
 | `alt_gr` | `true` | Symbols typed with AltGr (`{` on QWERTZ, `@` on AZERTY) type text instead of running `ctrl+alt` shortcuts. Only matters on layouts with AltGr |
 

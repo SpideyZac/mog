@@ -134,6 +134,10 @@ pub struct EditorConfig {
     /// Whether to turn on the kitty keyboard protocol in terminals that have it, so chords like
     /// `ctrl+shift+p` and `ctrl+i` arrive as themselves.
     pub kitty_keyboard: bool,
+    /// Whether opening a folder brings back the files, splits and cursors from last time.
+    pub restore_session: bool,
+    /// Whether undo history is kept for each file between runs.
+    pub persistent_undo: bool,
 }
 
 impl Default for EditorConfig {
@@ -146,6 +150,8 @@ impl Default for EditorConfig {
             diagnostics_delay: 500,
             alt_gr: true,
             kitty_keyboard: true,
+            restore_session: true,
+            persistent_undo: true,
         }
     }
 }
@@ -202,6 +208,17 @@ impl Config {
             Err(err) if err.kind() == ErrorKind::NotFound => Ok(Self::default()),
             Err(source) => Err(ConfigError::Read { path, source }),
         }
+    }
+}
+
+/// Returns the directory mog keeps sessions, unsaved work and undo history in.
+///
+/// This is `state` inside [`CONFIG_DIR_ENV`] if set, so tests and portable setups keep
+/// everything together, otherwise `mog` inside the platform local data directory.
+pub fn state_dir() -> Option<PathBuf> {
+    match env::var_os(CONFIG_DIR_ENV) {
+        Some(dir) => Some(PathBuf::from(dir).join("state")),
+        None => dirs::data_local_dir().map(|dir| dir.join("mog")),
     }
 }
 

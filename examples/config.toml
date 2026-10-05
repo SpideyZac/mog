@@ -12,6 +12,10 @@ diagnostics_delay = 500
 alt_gr = true
 # use the kitty keyboard protocol when the terminal has it
 kitty_keyboard = true
+# open the files from last time when opening a folder
+restore_session = true
+# keep undo history for each file between runs
+persistent_undo = true
 
 [ui]
 # themes: mog, synthwave, matrix, sunset, ocean, forest, paper
