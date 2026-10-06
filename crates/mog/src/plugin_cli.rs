@@ -21,8 +21,8 @@ use crate::{
 };
 
 /// What `mog plugin install` says before it installs anything.
-const UNSANDBOXED: &str =
-    "WARNING: plugins are not sandboxed. A plugin runs as you, and mog does not limit what it does.
+const UNSANDBOXED: &str = "\
+WARNING: plugins are not sandboxed. A plugin runs as you, and mog does not limit what it does.
 It can read, change and delete any file you can, read every environment variable (API keys
 and tokens included), see everything you open and type, use the network and run programs.
 Only install plugins you have read or whose authors you trust.";
@@ -222,10 +222,7 @@ fn is_git_url(source: &str) -> bool {
 ///
 /// Returns an error if the answer is not yes, or there is nobody to ask.
 fn confirm_install(source: &str) -> Result<()> {
-    eprintln!(
-        "{UNSANDBOXED}
-"
-    );
+    eprintln!("{UNSANDBOXED}\n");
     if !io::stdin().is_terminal() {
         bail!("pass --yes to install {source} without asking");
     }
