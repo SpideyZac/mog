@@ -208,8 +208,31 @@ class Plugin {
   }
 
   /** Puts a short text in the status line, an empty text removes it. */
-  segment(text, { color = null, command = null, id } = {}) {
-    this.notify("segment", { text, color, command, id });
+  segment(text, { color = null, command = null, id, bg, bold, side } = {}) {
+    this.notify("segment", { text, color, command, id, bg, bold, side });
+  }
+
+  /**
+   * Shows a notification in the top right corner, or changes the one with this id. progress
+   * is a percentage or true for busy, buttons a list of { title, command }.
+   */
+  toast(id, title, { text = "", level = "info", progress, timeout, buttons } = {}) {
+    this.notify("toast", { id, title, text, level, progress, timeout, buttons });
+  }
+
+  /** Removes the notification with this id. */
+  closeToast(id) {
+    this.notify("toast", { id, done: true });
+  }
+
+  /** Shows or fills a panel docked on the right or at the bottom, see the docs for options. */
+  panel(id, { title, lines, side = "right", ...options } = {}) {
+    this.notify("panel", { ...options, id, title, lines, side });
+  }
+
+  /** Paints cells over the editor as flair, [x, y, char, fg, bg] each. */
+  canvas(id = "canvas", { cells = [], rows, clear = true, still = false } = {}) {
+    this.notify("canvas", { id, cells, rows, clear, still });
   }
 
   /** Shows progress of long work in the status line. */

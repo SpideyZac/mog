@@ -212,6 +212,38 @@ impl<R: BufRead, W: Write> Mog<R, W> {
         self.notify("status", json!({ "text": text }));
     }
 
+    /// Shows a notification in the top right corner, or changes the one with this `id`.
+    /// `options` holds `text`, `level`, `progress`, `timeout` and `buttons`, see
+    /// `docs/plugins.md`.
+    pub fn toast(&mut self, id: &str, title: &str, options: Value) {
+        let mut params = if options.is_object() {
+            options
+        } else {
+            json!({})
+        };
+        params["id"] = json!(id);
+        params["title"] = json!(title);
+        self.notify("toast", params);
+    }
+
+    /// Shows or fills a panel. `options` holds `title`, `side`, `size`, `lines`, `open`,
+    /// `focus`, `scroll` and `remove`, see `docs/plugins.md`.
+    pub fn panel(&mut self, id: &str, options: Value) {
+        let mut params = if options.is_object() {
+            options
+        } else {
+            json!({})
+        };
+        params["id"] = json!(id);
+        self.notify("panel", params);
+    }
+
+    /// Paints `cells`, each `[x, y, "char", fg, bg]`, over the editor as flair on the canvas
+    /// `id`, wiping what it held first.
+    pub fn canvas(&mut self, id: &str, cells: Value) {
+        self.notify("canvas", json!({ "id": id, "cells": cells, "clear": true }));
+    }
+
     /// Adds a line to this plugin's log.
     pub fn log(&mut self, text: &str) {
         self.notify("log", json!({ "text": text }));

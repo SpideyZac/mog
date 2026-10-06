@@ -99,6 +99,9 @@ def blink():
 
 # sent before mog said hello, so it waits until after the answer
 plugin.capture("all", except_keys=["ctrl+s"])
+plugin.toast("index", "Indexing", progress=40)
+plugin.panel("tree", "Tree", ["a"], side="bottom", size=5)
+plugin.canvas("rain", [[1, 2, "*", "cyan"]])
 
 plugin.run()
 messages = unframe(out.getvalue())
@@ -110,6 +113,9 @@ assert notes[0] == {
     "params": {"id": "blink", "every": 500},
 }
 assert notes[1]["params"] == {"keys": "all", "except": ["ctrl+s"]}
+assert notes[2]["params"] == {"id": "index", "title": "Indexing", "text": "", "level": "info", "progress": 40}
+assert notes[3]["params"] == {"id": "tree", "side": "bottom", "size": 5, "title": "Tree", "lines": ["a"]}
+assert notes[4]["params"]["cells"] == [[1, 2, "*", "cyan"]]
 assert notes[-1]["method"] == "draw"
 assert notes[-1]["params"]["lines"] == [[{"text": "o", "fg": "red", "bold": True}, "_o"]]
 assert ticks == [1]

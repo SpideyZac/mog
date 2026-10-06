@@ -282,13 +282,48 @@ class Plugin:
         """Adds a line to this plugin's log, shown by the plugins.log command."""
         self.notify("log", {"text": str(text)})
 
-    def segment(self, text, color=None, command=None, id=None):
+    def segment(self, text, color=None, command=None, id=None, bg=None, bold=False, side=None):
         """Puts a short text in the status line until replaced, an empty text removes it. Give
-        an id to have more than one. Clicking it runs command."""
+        an id to have more than one. Clicking it runs command, or without one sends the
+        segment_click event. side is "right" (the default) or "left"."""
         params = {"text": text, "color": color, "command": command}
-        if id is not None:
-            params["id"] = id
+        for key, value in (("id", id), ("bg", bg), ("side", side)):
+            if value is not None:
+                params[key] = value
+        if bold:
+            params["bold"] = True
         self.notify("segment", params)
+
+    def toast(self, id, title, text="", level="info", progress=None, timeout=None, buttons=None):
+        """Shows a notification in the top right corner, or changes the one with this id.
+        progress is a percentage or True for busy, buttons a list of {"title", "command"}."""
+        params = {"id": id, "title": title, "text": text, "level": level}
+        for key, value in (("progress", progress), ("timeout", timeout), ("buttons", buttons)):
+            if value is not None:
+                params[key] = value
+        self.notify("toast", params)
+
+    def close_toast(self, id):
+        """Removes the notification with this id."""
+        self.notify("toast", {"id": id, "done": True})
+
+    def panel(self, id, title=None, lines=None, side="right", **options):
+        """Shows or fills a panel docked on the right or at the bottom. options are size, open,
+        focus, scroll and remove, see the docs."""
+        params = dict(options, id=id, side=side)
+        if title is not None:
+            params["title"] = title
+        if lines is not None:
+            params["lines"] = lines
+        self.notify("panel", params)
+
+    def canvas(self, id="canvas", cells=None, rows=None, clear=True, still=False):
+        """Paints cells over the editor as flair. cells are [x, y, char, fg, bg] lists and rows
+        {"x", "y", "text", "fg", "bg"} dicts, counted from the top left of the editor."""
+        params = {"id": id, "cells": cells or [], "clear": clear, "still": still}
+        if rows:
+            params["rows"] = rows
+        self.notify("canvas", params)
 
     def progress(self, id, title, percentage=None, done=False):
         """Shows progress of long work in the status line."""
