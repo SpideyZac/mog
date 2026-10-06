@@ -19,7 +19,7 @@ use mog_plugin::{
     protocol::{parse_action, parse_selections},
 };
 use mog_tui::{
-    CommandInfo, CursorStyle, Overlay, PluginHealth, PluginSegment, PromptKind, SymbolEntry,
+    CommandInfo, CursorStyle, Overlay, PluginHealth, PluginSegment, PromptKind, Side, SymbolEntry,
     completion::{CompletionItem, ItemKind},
     picker::PickerItem,
 };
@@ -722,13 +722,23 @@ impl App {
                     Some(id) => format!("{plugin}/{id}"),
                     None => plugin.to_owned(),
                 };
-                self.set_segment(key, segment.text, segment.color, segment.command);
+                self.set_segment(PluginSegment {
+                    command: segment.command,
+                    bg: segment.bg,
+                    bold: segment.bold,
+                    side: if segment.left {
+                        Side::Left
+                    } else {
+                        Side::Right
+                    },
+                    ..PluginSegment::new(key, segment.text, segment.color)
+                });
             }
             "progress" => {
                 let id = params["id"].as_str().unwrap_or("progress");
                 let key = format!("{plugin}/progress/{id}");
                 if params["done"].as_bool().unwrap_or(false) {
-                    self.set_segment(key, String::new(), None, None);
+                    self.set_segment(PluginSegment::new(key, "", None));
                     return;
                 }
                 let title = params["title"].as_str().unwrap_or(plugin);
@@ -736,7 +746,7 @@ impl App {
                     Some(percent) => format!("{title} {}%", percent.min(100)),
                     None => format!("{title}\u{2026}"),
                 };
-                self.set_segment(key, text, Some("accent".into()), None);
+                self.set_segment(PluginSegment::new(key, text, Some("accent".into())));
             }
             "diagnostics" => {
                 if let Err(err) = self.set_plugin_diagnostics(plugin, params) {
@@ -759,36 +769,20 @@ impl App {
         }
     }
 
-    /// Puts a plugin segment called `key` in the status line, or removes it when `text` is
-    /// empty.
-    fn set_segment(
-        &mut self,
-        key: String,
-        text: String,
-        color: Option<String>,
-        command: Option<String>,
-    ) {
+    /// Puts a plugin segment in the status line, replacing the one with the same name, or
+    /// removes it when its text is empty.
+    fn set_segment(&mut self, segment: PluginSegment) {
         let segments = &mut self.ui.plugin_segments;
-        let at = segments.iter().position(|segment| segment.plugin == key);
-        match (at, text.is_empty()) {
+        let at = segments
+            .iter()
+            .position(|other| other.plugin == segment.plugin);
+        match (at, segment.text.is_empty()) {
             (Some(at), true) => {
                 segments.remove(at);
             }
             (None, true) => {}
-            (Some(at), false) => {
-                segments[at] = PluginSegment {
-                    plugin: key,
-                    text,
-                    color,
-                    command,
-                };
-            }
-            (None, false) => segments.push(PluginSegment {
-                plugin: key,
-                text,
-                color,
-                command,
-            }),
+            (Some(at), false) => segments[at] = segment,
+            (None, false) => segments.push(segment),
         }
     }
 

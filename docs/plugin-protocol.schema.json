@@ -402,7 +402,7 @@
       "properties": {
         "params": {
           "type": "object",
-          "properties": { "text": { "type": "string" }, "color": { "$ref": "#/$defs/color" }, "command": { "type": ["string", "null"] }, "id": { "type": "string" } }
+          "properties": { "text": { "type": "string" }, "color": { "$ref": "#/$defs/color" }, "bg": { "$ref": "#/$defs/color" }, "bold": { "type": "boolean" }, "side": { "enum": ["left", "right"] }, "command": { "type": ["string", "null"] }, "id": { "type": "string" } }
         }
       }
     },

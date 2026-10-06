@@ -5,6 +5,7 @@ use mog_core::{Severity, view};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
+    style::Modifier,
     text::{Line, Span},
     widgets::Widget,
 };
@@ -12,17 +13,35 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     compositor::{Context, EventResult, Layer},
-    ui::{CopilotState, Layout, Segment, Side, Ui},
+    ui::{CopilotState, Layout, Segment, SegmentClick, Side, Ui},
 };
 
 /// The number of rows the status line takes.
 pub const STATUS_HEIGHT: u16 = 1;
 
+/// What clicking a part of the status line does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Hit {
+    /// Runs a command.
+    Command(String),
+    /// Tells the plugin whose segment it is, by the segment's name.
+    Segment(String),
+}
+
 /// Shows the file name, status messages and the cursor position.
 #[derive(Debug, Default)]
 pub struct StatusLine {
-    /// Where the clickable parts were drawn, as `(start, end, command)`.
-    hits: Vec<(u16, u16, String)>,
+    /// Where the clickable parts were drawn, as `(start, end, what)`.
+    hits: Vec<(u16, u16, Hit)>,
+}
+
+/// Returns the name of a mouse button for plugins.
+fn button_name(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Left => "left",
+        MouseButton::Right => "right",
+        MouseButton::Middle => "middle",
+    }
 }
 
 impl StatusLine {
@@ -95,23 +114,30 @@ impl Layer for StatusLine {
             .saturating_sub(message.width().min(total / 2) + 1);
         let mut flair_left = Vec::new();
         let mut flair_right = Vec::new();
+        let mut left_hits: Vec<Option<Hit>> =
+            vec![Some(Hit::Command("command_palette".into())), None];
+        let mut flair_left_hits = Vec::new();
+        let mut flair_right_hits = Vec::new();
         // plugins asked for their text on purpose, so it goes ahead of flair
-        let plugins: Vec<Segment> = cx
-            .ui
-            .plugin_segments
-            .iter()
-            .map(|segment| {
-                let style = theme.color_style(segment.color.as_deref(), theme.status);
-                Segment::new(segment.text.clone(), style, Side::Right)
-            })
-            .collect();
-        let clickable: Vec<(&str, &str)> = cx
-            .ui
-            .plugin_segments
-            .iter()
-            .filter_map(|segment| Some((segment.text.as_str(), segment.command.as_deref()?)))
-            .collect();
-        for segment in plugins.iter().chain(&cx.ui.segments) {
+        let plugins = cx.ui.plugin_segments.iter().map(|segment| {
+            let mut style = theme.color_style(segment.color.as_deref(), theme.status);
+            if let Some(bg) = segment.bg.as_deref().and_then(|name| theme.color(name)) {
+                style = style.bg(bg);
+            }
+            if segment.bold {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            let hit = match &segment.command {
+                Some(command) => Hit::Command(command.clone()),
+                None => Hit::Segment(segment.plugin.clone()),
+            };
+            (
+                Segment::new(segment.text.clone(), style, segment.side),
+                Some(hit),
+            )
+        });
+        let others = cx.ui.segments.iter().map(|segment| (segment.clone(), None));
+        for (segment, hit) in plugins.chain(others) {
             let spans: Vec<Span<'_>> = segment
                 .parts
                 .iter()
@@ -123,43 +149,64 @@ impl Layer for StatusLine {
                 continue;
             }
             room -= needed;
+            let count = spans.len();
+            let hits: Vec<Option<Hit>> = (0..count)
+                .map(|at| if at + 1 < count { hit.clone() } else { None })
+                .collect();
             match segment.side {
-                Side::Left => flair_left.extend(spans),
-                Side::Right => flair_right.extend(spans),
+                Side::Left => {
+                    flair_left.extend(spans);
+                    flair_left_hits.extend(hits);
+                }
+                Side::Right => {
+                    flair_right.extend(spans);
+                    flair_right_hits.extend(hits);
+                }
             }
         }
         left.extend(flair_left);
+        left_hits.extend(flair_left_hits);
+        flair_right_hits.extend(right.iter().map(|_| None));
         flair_right.extend(right);
         let right = flair_right;
         let message_room = total.saturating_sub(width(&left) + width(&right) + 1);
         let message: String = message.chars().take(message_room).collect();
         left.push(Span::styled(message, theme.status_message));
         self.hits.clear();
-        // the badge opens the palette, problem counts open the problem list
-        self.hits
-            .push((area.x, area.x + 5, "command_palette".into()));
+        let mut x = area.x;
+        for (span, hit) in left.iter().zip(&left_hits) {
+            let span_width = u16::try_from(span.width()).unwrap_or(0);
+            if let Some(hit) = hit {
+                self.hits.push((x, x + span_width, hit.clone()));
+            }
+            x += span_width;
+        }
+        // problem counts open the problem list
         let right_width = u16::try_from(width(&right)).unwrap_or(0);
         let mut x = area.right().saturating_sub(right_width);
-        for span in &right {
+        for (span, hit) in right.iter().zip(&flair_right_hits) {
             let span_width = u16::try_from(span.width()).unwrap_or(0);
             let text = span.content.as_ref();
-            if text.starts_with('E') || text.starts_with('W') {
-                if text[1..].trim().parse::<usize>().is_ok() {
-                    self.hits.push((x, x + span_width, "problems.list".into()));
+            let command = |name: &str| Some(Hit::Command(name.to_owned()));
+            let hit = match hit {
+                Some(hit) => Some(hit.clone()),
+                None if (text.starts_with('E') || text.starts_with('W'))
+                    && text[1..].trim().parse::<usize>().is_ok() =>
+                {
+                    command("problems.list")
                 }
-            } else if text.starts_with("Ln ") {
-                self.hits.push((x, x + span_width, "goto.prompt".into()));
-            } else if text.starts_with("copilot") {
-                let command = if cx.ui.copilot == Some(CopilotState::SignedOut) {
-                    "copilot.sign_in"
-                } else {
-                    "copilot.status"
-                };
-                self.hits.push((x, x + span_width, command.into()));
-            } else if let Some((_, command)) =
-                clickable.iter().find(|(segment, _)| *segment == text)
-            {
-                self.hits.push((x, x + span_width, (*command).to_owned()));
+                None if text.starts_with("Ln ") => command("goto.prompt"),
+                None if text.starts_with("copilot") => {
+                    if cx.ui.copilot == Some(CopilotState::SignedOut) {
+                        command("copilot.sign_in")
+                    } else {
+                        command("copilot.status")
+                    }
+                }
+                None => None,
+            };
+            if let Some(hit) = hit {
+                self.hits.push((x, x + span_width, hit));
             }
             x += span_width;
         }
@@ -173,14 +220,25 @@ impl Layer for StatusLine {
         _area: Rect,
         cx: &mut Context<'_>,
     ) -> EventResult {
-        if let MouseEventKind::Down(MouseButton::Left) = event.kind
-            && let Some((_, _, name)) = self
-                .hits
-                .iter()
-                .find(|(start, end, _)| (*start..*end).contains(&event.column))
-            && let Ok(command) = name.parse()
-        {
-            cx.ui.request(command);
+        let MouseEventKind::Down(button) = event.kind else {
+            return EventResult::Consumed;
+        };
+        let hit = self
+            .hits
+            .iter()
+            .find(|(start, end, _)| (*start..*end).contains(&event.column))
+            .map(|(_, _, hit)| hit.clone());
+        match hit {
+            Some(Hit::Command(name)) if button == MouseButton::Left => {
+                if let Ok(command) = name.parse() {
+                    cx.ui.request(command);
+                }
+            }
+            Some(Hit::Segment(segment)) => cx.ui.segment_clicks.push(SegmentClick {
+                segment,
+                button: button_name(button),
+            }),
+            _ => {}
         }
         EventResult::Consumed
     }

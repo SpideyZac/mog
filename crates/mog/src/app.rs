@@ -866,11 +866,15 @@ mod tests {
     };
 
     use clap::Parser;
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig, ThemeConfig};
     use mog_core::{Command, Key, KeyChord};
     use mog_plugin::parse_actions;
-    use mog_tui::{Context, CursorShape, PromptKind, popups::PLUGIN_PICKED_COMMAND};
+    use mog_tui::{
+        Context, CursorShape, PluginSegment, PromptKind, Side, popups::PLUGIN_PICKED_COMMAND,
+    };
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::{Value, json, to_string};
     use tokio::time;
@@ -1881,6 +1885,55 @@ plugin.run()
         assert_eq!(tools[0].name, "loud_shout");
         let answer = call_tool(tools[0].clone(), json!({ "text": "hi" })).await;
         assert_eq!(answer.as_deref(), Ok("HI"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Returns the event for clicking `button` at `(column, row)`.
+    fn click(column: u16, row: u16, button: MouseButton) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(button),
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+    }
+
+    /// Plugin segments go on either end, and a click on one without a command is passed on,
+    /// while the badge still opens the palette.
+    #[tokio::test]
+    async fn clicks_plugin_segments() {
+        let dir = temp_dir();
+        let mut app = start(&dir);
+        app.ui.plugin_segments = vec![
+            PluginSegment {
+                side: Side::Left,
+                bold: true,
+                bg: Some("red".into()),
+                ..PluginSegment::new("vim/mode", "NORMAL", None)
+            },
+            PluginSegment::new("todo", "3 todos", Some("yellow".into())),
+        ];
+        let screen = app
+            .snapshot("100x5", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        let status = screen.lines().last().expect("status line").to_owned();
+        let left = status.find("NORMAL").expect("left segment");
+        let right = status.find("3 todos").expect("right segment");
+        assert!(left < right, "{status}");
+        let column = |byte: usize| u16::try_from(status[..byte].chars().count()).expect("fits");
+        app.handle_event(click(column(right) + 1, 4, MouseButton::Right));
+        app.handle_event(click(column(left) + 1, 4, MouseButton::Left));
+        let clicks: Vec<(&str, &str)> = app
+            .ui
+            .segment_clicks
+            .iter()
+            .map(|click| (click.segment.as_str(), click.button))
+            .collect();
+        assert_eq!(clicks, [("todo", "right"), ("vim/mode", "left")]);
+        app.handle_event(click(1, 4, MouseButton::Left));
+        app.run_requests();
+        assert_eq!(app.ui.overlay, Some(Overlay::Palette));
         let _ = fs::remove_dir_all(dir);
     }
 

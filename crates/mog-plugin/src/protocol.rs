@@ -32,7 +32,7 @@ pub const EVENTS: &[&str] = &[
 ];
 
 /// Events a plugin gets for things it set up itself, without listing them in `events`.
-pub const OWN_EVENTS: &[&str] = &["click", "timer"];
+pub const OWN_EVENTS: &[&str] = &["click", "timer", "segment_click"];
 
 /// Every request a plugin can send to mog.
 pub const REQUESTS: &[&str] = &[
@@ -252,6 +252,12 @@ pub struct Segment {
     pub color: Option<String>,
     /// A command clicking it runs.
     pub command: Option<String>,
+    /// A background color, a theme color name or hex code.
+    pub bg: Option<String>,
+    /// Whether the text is bold.
+    pub bold: bool,
+    /// Whether it goes on the left, after the file name, instead of the right.
+    pub left: bool,
 }
 
 /// The languages a provider works for.
@@ -549,6 +555,9 @@ pub fn parse_segment(value: &Value) -> Segment {
         text: value["text"].as_str().unwrap_or_default().to_owned(),
         color: value["color"].as_str().map(str::to_owned),
         command: value["command"].as_str().map(str::to_owned),
+        bg: value["bg"].as_str().map(str::to_owned),
+        bold: value["bold"].as_bool().unwrap_or(false),
+        left: value["side"].as_str() == Some("left"),
     }
 }
 

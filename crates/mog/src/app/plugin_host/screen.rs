@@ -383,6 +383,15 @@ impl App {
                 plugin.event("timer", json!({ "id": timer.id }));
             }
         }
+        for click in mem::take(&mut self.ui.segment_clicks) {
+            let (plugin, id) = match click.segment.split_once('/') {
+                Some((plugin, id)) => (plugin.to_owned(), Some(id.to_owned())),
+                None => (click.segment, None),
+            };
+            if let Some(plugin) = self.plugins.get(&plugin) {
+                plugin.event("segment_click", json!({ "id": id, "button": click.button }));
+            }
+        }
         for click in mem::take(&mut self.ui.widget_clicks) {
             if let Some(plugin) = self.plugins.get(&click.plugin) {
                 plugin.event(

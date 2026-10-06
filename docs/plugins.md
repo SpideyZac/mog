@@ -443,7 +443,7 @@ A plugin does not have to wait to be asked. These notifications can be sent at a
 | `status` | `{ "text": "..." }` | Shows a message in the status line |
 | `notify` | `{ "text": "...", "level": "info" }` | Shows a message and keeps it in the plugin log |
 | `log` | `{ "text": "..." }` | Adds a line to the plugin log only |
-| `segment` | `{ "text": "...", "color": "green", "command": "...", "id": "..." }` | Puts a short text in the status line until replaced, empty removes it. Clicking it runs `command`. Each `id` is its own segment |
+| `segment` | `{ "text": "...", "color": "green", "bg": "panel", "bold": true, "side": "left", "command": "...", "id": "..." }` | Puts a short text in the status line until replaced, empty removes it. `side` is `right` (by default, before the cursor position) or `left` (after the file name). Clicking it runs `command`, or without one sends the `segment_click` event. Each `id` is its own segment |
 | `progress` | `{ "id": "...", "title": "...", "percentage": 40, "done": false }` | Shows progress of long work in the status line, `done` removes it |
 | `diagnostics` | `{ "path": "...", "diagnostics": [...] }` | Replaces this plugin's problems for an open file, see below |
 | `decorations` | `{ "path": "...", "decorations": [{ "line": 3, "text": "...", "color": "dim" }] }` | Replaces the text this plugin shows after lines of a file, empty removes them |
@@ -507,11 +507,12 @@ mog sends the notification `event` for each event the plugin listed in `events`:
 | `git_changed` | The git status or branch changed | `branch` |
 | `before_save` | A file is about to be saved, see below | `path`, `language`, `version`, `text` |
 
-Two more events come without asking for them in `events`, since a plugin only gets them for
-things it set up itself: `click` when the user clicks one of its
-[widgets](#drawing-on-the-screen), with the widget `id`, the `x` and `y` of the click inside it
-and the `button` (`left`, `right` or `middle`), and `timer` with the `id` of one of its
-[timers](#timers).
+More events come without asking for them in `events`, since a plugin only gets them for things
+it set up itself: `click` when the user clicks one of its [widgets](#drawing-on-the-screen),
+with the widget `id`, the `x` and `y` of the click inside it and the `button` (`left`, `right` or
+`middle`), `segment_click` when the user clicks one of its status line segments that has no
+`command`, with the segment `id` (`null` for the one without an id) and the `button`, and
+`timer` with the `id` of one of its [timers](#timers).
 
 `before_save` is a request, not a notification. Answer with `{ "changes": [...] }` in char
 offsets of the `text` it sent, like a formatter would, or `{ "changes": [] }`. mog waits up to 2

@@ -146,6 +146,36 @@ pub struct PluginSegment {
     pub color: Option<String>,
     /// A command clicking it runs.
     pub command: Option<String>,
+    /// A background color, a palette color name or hex code.
+    pub bg: Option<String>,
+    /// Whether the text is bold.
+    pub bold: bool,
+    /// Which end of the status line it goes on.
+    pub side: Side,
+}
+
+impl PluginSegment {
+    /// Creates a segment called `plugin` showing `text` on the right, in `color`.
+    pub fn new(plugin: impl Into<String>, text: impl Into<String>, color: Option<String>) -> Self {
+        Self {
+            plugin: plugin.into(),
+            text: text.into(),
+            color,
+            command: None,
+            bg: None,
+            bold: false,
+            side: Side::Right,
+        }
+    }
+}
+
+/// A click on a plugin's status line segment that has no command, for the app to pass on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentClick {
+    /// The segment, the plugin name or `plugin/id`.
+    pub segment: String,
+    /// `left`, `right` or `middle`.
+    pub button: &'static str,
 }
 
 /// How a running plugin is doing, for the resource monitor.
@@ -383,6 +413,8 @@ pub struct Ui {
     pub debug: DebugState,
     /// Text plugins put in the status line.
     pub plugin_segments: Vec<PluginSegment>,
+    /// Clicks on plugin segments without a command, for the app to pass on.
+    pub segment_clicks: Vec<SegmentClick>,
     /// The title and items of the list a plugin asked the user to pick from.
     pub plugin_pick: Option<(String, Vec<PickerItem>)>,
     /// Plugin commands in the right click menu, as `(title, command)`.
