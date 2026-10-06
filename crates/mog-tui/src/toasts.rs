@@ -364,7 +364,7 @@ mod tests {
     fn draws_bars() {
         assert_eq!(
             bar(ToastProgress::Percent(50), 14, Duration::ZERO),
-            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2591}\u{2591}\u{2591}\u{2591}  50%"
+            "\u{2588}\u{2588}\u{2588}\u{2588}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}  50%"
         );
         let early = bar(ToastProgress::Busy, 20, Duration::ZERO);
         let later = bar(ToastProgress::Busy, 20, Duration::from_millis(500));
