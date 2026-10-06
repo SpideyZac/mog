@@ -3,3 +3,4 @@
 *.snap.new
 __pycache__/
 *.pyc
+mog.key

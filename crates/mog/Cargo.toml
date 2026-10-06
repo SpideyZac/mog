@@ -22,7 +22,7 @@ pkg-fmt = "zip"
 
 [package.metadata.binstall.signing]
 algorithm = "minisign"
-pubkey = "RWQEyQrj2l2VtRVkLbwHBkVxhMbDdbOGc7wHR8hjR27Ry+epMjmzedE0"
+pubkey = "RWQxm0+WtCFyKauL+lbkHe5SYv81b5BxDzeYRCmfEwgPf062L0qEbDxb"
 
 [dependencies]
 anyhow.workspace = true
