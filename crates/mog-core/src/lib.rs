@@ -22,6 +22,7 @@ pub mod range;
 pub mod search;
 pub mod transaction;
 pub mod view;
+pub mod when;
 
 pub use clipboard::{Clipboard, MemoryClipboard};
 pub use command::{Command, Motion};
