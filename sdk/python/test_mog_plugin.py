@@ -42,6 +42,8 @@ script = b"".join(
         {"id": 7, "method": "key", "params": {"key": "i", "char": "i"}},
         {"id": 8, "method": "key", "params": {"key": "x", "char": "x"}},
         {"method": "event", "params": {"kind": "timer", "id": "blink"}},
+        {"id": 9, "method": "tool/call", "params": {"name": "shout", "input": {"text": "hi"}}},
+        {"id": 10, "method": "tool/call", "params": {"name": "nope", "input": {}}},
         {"method": "shutdown"},
     ]
 )
@@ -83,6 +85,12 @@ def on_key(key, char, context):
 ticks = []
 
 
+@plugin.tool("shout", "Shouts the text", {"type": "object", "properties": {"text": {"type": "string"}}})
+def shout(tool_input):
+    return tool_input["text"].upper()
+
+
+
 @plugin.every(500, id="blink")
 def blink():
     ticks.append(1)
@@ -110,6 +118,8 @@ hello = replies[0]["result"]
 assert hello["protocolVersion"] == 2
 assert hello["events"] == ["before_save", "saved"]
 assert hello["providers"] == {"hover": ["md"]}
+assert hello["tools"][0]["name"] == "shout"
+assert hello["tools"][0]["input_schema"]["properties"]["text"]["type"] == "string"
 assert plugin.settings == {"a": 1}
 assert replies[1]["result"]["actions"] == [status("3 words in a")]
 assert replies[2]["result"]["changes"] == [change(0, 1, "")]
@@ -120,4 +130,6 @@ assert saved == ["a"]
 assert replies[6]["result"] == {"actions": [command("move_down")]}
 assert replies[7]["result"] == {"capture": {"keys": ["esc"]}}
 assert replies[8]["result"] == {"handled": False}
+assert replies[9]["result"] == {"content": "HI"}
+assert "no tool" in replies[10]["error"]["message"]
 print("python sdk ok")

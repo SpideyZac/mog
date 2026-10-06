@@ -104,6 +104,7 @@ class Plugin {
     this.titles = [];
     this.events = new Map();
     this.providers = new Map();
+    this.tools = new Map();
     this.pending = new Map();
     this.cancelled = new Set();
     this.keyHandler = null;
@@ -133,6 +134,23 @@ class Plugin {
   /** Registers a provider like "completion" for file extensions, or every file with true. */
   provide(provider, languages, handler) {
     this.providers.set(provider, { handler, languages });
+    return this;
+  }
+
+  /**
+   * Registers a tool the AI chat may call while it answers. The handler gets the input object
+   * and returns text, or any other JSON value which is sent as JSON. Throwing tells the model
+   * the tool failed, with the message.
+   */
+  tool(name, { description = "", inputSchema } = {}, handler) {
+    this.tools.set(name, {
+      handler,
+      tool: {
+        name,
+        description,
+        input_schema: inputSchema || { type: "object", properties: {} },
+      },
+    });
     return this;
   }
 
@@ -252,6 +270,7 @@ class Plugin {
       commands: this.titles,
       events: [...this.events.keys()],
       providers,
+      tools: [...this.tools.values()].map((entry) => entry.tool),
     };
   }
 
@@ -272,6 +291,12 @@ class Plugin {
     if (REQUEST_EVENTS.has(method)) {
       const handler = this.events.get(method);
       return { changes: (handler && (await handler(params))) || [] };
+    }
+    if (method === "tool/call") {
+      const entry = this.tools.get(params.name);
+      if (!entry) throw new Error(`no tool called ${params.name}`);
+      const result = await entry.handler(params.input || {});
+      return { content: typeof result === "string" ? result : JSON.stringify(result) };
     }
     if (method.startsWith("provide/")) {
       const entry = this.providers.get(method.slice("provide/".length));

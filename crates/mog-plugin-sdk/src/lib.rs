@@ -98,6 +98,9 @@ type EventHandler<R, W> = Box<dyn FnMut(&mut Mog<R, W>, &Value) -> Result<Value,
 /// A provider handler with the languages it covers, `None` for every file.
 type Provider<R, W> = (Option<Vec<String>>, EventHandler<R, W>);
 
+/// A tool for the AI chat: its description, input schema and handler.
+type ToolEntry<R, W> = (String, Value, EventHandler<R, W>);
+
 /// Handles a key the plugin takes, with the key name and where the cursor is.
 type KeyHandler<R, W> = Box<dyn FnMut(&mut Mog<R, W>, &str, &Value) -> Result<Value, String>>;
 
@@ -268,6 +271,8 @@ pub struct Plugin<R = BufReader<io::Stdin>, W = io::Stdout> {
     events: BTreeMap<String, EventHandler<R, W>>,
     /// The providers by name, with the languages they cover, `None` for every file.
     providers: BTreeMap<String, Provider<R, W>>,
+    /// The tools for the AI chat by name.
+    tools: BTreeMap<String, ToolEntry<R, W>>,
     /// The handler for keys the plugin takes.
     key: Option<KeyHandler<R, W>>,
     /// What runs once mog said hello.
@@ -280,6 +285,7 @@ impl<R: BufRead, W: Write> Default for Plugin<R, W> {
             commands: Vec::new(),
             events: BTreeMap::new(),
             providers: BTreeMap::new(),
+            tools: BTreeMap::new(),
             key: None,
             start: None,
         }
@@ -339,6 +345,28 @@ impl<R: BufRead, W: Write> Plugin<R, W> {
         self
     }
 
+    /// Offers the AI chat the tool `name`, described by `description` with input matching the
+    /// JSON schema `input_schema`. The handler gets the input and returns text for the model,
+    /// or an error message that tells it the tool failed.
+    #[must_use]
+    pub fn tool(
+        mut self,
+        name: &str,
+        description: &str,
+        input_schema: Value,
+        handler: impl FnMut(&mut Mog<R, W>, &Value) -> Result<String, String> + 'static,
+    ) -> Self {
+        let mut handler = handler;
+        let wrapped = move |mog: &mut Mog<R, W>, input: &Value| {
+            handler(mog, input).map(|text| json!({ "content": text }))
+        };
+        self.tools.insert(
+            name.to_owned(),
+            (description.to_owned(), input_schema, Box::new(wrapped)),
+        );
+        self
+    }
+
     /// Handles the keys the plugin takes, see [`Mog::capture`], with the key name like
     /// `shift+g` and the cursor context, which also has `key` and `char`.
     ///
@@ -382,11 +410,19 @@ impl<R: BufRead, W: Write> Plugin<R, W> {
                 (name.clone(), languages)
             })
             .collect();
+        let tools: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|(name, (description, schema, _))| {
+                json!({ "name": name, "description": description, "input_schema": schema })
+            })
+            .collect();
         json!({
             "protocolVersion": PROTOCOL_VERSION,
             "commands": commands,
             "events": self.events.keys().collect::<Vec<_>>(),
             "providers": providers,
+            "tools": tools,
         })
     }
 
@@ -428,6 +464,14 @@ impl<R: BufRead, W: Write> Plugin<R, W> {
                     .get_mut(&provider["provide/".len()..])
                     .ok_or_else(|| format!("no provider for {provider}"))?;
                 handler(mog, params)
+            }
+            "tool/call" => {
+                let name = params["name"].as_str().unwrap_or_default();
+                let (_, _, handler) = self
+                    .tools
+                    .get_mut(name)
+                    .ok_or_else(|| format!("no tool called {name}"))?;
+                handler(mog, &params["input"])
             }
             other => Err(format!("unknown request {other}")),
         }
@@ -533,6 +577,7 @@ mod tests {
             json!({ "method": "$/cancelRequest", "params": { "id": 5 } }),
             json!({ "id": 5, "method": "provide/hover", "params": {} }),
             json!({ "id": 6, "method": "key", "params": { "key": "j", "char": "j" } }),
+            json!({ "id": 7, "method": "tool/call", "params": { "name": "shout", "input": { "text": "hi" } } }),
             json!({ "method": "shutdown" }),
         ]);
         let mut output = Vec::new();
@@ -551,6 +596,12 @@ mod tests {
             .provide("hover", Some(vec!["md".into()]), |_, _| {
                 Ok(json!({ "text": "hi" }))
             })
+            .tool(
+                "shout",
+                "Shouts",
+                json!({ "type": "object" }),
+                |_, input| Ok(input["text"].as_str().unwrap_or_default().to_uppercase()),
+            )
             .on_start(|mog| mog.capture(json!(["j"]), &[]))
             .on_key(|mog, key, _| {
                 mog.draw("pressed", json!([key]), json!({ "anchor": "cursor" }));
@@ -570,6 +621,8 @@ mod tests {
         assert_eq!(hello["commands"][0]["keys"], json!(["alt+c"]));
         assert_eq!(hello["events"], json!(["before_save"]));
         assert_eq!(hello["providers"]["hover"], json!(["md"]));
+        assert_eq!(hello["tools"][0]["name"], "shout");
+        assert_eq!(by_id(7).expect("tool")["result"]["content"], "HI");
         assert_eq!(
             by_id(1).expect("count")["result"]["actions"][0]["text"],
             "2 words"

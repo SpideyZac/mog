@@ -129,6 +129,8 @@ class Plugin:
         self._titles = []
         self._events = {}
         self._providers = {}
+        self._tools = {}
+        self._tool_list = []
         self._waiting = []
         self._key = None
         self._timers = {}
@@ -174,6 +176,25 @@ class Plugin:
 
         def register(handler):
             self._providers[provider] = (handler, languages)
+            return handler
+
+        return register
+
+    def tool(self, name, description="", input_schema=None):
+        """Registers a tool the AI chat may call while it answers. The handler gets the input
+        dict and returns text, or any other JSON value which is sent as JSON. Raising an
+        exception tells the model the tool failed, with the message. input_schema is a JSON
+        schema of the input object."""
+
+        def register(handler):
+            self._tools[name] = handler
+            self._tool_list.append(
+                {
+                    "name": name,
+                    "description": description,
+                    "input_schema": input_schema or {"type": "object", "properties": {}},
+                }
+            )
             return handler
 
         return register
@@ -331,6 +352,7 @@ class Plugin:
             "commands": self._titles,
             "events": sorted(self._events),
             "providers": {name: languages for name, (_, languages) in self._providers.items()},
+            "tools": self._tool_list,
         }
 
     def _answer(self, message):
@@ -356,6 +378,12 @@ class Plugin:
             handler = self._events.get(method)
             changes = handler(params) if handler else None
             return {"changes": changes or []}
+        if method == "tool/call":
+            handler = self._tools.get(params.get("name"))
+            if handler is None:
+                raise ValueError(f"no tool called {params.get('name')}")
+            result = handler(params.get("input") or {})
+            return {"content": result if isinstance(result, str) else json.dumps(result)}
         if method.startswith("provide/"):
             entry = self._providers.get(method[len("provide/"):])
             if entry is None:

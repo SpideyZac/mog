@@ -15,6 +15,7 @@ plugin.command("count", { title: "Count", keys: ["alt+c"] }, async (context) => 
 });
 plugin.on("before_save", () => [change(0, 1, "")]);
 plugin.provide("hover", ["md"], () => ({ text: "hi" }));
+plugin.tool("shout", { description: "Shouts" }, (input) => input.text.toUpperCase());
 plugin.onKey((key) => {
   if (key === "j") return [command("move_down")];
   if (key === "i") return { capture: { keys: ["esc"] } };
@@ -53,6 +54,7 @@ send({ id: 5, method: "key", params: { key: "j", char: "j" } });
 send({ id: 6, method: "key", params: { key: "i", char: "i" } });
 send({ id: 7, method: "key", params: { key: "x", char: "x" } });
 send({ method: "event", params: { kind: "timer", id: "blink" } });
+send({ id: 8, method: "tool/call", params: { name: "shout", input: { text: "hi" } } });
 
 setTimeout(() => {
   const byId = (id) => replies.find((reply) => reply.id === id && reply.method === undefined);
@@ -60,6 +62,8 @@ setTimeout(() => {
   assert.strictEqual(hello.protocolVersion, 2);
   assert.deepStrictEqual(hello.events, ["before_save"]);
   assert.deepStrictEqual(hello.providers, { hover: ["md"] });
+  assert.strictEqual(hello.tools[0].name, "shout");
+  assert.deepStrictEqual(byId(8).result, { content: "HI" });
   assert.strictEqual(plugin.settings.a, 1);
   assert.deepStrictEqual(byId(1).result.actions, [status("3 words in a.md")]);
   assert.deepStrictEqual(byId(2).result.changes, [change(0, 1, "")]);
