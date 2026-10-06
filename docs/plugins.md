@@ -468,8 +468,9 @@ mog do it with `frames` and `motion` instead.
 - A plugin has 10 seconds to answer `initialize` or it is stopped.
 - Messages over 64 MB stop the plugin, and only 1024 messages can wait in each direction.
 - A plugin that crashes is started again after 1, 2, 4, 8 and 16 seconds. After the fifth crash
-  in a row mog gives up until you run `Plugins: Restart all plugins`. A plugin that ran for a
-  minute before crashing starts the count over.
+  in a row mog gives up until you run `Plugins: Restart all plugins` or one of its commands. A
+  plugin that ran for a minute before crashing starts the count over. Commands run while it waits
+  to restart wait with it, and opening a file of its language does not start it early.
 - Reloading the config restarts plugins whose settings changed and starts new ones.
 - Commands run while a plugin is starting wait for it, and fail with a message if it stops.
 

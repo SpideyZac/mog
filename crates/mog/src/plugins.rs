@@ -122,6 +122,13 @@ impl Entry {
         }
     }
 
+    /// Returns whether it crashed too often in a row and mog gave up on it.
+    fn gave_up(&self) -> bool {
+        matches!(self.run, Run::Stopped)
+            && self.restart_at.is_none()
+            && self.restarts >= MAX_RESTARTS
+    }
+
     /// Returns whether it starts as soon as mog does.
     fn starts_at_once(&self) -> bool {
         self.manifest.as_ref().is_none_or(Manifest::starts_at_once)
@@ -378,6 +385,7 @@ impl Plugins {
             .filter(|(_, entry)| {
                 matches!(entry.run, Run::Stopped)
                     && entry.restart_at.is_none()
+                    && !entry.gave_up()
                     && entry
                         .manifest
                         .as_ref()
@@ -574,15 +582,19 @@ impl Plugins {
                 let handle = handle.clone();
                 self.spawn_run(&plugin, handle, command, context, args);
             }
-            Run::Starting(_) => {
+            // a plugin that is starting, or waiting out its backoff after a crash, runs it once up
+            run if matches!(run, Run::Starting(_)) || entry.restart_at.is_some() => {
                 if let Some(entry) = self.entries.get_mut(&plugin) {
                     entry.queued.push((command, context, args));
                 }
             }
-            Run::Stopped => {
+            _ => {
                 if let Some(entry) = self.entries.get_mut(&plugin) {
                     entry.queued.push((command, context, args));
-                    entry.restarts = 0;
+                    // asking for a command of a plugin mog gave up on is a deliberate retry
+                    if entry.gave_up() {
+                        entry.restarts = 0;
+                    }
                 }
                 if let Some(problem) = self.start(&plugin) {
                     let _ = self
@@ -672,6 +684,7 @@ mod tests {
     use std::{collections::BTreeMap, env, fs, path::Path, process};
 
     use mog_config::PluginConfig;
+    use mog_plugin::Manifest;
     use serde_json::Value;
 
     use super::{Plugins, command_name, split_command};
@@ -748,5 +761,45 @@ mod tests {
         }
         assert!(plugins.exited("crashy", None).contains("crashed 5 times"));
         assert!(plugins.report().contains("crashed too often"));
+    }
+
+    /// Neither a command nor a file getting focus skips the wait after a crash.
+    #[tokio::test]
+    async fn commands_wait_out_the_backoff() {
+        let mut plugins = Plugins::new(Path::new("."), None);
+        let mut configs = BTreeMap::new();
+        configs.insert(
+            "crashy".to_owned(),
+            PluginConfig {
+                command: "definitely-not-a-program".into(),
+                ..PluginConfig::default()
+            },
+        );
+        let _ = plugins.configure(&configs);
+        let entry = plugins.entries.get_mut("crashy").expect("entry");
+        let manifest = "name = \"crashy\"
+command = \"x\"
+activation = [\"language:txt\"]
+                        [[commands]]
+name = \"go\"
+title = \"Go\"
+";
+        entry.manifest = Some(Manifest::parse(manifest, Path::new(".")).expect("manifest"));
+        plugins.exited("crashy", None);
+        plugins.exited("crashy", None);
+        assert!(plugins.run("plugin.crashy.go", Value::Null, Value::Null));
+        let entry = &plugins.entries["crashy"];
+        assert_eq!(entry.restarts, 2, "the crash count is kept");
+        assert!(entry.restart_at.is_some(), "the restart still waits");
+        assert_eq!(entry.queued.len(), 1, "the command waits for it");
+        for _ in 0..3 {
+            plugins.exited("crashy", None);
+        }
+        assert!(plugins.exited("crashy", None).contains("crashed 5 times"));
+        assert!(plugins.activate_language("txt").is_empty());
+        assert!(
+            plugins.entries["crashy"].gave_up(),
+            "focus does not retry it"
+        );
     }
 }
