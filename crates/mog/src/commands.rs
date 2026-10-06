@@ -8,6 +8,7 @@ pub const CATALOG: &[(&str, &str)] = &[
     ("save", "File: Save"),
     ("file.save_as", "File: Save as"),
     ("file.new", "File: New untitled file"),
+    ("file.open", "File: Open file or folder"),
     ("file.create", "File: Create file in project"),
     ("finder.files", "File: Find a file"),
     ("close_tab", "File: Close tab"),

@@ -134,6 +134,7 @@ impl App {
                 self.editor.set_status(message);
             }
             "file.save_as" => self.ask_save_as(),
+            "file.open" => self.ask_open_path(),
             "file.new" => self.editor.new_document(),
             "file.create" => {
                 let root = self.ui.root.clone();

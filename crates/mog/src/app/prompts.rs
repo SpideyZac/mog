@@ -1,12 +1,14 @@
 //! Answers typed into the one line prompt, like save as and go to line.
 
-use std::{fs, mem, path::Path};
+use std::{ffi::OsStr, fs, io, mem, path::Path};
 
+use clap::Parser;
 use mog_config::project;
-use mog_core::Command;
+use mog_core::{Command, Document};
 use mog_tui::{Focus, Overlay, PromptKind};
 
 use super::App;
+use crate::cli::Args;
 
 impl App {
     /// Asks where to save the focused document.
@@ -25,6 +27,29 @@ impl App {
         let hint = format!("relative to {}", self.ui.root.display());
         self.ui
             .ask(PromptKind::SaveAs, "\u{21e9} save as", current, hint);
+    }
+
+    /// Asks for a file to open or a folder to switch to.
+    pub(super) fn ask_open_path(&mut self) {
+        let hint = format!("a file or folder, relative to {}", self.ui.root.display());
+        self.ui.ask(PromptKind::OpenPath, "\u{25b8} open", "", hint);
+    }
+
+    /// Opens `path` as a file, or restarts the app on it if it is a folder.
+    fn open_path(&mut self, path: &Path) -> io::Result<()> {
+        if !path.is_dir() {
+            self.editor.open(path)?;
+            self.ui.focus = Focus::Editor;
+            return Ok(());
+        }
+        if self.editor.documents().iter().any(Document::is_modified) {
+            self.editor
+                .set_status("save or close your unsaved files before switching folders");
+            return Ok(());
+        }
+        self.save_session();
+        *self = Self::new(Args::parse_from([OsStr::new("mog"), path.as_os_str()]));
+        Ok(())
     }
 
     /// Acts on an answered prompt.
@@ -59,6 +84,10 @@ impl App {
                     self.execute_command(Command::GotoLine(line));
                 }
                 Ok(())
+            }
+            PromptKind::OpenPath => {
+                let path = resolve(&self.ui.root);
+                self.open_path(&path)
             }
             PromptKind::SaveAs => {
                 let path = resolve(&self.ui.root);

@@ -2478,4 +2478,25 @@ plugin.run()
         assert!(screen.contains("palette.txt"), "{screen}");
         let _ = fs::remove_dir_all(dir);
     }
+
+    /// The open command opens a file, and a folder swaps the whole project.
+    #[tokio::test]
+    async fn opens_a_file_or_folder() {
+        let dir = temp_dir();
+        let inner = dir.join("inner");
+        fs::create_dir_all(&inner).expect("dir");
+        fs::write(dir.join("a.txt"), "a").expect("write");
+        let mut app = start(&dir);
+        app.execute_custom("file.open");
+        type_text(&mut app, "a.txt");
+        app.handle_event(press("enter"));
+        app.run_requests();
+        assert_eq!(app.editor.document().name(), "a.txt");
+        app.execute_custom("file.open");
+        type_text(&mut app, "inner");
+        app.handle_event(press("enter"));
+        app.run_requests();
+        assert!(app.ui.root.ends_with("inner"), "{:?}", app.ui.root);
+        let _ = fs::remove_dir_all(dir);
+    }
 }

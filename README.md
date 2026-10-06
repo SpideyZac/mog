@@ -719,6 +719,7 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 
 | command | |
 | --- | --- |
+| `file.open` | Open a file, or switch to another folder |
 | `file.create` | Create a file in the project |
 | `config.open` | Open the config file |
 | `config.reload` | Reload the config |

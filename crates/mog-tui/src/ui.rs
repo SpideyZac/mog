@@ -225,6 +225,8 @@ pub enum PromptKind {
     GotoLine,
     /// Where to save the focused document.
     SaveAs,
+    /// A file to open or a folder to switch to.
+    OpenPath,
     /// The name of a new file in a folder.
     NewFile(PathBuf),
     /// A new name for a file or folder.
