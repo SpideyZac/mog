@@ -6,6 +6,7 @@
 pub mod host;
 pub mod manifest;
 pub mod protocol;
+pub mod stats;
 
 pub use host::{DEFAULT_TIMEOUT, Events, Plugin, PluginEvent, Spec};
 pub use manifest::{Activation, MANIFEST_FILE, Manifest, discover};
@@ -13,6 +14,7 @@ pub use protocol::{
     Action, Edit, FileEdit, Hello, Languages, Level, PROTOCOL_VERSION, PluginCommand, Segment,
     parse_actions, parse_segment,
 };
+pub use stats::{Outcome, Stats};
 
 #[cfg(test)]
 /// Tests for talking to plugins.
@@ -198,6 +200,14 @@ mod tests {
         let _ = plugin
             .request("ping", json!({}), Duration::from_millis(50))
             .await;
+        let stats = plugin.stats();
+        assert_eq!((stats.requests, stats.timeouts), (2, 2));
+        let slow: Vec<String> = plugin
+            .take_slow()
+            .into_iter()
+            .map(|(method, _)| method)
+            .collect();
+        assert_eq!(slow, ["ping"], "commands do not count as slow");
         drop(plugin);
         let seen = time::timeout(Duration::from_secs(5), seen_rx.recv())
             .await
@@ -208,6 +218,33 @@ mod tests {
                 .any(|(method, params)| method == "$/cancelRequest" && params["id"].is_u64()),
             "{seen:?}"
         );
+    }
+
+    /// Stopping a plugin that never answers ends it with a reason.
+    #[tokio::test]
+    async fn stops_on_request() {
+        let (plugin, mut events) = fake("stuck", Duration::from_secs(60), |side| async move {
+            serve(side, |method, _| {
+                (method == "initialize").then(|| json!({}))
+            })
+            .await;
+        });
+        assert!(matches!(next(&mut events).await, PluginEvent::Ready { .. }));
+        let waiting = plugin.clone();
+        let asked = tokio::spawn(async move {
+            waiting
+                .request("nap", json!({}), Duration::from_secs(60))
+                .await
+        });
+        plugin.stop();
+        match next(&mut events).await {
+            PluginEvent::Exited { reason, .. } => {
+                assert_eq!(reason.as_deref(), Some("stopped by mog"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let answer = asked.await.expect("joined");
+        assert!(answer.is_err_and(|err| err.contains("stopped")));
     }
 
     /// Broken actions come back as an error instead of a partial edit.

@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
-        Arc,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -25,13 +25,16 @@ use tokio::{
     process::Command,
     sync::{
         mpsc::{self, Receiver, Sender, error::TrySendError},
-        oneshot,
+        oneshot, watch,
     },
     task::JoinHandle,
     time::{self, Instant},
 };
 
-use crate::protocol::{Action, Hello, initialize_params, parse_actions, parse_hello};
+use crate::{
+    protocol::{Action, Hello, initialize_params, parse_actions, parse_hello},
+    stats::{Outcome, Stats},
+};
 
 /// How long a plugin command may take unless the plugin or config says otherwise.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -192,6 +195,12 @@ pub struct Plugin {
     next_id: Arc<AtomicU64>,
     /// How long a command may take.
     timeout: Duration,
+    /// How fast it answers, shared by clones.
+    stats: Arc<Mutex<Stats>>,
+    /// The process id, when it runs as a process.
+    pid: Option<u32>,
+    /// Set to `true` to stop it.
+    stop: watch::Sender<bool>,
 }
 
 /// Reads `stderr` line by line, sending each to `events`, and returns the last non empty one.
@@ -276,7 +285,7 @@ impl Plugin {
             }
         });
         let params = initialize_params(&root.to_string_lossy(), &spec.settings);
-        let (plugin, connection) = Self::connect(
+        let (mut plugin, connection) = Self::connect(
             &spec.name,
             instance,
             stdout,
@@ -285,8 +294,15 @@ impl Plugin {
             spec.timeout,
             inner,
         );
+        plugin.pid = child.id();
+        let mut stop = plugin.stop.subscribe();
         tokio::spawn(async move {
-            let _ = connection.await;
+            // a plugin stuck not reading its stdin never lets the connection finish, so a stop
+            // kills the process, which ends the connection
+            tokio::select! {
+                _ = connection => {}
+                _ = stop.changed() => {}
+            }
             let _ = child.kill().await;
         });
         Ok(plugin)
@@ -308,6 +324,7 @@ impl Plugin {
         W: AsyncWrite + Unpin + Send + 'static,
     {
         let (outgoing, queue) = mpsc::channel(QUEUE);
+        let (stop, stopped) = watch::channel(false);
         let connection = Connection {
             name: name.to_owned(),
             instance,
@@ -315,13 +332,16 @@ impl Plugin {
             events,
             pending: HashMap::new(),
         };
-        let handle = tokio::spawn(connection.run(reader, queue, params));
+        let handle = tokio::spawn(connection.run(reader, queue, stopped, params));
         (
             Self {
                 name: name.to_owned(),
                 outgoing,
                 next_id: Arc::new(AtomicU64::new(INIT_ID + 1)),
                 timeout,
+                stats: Arc::new(Mutex::new(Stats::default())),
+                pid: None,
+                stop,
             },
             handle,
         )
@@ -335,6 +355,40 @@ impl Plugin {
     /// Returns how long a command may take.
     pub fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    /// Returns the process id, when it runs as a process.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
+    /// Returns how fast it answered so far.
+    pub fn stats(&self) -> Stats {
+        self.stats
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Returns the slow requests since the last call, as `(method, wait)`.
+    pub fn take_slow(&self) -> Vec<(String, Duration)> {
+        self.stats
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take_slow()
+    }
+
+    /// Stops the plugin, killing its process if it does not stop by itself.
+    pub fn stop(&self) {
+        let _ = self.stop.send(true);
+    }
+
+    /// Notes how the request `method` went, for [`Plugin::stats`].
+    fn record(&self, method: &str, took: Duration, outcome: Outcome) {
+        self.stats
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .record(method, took, outcome);
     }
 
     /// Returns whether the plugin is still connected.
@@ -364,24 +418,29 @@ impl Plugin {
     ) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (reply, answer) = oneshot::channel();
+        let started = Instant::now();
         self.queue(Outgoing::Request {
             id,
             method: method.to_owned(),
             params,
             reply,
         })?;
-        match time::timeout(timeout, answer).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(format!("{} stopped", self.name)),
+        let (result, outcome) = match time::timeout(timeout, answer).await {
+            Ok(Ok(Ok(result))) => (Ok(result), Outcome::Answered),
+            Ok(Ok(Err(err))) => (Err(err), Outcome::Failed),
+            Ok(Err(_)) => (Err(format!("{} stopped", self.name)), Outcome::Failed),
             Err(_) => {
                 let _ = self.queue(Outgoing::Cancel(id));
-                Err(format!(
+                let err = format!(
                     "{} did not answer {method} in {}s",
                     self.name,
                     timeout.as_secs_f32()
-                ))
+                );
+                (Err(err), Outcome::TimedOut)
             }
-        }
+        };
+        self.record(method, started.elapsed(), outcome);
+        result
     }
 
     /// Runs the plugin's `command` with `args` and what the editor looks like in `context`,
@@ -456,6 +515,7 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
         mut self,
         reader: impl AsyncRead + Unpin + Send + 'static,
         mut queue: Receiver<Outgoing>,
+        mut stop: watch::Receiver<bool>,
         params: Value,
     ) {
         let (incoming_tx, mut incoming) = mpsc::channel::<Incoming>(QUEUE);
@@ -502,6 +562,13 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                         Some(Err(err)) => Step::Stop(Some(err)),
                         None => Step::Stop(None),
                     },
+                    _ = stop.changed() => {
+                        let _ = self.write(Message::Notification {
+                            method: "shutdown".into(),
+                            params: Value::Null,
+                        }).await;
+                        Step::Stop(Some("stopped by mog".into()))
+                    }
                     () = &mut deadline, if !greeted => Step::Stop(Some(format!(
                         "did not answer initialize in {}s",
                         INIT_TIMEOUT.as_secs()
