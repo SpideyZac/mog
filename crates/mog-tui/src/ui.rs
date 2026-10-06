@@ -16,6 +16,7 @@ use ratatui::{
 
 use crate::{
     annotate::AnnotateState,
+    canvas::PluginCanvas,
     chat::ChatState,
     completion::CompletionState,
     debug_panel::DebugState,
@@ -448,6 +449,8 @@ pub struct Ui {
     pub toasts: Vec<Toast>,
     /// Panels plugins fill.
     pub plugin_panels: Vec<PluginPanel>,
+    /// Cells plugins paint over the editor as flair.
+    pub plugin_canvases: Vec<PluginCanvas>,
     /// What happened to plugin panels, for the app to pass on.
     pub panel_events: Vec<PanelEvent>,
     /// Clicks on notification buttons without a command, for the app to pass on.

@@ -397,6 +397,25 @@
       "type": "object",
       "properties": { "params": { "$ref": "#/$defs/actions" } }
     },
+    "canvas": {
+      "description": "plugin to mog notification.",
+      "type": "object",
+      "properties": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "cells": { "type": "array", "items": { "type": "array", "minItems": 3, "maxItems": 5 } },
+            "rows": {
+              "type": "array",
+              "items": { "type": "object", "required": ["x", "y", "text"], "properties": { "x": { "type": "integer" }, "y": { "type": "integer" }, "text": { "type": "string" }, "fg": { "$ref": "#/$defs/color" }, "bg": { "$ref": "#/$defs/color" } } }
+            },
+            "clear": { "type": "boolean" },
+            "still": { "type": "boolean" }
+          }
+        }
+      }
+    },
     "panel": {
       "description": "plugin to mog notification.",
       "type": "object",

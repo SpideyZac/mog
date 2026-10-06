@@ -3,6 +3,7 @@
 //! Everything that draws to the screen or reads terminal input lives here.
 
 pub mod annotate;
+pub mod canvas;
 pub mod chat;
 pub mod completion;
 pub mod compositor;
@@ -34,6 +35,7 @@ pub mod ui;
 pub mod widgets;
 
 pub use annotate::Annotations;
+pub use canvas::{CanvasCell, PluginCanvas, PluginCanvases};
 pub use chat::ChatPanel;
 pub use completion::CompletionMenu;
 pub use compositor::{Compositor, Context, EventResult, Layer};

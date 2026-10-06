@@ -59,5 +59,6 @@ sysinfo.workspace = true
 tar.workspace = true
 tokio.workspace = true
 toml.workspace = true
+unicode-width.workspace = true
 flate2.workspace = true
 zip.workspace = true

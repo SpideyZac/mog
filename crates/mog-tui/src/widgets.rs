@@ -266,21 +266,24 @@ pub struct CursorStyle {
     pub blink: bool,
 }
 
-/// Returns whether `widget` is shown with the flair settings in `ui`.
-fn is_shown(widget: &PluginWidget, ui: &Ui) -> bool {
-    if !widget.flair {
-        return true;
-    }
+/// Returns whether flair of `plugin` is shown with the settings in `ui`, hiding flair that
+/// `moves` when motion is reduced.
+pub(crate) fn plugin_flair_shown(ui: &Ui, plugin: &str, moves: bool) -> bool {
     let config = &ui.config;
-    let id = format!("plugin.{}", widget.plugin);
+    let id = format!("plugin.{plugin}");
     config.flair.enabled
         && !config.ui.serious
-        && (!config.ui.reduced_motion || widget.motion.is_none())
+        && (!config.ui.reduced_motion || !moves)
         && !config
             .flair
             .disabled
             .iter()
             .any(|off| *off == id || off == "plugins")
+}
+
+/// Returns whether `widget` is shown with the flair settings in `ui`.
+fn is_shown(widget: &PluginWidget, ui: &Ui) -> bool {
+    !widget.flair || plugin_flair_shown(ui, &widget.plugin, widget.motion.is_some())
 }
 
 /// Returns the style of `span` over the defaults of its widget.

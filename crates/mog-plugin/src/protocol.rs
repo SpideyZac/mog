@@ -74,6 +74,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "timer",
     "toast",
     "panel",
+    "canvas",
 ];
 
 /// Every action a plugin can ask for.

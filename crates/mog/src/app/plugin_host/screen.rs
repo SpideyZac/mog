@@ -10,11 +10,13 @@ use std::{
 use mog_core::KeyChord;
 use mog_plugin::parse_actions;
 use mog_tui::{
-    Anchor, CursorShape, CursorStyle, Edge, Focus, Motion, PanelEvent, PanelSide, PluginPanel,
-    PluginWidget, Toast, ToastButton, ToastLevel, ToastProgress, WidgetLine, WidgetSpan,
+    Anchor, CanvasCell, CursorShape, CursorStyle, Edge, Focus, Motion, PanelEvent, PanelSide,
+    PluginCanvas, PluginPanel, PluginWidget, Toast, ToastButton, ToastLevel, ToastProgress,
+    WidgetLine, WidgetSpan,
 };
 use ratatui::layout::Rect;
 use serde_json::{Value, json};
+use unicode_width::UnicodeWidthChar;
 
 use crate::{app::App, plugins::PluginUpdate};
 
@@ -44,6 +46,9 @@ const MAX_PANELS: usize = 8;
 
 /// The most rows a panel can hold.
 const MAX_PANEL_LINES: usize = 10_000;
+
+/// The most cells one plugin can paint on its canvases together.
+const MAX_CELLS: usize = 20_000;
 
 /// The most timers one plugin can have.
 const MAX_TIMERS: usize = 16;
@@ -367,6 +372,7 @@ impl App {
             "timer" => self.set_timer(plugin, params),
             "toast" => self.show_toast(plugin, params),
             "panel" => self.show_panel(plugin, params),
+            "canvas" => self.paint_canvas(plugin, params),
             _ => return None,
         })
     }
@@ -437,6 +443,90 @@ impl App {
                 ));
             }
             (Some(toast), None) => toasts.push(toast),
+        }
+        Ok(())
+    }
+
+    /// Paints cells on a canvas of `plugin`, clearing it first unless asked not to.
+    fn paint_canvas(&mut self, plugin: &str, params: &Value) -> Result<(), String> {
+        let id = params["id"].as_str().unwrap_or("canvas").to_owned();
+        let mut cells = Vec::new();
+        let number = |value: &Value| value.as_u64().and_then(|n| u16::try_from(n).ok());
+        for cell in params["cells"].as_array().into_iter().flatten() {
+            let (Some(x), Some(y), Some(ch)) = (
+                number(&cell[0]),
+                number(&cell[1]),
+                cell[2].as_str().and_then(|text| text.chars().next()),
+            ) else {
+                return Err("a cell is [x, y, \"char\", fg, bg]".into());
+            };
+            cells.push(CanvasCell {
+                x,
+                y,
+                ch,
+                fg: color(&cell[3]),
+                bg: color(&cell[4]),
+            });
+        }
+        for row in params["rows"].as_array().into_iter().flatten() {
+            let (Some(x), Some(y), Some(text)) =
+                (number(&row["x"]), number(&row["y"]), row["text"].as_str())
+            else {
+                return Err("a row needs `x`, `y` and `text`".into());
+            };
+            let mut column = x;
+            for ch in text.chars() {
+                // spaces in a row are holes, so what is under shows through
+                if ch != ' ' {
+                    cells.push(CanvasCell {
+                        x: column,
+                        y,
+                        ch,
+                        fg: color(&row["fg"]),
+                        bg: color(&row["bg"]),
+                    });
+                }
+                let wide = u16::try_from(ch.width().unwrap_or(0)).unwrap_or(0);
+                column = column.saturating_add(wide);
+            }
+        }
+        let canvases = &mut self.ui.plugin_canvases;
+        let at = canvases
+            .iter()
+            .position(|canvas| canvas.plugin == plugin && canvas.id == id);
+        let clear = params["clear"].as_bool().unwrap_or(true);
+        let mut canvas = match at {
+            Some(at) => canvases.remove(at),
+            None => PluginCanvas {
+                plugin: plugin.to_owned(),
+                id,
+                cells: Vec::new(),
+                still: false,
+            },
+        };
+        if clear {
+            canvas.cells.clear();
+        }
+        canvas.cells.extend(cells);
+        canvas.still = params["still"].as_bool().unwrap_or(canvas.still);
+        let painted: usize = canvases
+            .iter()
+            .filter(|other| other.plugin == plugin)
+            .map(|other| other.cells.len())
+            .sum::<usize>()
+            + canvas.cells.len();
+        if painted > MAX_CELLS {
+            return Err(format!("a plugin can paint at most {MAX_CELLS} cells"));
+        }
+        if canvas.cells.is_empty() {
+            return Ok(());
+        }
+        canvases.push(canvas);
+        let flair = format!("plugin.{plugin}");
+        if !self.ui.flairs.iter().any(|(id, _)| *id == flair) {
+            self.ui
+                .flairs
+                .push((flair, format!("Flair drawn by the {plugin} plugin")));
         }
         Ok(())
     }
@@ -660,6 +750,9 @@ impl App {
             .retain(|widget| widget.plugin != plugin);
         self.ui.toasts.retain(|toast| toast.plugin != plugin);
         self.ui.plugin_panels.retain(|panel| panel.plugin != plugin);
+        self.ui
+            .plugin_canvases
+            .retain(|canvas| canvas.plugin != plugin);
         let screen = &mut self.plugin_state.screen;
         screen.captures.remove(plugin);
         screen.timers.retain(|timer| timer.plugin != plugin);

@@ -30,8 +30,9 @@ use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CursorStyle,
     DebugPanel, EditorView, EventResult, Explorer, Focus, GitPanel, Minimap, OutputPanel, Overlay,
-    PluginPanels, PluginWidgets, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup,
-    SearchBar, SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Toasts, Ui, UiEvent, input,
+    PluginCanvases, PluginPanels, PluginWidgets, Popups, ProjectSearchPanel, PromptKind,
+    ReleaseNotesPopup, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Toasts, Ui,
+    UiEvent, input,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -320,6 +321,7 @@ impl App {
         ui.flairs = flair.describe();
         ui.explorer_footer = flair.sidebar_height();
         compositor.push(Box::new(flair));
+        compositor.push(Box::new(PluginCanvases::new()));
         compositor.push(Box::new(PluginWidgets::new()));
         compositor.push(Box::new(PluginPanels::new()));
         compositor.push(Box::new(Toasts::new()));
@@ -878,7 +880,7 @@ mod tests {
         Context, CursorShape, PanelEvent, PluginSegment, PromptKind, Side,
         popups::PLUGIN_PICKED_COMMAND,
     };
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
     use serde_json::{Value, json, to_string};
     use tokio::time;
 
@@ -2169,6 +2171,83 @@ plugin.run()
             json!({ "id": "log", "remove": true }),
         );
         assert!(app.ui.plugin_panels.iter().all(|panel| panel.id != "log"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Plugin canvases paint cells over the editor as flair and follow the flair settings.
+    #[tokio::test]
+    async fn paints_plugin_canvases() {
+        let dir = temp_dir();
+        let mut config = Config::default();
+        config.updates.check = false;
+        config.ui.git_blame = false;
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        notify(
+            &mut app,
+            "rain",
+            "canvas",
+            json!({ "cells": [[2, 3, "\u{00a4}", "cyan"]], "rows": [{ "x": 5, "y": 4, "text": "MOG  RAIN" }] }),
+        );
+        notify(
+            &mut app,
+            "rain",
+            "canvas",
+            json!({ "clear": false, "cells": [[0, 0, "@"]] }),
+        );
+        let editor = app.ui.layout(Rect::new(0, 0, 100, 30)).editor;
+        let at = |screen: &str, x: u16, y: u16, len: usize| -> String {
+            let row = screen
+                .lines()
+                .nth(usize::from(editor.y + y))
+                .unwrap_or_default();
+            row.chars()
+                .skip(usize::from(editor.x + x))
+                .take(len)
+                .collect()
+        };
+        let screen = app
+            .snapshot("100x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert_eq!(at(&screen, 2, 3, 1), "\u{00a4}", "{screen}");
+        assert_eq!(at(&screen, 5, 4, 3), "MOG", "{screen}");
+        assert_eq!(at(&screen, 0, 0, 1), "@", "{screen}");
+        assert!(app.ui.flairs.iter().any(|(id, _)| id == "plugin.rain"));
+        app.ui.config.flair.disabled.push("plugin.rain".into());
+        let screen = app
+            .snapshot("100x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert_ne!(at(&screen, 2, 3, 1), "\u{00a4}", "{screen}");
+        app.ui.config.flair.disabled.clear();
+        app.ui.config.ui.reduced_motion = true;
+        let screen = app
+            .snapshot("100x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert_ne!(
+            at(&screen, 2, 3, 1),
+            "\u{00a4}",
+            "a moving canvas hides: {screen}"
+        );
+        notify(
+            &mut app,
+            "rain",
+            "canvas",
+            json!({ "still": true, "clear": false, "cells": [] }),
+        );
+        let screen = app
+            .snapshot("100x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert_eq!(
+            at(&screen, 2, 3, 1),
+            "\u{00a4}",
+            "a still one stays: {screen}"
+        );
+        notify(&mut app, "rain", "canvas", json!({ "cells": [] }));
+        assert!(app.ui.plugin_canvases.is_empty());
         let _ = fs::remove_dir_all(dir);
     }
 

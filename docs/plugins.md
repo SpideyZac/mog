@@ -474,6 +474,7 @@ A plugin does not have to wait to be asked. These notifications can be sent at a
 | `timer` | `{ "id": "...", "every": 500 }` | Sends the `timer` event every so many milliseconds, 0 stops it, see [Timers](#timers) |
 | `toast` | `{ "id": "...", "title": "...", "text": "...", "level": "info", "progress": 40, "timeout": 6000, "buttons": [...] }` | Shows a notification in the top right corner, or replaces the one with the same `id`, see [Notifications](#notifications) |
 | `panel` | `{ "id": "...", "title": "...", "side": "right", "size": 40, "lines": [...] }` | Shows or fills a panel docked on the right or at the bottom, see [Panels](#panels) |
+| `canvas` | `{ "id": "...", "cells": [[x, y, "*", "cyan"]], "rows": [...], "clear": true }` | Paints cells over the editor as flair, see [Painting flair](#painting-flair) |
 
 A diagnostic is `{ "start": 0, "end": 4, "severity": "warning", "message": "..." }` in char
 offsets, or `{ "line": 2, "column": 0, "end_line": 2, "end_column": 4, ... }`. Severities are
@@ -686,6 +687,30 @@ event `panel_click` with the `id`, the `line` counted from 0 in `lines`, the `x`
 and the `button`, and closing it with its close button sends `panel_closed` with the `id`. A plugin can
 have eight panels with up to 10000 rows each. `ui/layout` answers where the shown panels are as
 `panel_right` and `panel_bottom`.
+
+## Painting flair
+
+Widgets suit things that move as a whole, like a fish. For flair made of many loose cells, like
+rain, snow or a starfield, the notification `canvas` paints single cells over the editor area,
+with `x` and `y` counted from its top left corner:
+
+```json
+{ "id": "rain", "cells": [[4, 2, "|", "blue"], [9, 5, "*", "cyan", "panel"]], "rows": [{ "x": 0, "y": 0, "text": "drip  drop", "fg": "dim" }] }
+```
+
+| field | default | means |
+| --- | --- | --- |
+| `id` | `canvas` | Which canvas of this plugin it is |
+| `cells` | | `[x, y, "char", fg, bg]` each, the colors optional |
+| `rows` | | `{ "x", "y", "text", "fg", "bg" }` each, a run of cells where spaces let what is under show through |
+| `clear` | `true` | Wipes the canvas before painting. `false` adds to what is there |
+| `still` | `false` | Whether it stays still, so it shows with reduced motion |
+
+A canvas with nothing on it goes away. Canvases are drawn with the built in flair, under widgets,
+and follow the same settings as flair widgets: they hide when flair is off, in serious mode, when
+`flair.disabled` has `plugin.<name>` or `plugins`, and with reduced motion unless `still`. Send a
+new frame from a [timer](#timers) to animate one. A plugin can paint 20000 cells across its
+canvases.
 
 ## Taking keys
 

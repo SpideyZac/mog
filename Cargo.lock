@@ -1907,6 +1907,7 @@ dependencies = [
  "tar",
  "tokio",
  "toml",
+ "unicode-width",
  "zip",
 ]
 
