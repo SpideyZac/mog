@@ -1631,6 +1631,7 @@ three
             .await
             .expect("drawn");
         assert!(!fish(&screen), "{screen}");
+        drop(app);
         let _ = fs::remove_dir_all(dir);
     }
 
