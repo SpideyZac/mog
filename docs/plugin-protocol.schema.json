@@ -56,7 +56,8 @@
         "name": { "type": "string", "pattern": "^[^\\s:]+$" },
         "title": { "type": "string" },
         "keys": { "type": "array", "items": { "type": "string" } },
-        "menu": { "type": "boolean" }
+        "menu": { "type": "boolean" },
+        "when": { "type": "string", "description": "when it shows in the right click menu, like language == md && selection" }
       }
     },
     "languages": {

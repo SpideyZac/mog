@@ -1,7 +1,9 @@
 //! The right click menu.
 
+use std::path::Path;
+
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Key, KeyChord};
+use mog_core::{Command, Editor, Key, KeyChord};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -90,8 +92,30 @@ pub fn open_menu(ui: &mut Ui, at: Position, items: Vec<MenuItem>) {
     ui.menu = Some(MenuState { at, items });
 }
 
-/// Returns the editor menu.
-pub fn editor_menu(ui: &Ui) -> Vec<MenuItem> {
+/// Returns the value of the condition name `name` for the focused document of `editor`, like
+/// its `language`, for plugin menu entries.
+pub fn when_value(editor: &Editor, name: &str) -> Option<String> {
+    let document = editor.document();
+    let path = document.path();
+    let flag = |on: bool| on.then(|| "true".to_owned());
+    match name {
+        "language" | "extension" => path
+            .and_then(Path::extension)
+            .map(|ext| ext.to_string_lossy().into_owned()),
+        "name" => path
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned()),
+        "path" => path.map(|path| path.to_string_lossy().replace('\\', "/")),
+        "selection" => flag(!document.selection().is_empty()),
+        "cursors" => flag(!document.cursors().is_empty()),
+        "modified" => flag(document.is_modified()),
+        "untitled" => flag(path.is_none()),
+        _ => None,
+    }
+}
+
+/// Returns the editor menu, with the plugin entries whose condition holds in `editor`.
+pub fn editor_menu(ui: &Ui, editor: &Editor) -> Vec<MenuItem> {
     let mut items = vec![
         MenuItem::command("Go to definition", "lsp.definition", ui),
         MenuItem::command("Show hover info", "lsp.hover", ui),
@@ -107,11 +131,18 @@ pub fn editor_menu(ui: &Ui) -> Vec<MenuItem> {
         MenuItem::command("Find", "search.find", ui),
         MenuItem::command("Ask the AI to explain", "ai.explain", ui),
     ];
-    if !ui.plugin_menu.is_empty() {
+    let plugins: Vec<MenuItem> = ui
+        .plugin_menu
+        .iter()
+        .filter(|(_, _, when)| {
+            when.as_ref()
+                .is_none_or(|when| when.holds(&|name| when_value(editor, name)))
+        })
+        .map(|(title, command, _)| MenuItem::command(title, command, ui))
+        .collect();
+    if !plugins.is_empty() {
         items.push(MenuItem::separator());
-        for (title, command) in &ui.plugin_menu {
-            items.push(MenuItem::command(title, command, ui));
-        }
+        items.extend(plugins);
     }
     items
 }
@@ -311,11 +342,46 @@ impl Layer for ContextMenu {
 #[cfg(test)]
 /// Tests for the context menu.
 mod tests {
-    use mog_core::Command;
+    use mog_core::{Command, Editor, MemoryClipboard, Range, Transaction};
     use ratatui::layout::Position;
 
-    use super::{ContextMenu, MenuItem, open_menu};
+    use super::{ContextMenu, MenuItem, editor_menu, open_menu};
     use crate::ui::{Overlay, Ui};
+
+    /// Plugin entries show only when their condition holds for the focused file.
+    #[test]
+    fn filters_plugin_entries() {
+        let ui = Ui {
+            plugin_menu: vec![
+                ("Always".into(), "plugin.a.always".into(), None),
+                (
+                    "Markdown".into(),
+                    "plugin.a.md".into(),
+                    Some("language == md".parse().expect("when")),
+                ),
+                (
+                    "Selected".into(),
+                    "plugin.a.sel".into(),
+                    Some("selection".parse().expect("when")),
+                ),
+            ],
+            ..Ui::default()
+        };
+        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        let document = editor.document_mut();
+        document.apply(Transaction::insert(0, "hello"), Range::point(0), false);
+        document.set_path("/notes.md");
+        let labels = |editor: &Editor| -> Vec<String> {
+            editor_menu(&ui, editor)
+                .into_iter()
+                .map(|item| item.label)
+                .filter(|label| ["Always", "Markdown", "Selected"].contains(&label.as_str()))
+                .collect()
+        };
+        assert_eq!(labels(&editor), ["Always", "Markdown"]);
+        editor.select(0, 5);
+        assert_eq!(labels(&editor), ["Always", "Markdown", "Selected"]);
+    }
 
     /// Picking a row closes the menu and queues its command.
     #[test]

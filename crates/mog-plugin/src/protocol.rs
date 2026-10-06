@@ -5,6 +5,7 @@
 
 use std::{collections::BTreeSet, path::PathBuf};
 
+use mog_core::when::When;
 use serde_json::{Value, json};
 
 /// The newest version of the plugin protocol mog speaks.
@@ -155,6 +156,8 @@ pub struct PluginCommand {
     pub keys: Vec<String>,
     /// Whether the command shows in the editor's right click menu.
     pub menu: bool,
+    /// When it shows in the right click menu, always when `None`.
+    pub when: Option<When>,
 }
 
 /// A change to a document, in char offsets.
@@ -347,10 +350,18 @@ pub fn parse_commands(value: &Value) -> Result<Vec<PluginCommand>, String> {
             if name.is_empty() || name.contains(char::is_whitespace) || name.contains(':') {
                 return Err(format!("`{name}` is not a valid command name"));
             }
+            let when = command["when"]
+                .as_str()
+                .map(|when| {
+                    when.parse::<When>()
+                        .map_err(|err| format!("command {name}: {err}"))
+                })
+                .transpose()?;
             Ok(PluginCommand {
                 title: command["title"].as_str().unwrap_or(&name).to_owned(),
                 keys: strings(&command["keys"]),
                 menu: command["menu"].as_bool().unwrap_or(false),
+                when,
                 name,
             })
         })

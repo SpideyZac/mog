@@ -12,7 +12,7 @@ use std::{
 
 use futures::future;
 use mog_config::{PluginConfig, config_dir};
-use mog_core::KeyChord;
+use mog_core::{KeyChord, when::When};
 use mog_plugin::{
     Action, Contributions, DEFAULT_TIMEOUT, Hello, Manifest, Plugin, PluginCommand, PluginEvent,
     PluginTool, Spec, Stats, discover,
@@ -655,8 +655,8 @@ impl Plugins {
             .collect()
     }
 
-    /// Returns the commands that go in the right click menu as `(title, full name)`.
-    pub fn menu(&self) -> Vec<(String, String)> {
+    /// Returns the commands that go in the right click menu as `(title, full name, condition)`.
+    pub fn menu(&self) -> Vec<(String, String, Option<When>)> {
         self.entries
             .iter()
             .flat_map(|(plugin, entry)| {
@@ -665,7 +665,11 @@ impl Plugins {
                     .iter()
                     .filter(|command| command.menu)
                     .map(move |command| {
-                        (command.title.clone(), command_name(plugin, &command.name))
+                        (
+                            command.title.clone(),
+                            command_name(plugin, &command.name),
+                            command.when.clone(),
+                        )
                     })
             })
             .collect()

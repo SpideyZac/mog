@@ -176,7 +176,26 @@ name = "list"
 title = "Todo: List the notes in this file"
 keys = ["alt+shift+t"]
 menu = true                       # also in the editor's right click menu
+when = "language == md"           # but only for markdown files
 ```
+
+`when` says when a `menu` command shows in the right click menu. It compares names to values
+with `==` and `!=`, a name on its own is true when it is set, and `!`, `&&`, `||` and parentheses
+combine them, like `language == md && selection` or `!(untitled || modified)`. Values are single
+words or quoted. The names are:
+
+| name | value |
+| --- | --- |
+| `language`, `extension` | the file extension, like `md` |
+| `name` | the file name, like `notes.md` |
+| `path` | the whole path, with `/` between folders |
+| `selection` | set when text is selected |
+| `cursors` | set when there are several cursors |
+| `modified` | set when the file has unsaved changes |
+| `untitled` | set when the file was never saved |
+
+A command in the `initialize` answer takes `when` too. A condition that does not read is an
+error that names the command.
 
 `activation` says when the plugin starts:
 

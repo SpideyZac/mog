@@ -867,7 +867,7 @@ impl Layer for EditorView {
                 if !(selection.from()..selection.to()).contains(&at) {
                     cx.editor.click(row, col, false);
                 }
-                let items = menu::editor_menu(cx.ui);
+                let items = menu::editor_menu(cx.ui, cx.editor);
                 menu::open_menu(cx.ui, Position::new(event.column, event.row), items);
             }
             _ => return EventResult::Ignored,

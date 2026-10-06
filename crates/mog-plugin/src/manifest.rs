@@ -9,6 +9,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use mog_core::when::When;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -61,6 +62,8 @@ struct RawCommand {
     /// Whether it shows in the right click menu.
     #[serde(default)]
     menu: bool,
+    /// When it shows in the right click menu.
+    when: Option<String>,
 }
 
 /// What a plugin adds to mog without running, as written in the file.
@@ -189,11 +192,20 @@ impl Manifest {
                 if command.name.is_empty() || command.name.contains([' ', ':']) {
                     return Err(format!("`{}` is not a valid command name", command.name));
                 }
+                let when = command
+                    .when
+                    .as_deref()
+                    .map(|when| {
+                        when.parse::<When>()
+                            .map_err(|err| format!("command {}: {err}", command.name))
+                    })
+                    .transpose()?;
                 Ok(PluginCommand {
                     title: command.title.unwrap_or_else(|| command.name.clone()),
                     name: command.name,
                     keys: command.keys,
                     menu: command.menu,
+                    when,
                 })
             })
             .collect::<Result<_, String>>()?;
@@ -314,6 +326,7 @@ mod tests {
             title = "Words: Count"
             keys = ["alt+w"]
             menu = true
+            when = "language == md && selection"
             "#,
             dir,
         )
@@ -326,6 +339,16 @@ mod tests {
         assert!(!manifest.starts_at_once());
         assert!(manifest.starts_for_language("md"));
         assert!(manifest.commands[0].menu);
+        assert_eq!(
+            manifest.commands[0]
+                .when
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("language == md && selection")
+        );
+        let broken = "name = \"a\"\ncommand = \"x\"\n[[commands]]\nname = \"b\"\nwhen = \"((\"";
+        assert!(Manifest::parse(broken, dir).is_err());
         assert_eq!(manifest.timeout, Some(5));
     }
 

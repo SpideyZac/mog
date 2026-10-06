@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+mog-core.workspace = true
 mog-lsp.workspace = true
 serde.workspace = true
 serde_json.workspace = true

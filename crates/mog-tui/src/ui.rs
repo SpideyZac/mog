@@ -7,7 +7,7 @@ use std::{
 };
 
 use mog_config::Config;
-use mog_core::{Command, TaskProblem, View};
+use mog_core::{Command, TaskProblem, View, when::When};
 use mog_git::FileStatus;
 use ratatui::{
     layout::{Position, Rect},
@@ -418,7 +418,7 @@ pub struct Ui {
     /// The title and items of the list a plugin asked the user to pick from.
     pub plugin_pick: Option<(String, Vec<PickerItem>)>,
     /// Plugin commands in the right click menu, as `(title, command)`.
-    pub plugin_menu: Vec<(String, String)>,
+    pub plugin_menu: Vec<(String, String, Option<When>)>,
     /// Text plugins show after lines, by file and line, as `(text, color)`.
     pub plugin_decorations: HashMap<PathBuf, BTreeMap<usize, (String, Option<String>)>>,
     /// The item picked from that list, for the app to pass on.
