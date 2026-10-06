@@ -13,6 +13,33 @@ Plugins run as their own processes, so they can be written in anything, and a pl
 crashes, hangs or floods mog with messages never takes the editor down. This page describes
 protocol version 2. Plugins written for version 1 keep working unchanged.
 
+## Plugins are not sandboxed
+
+> **A plugin is a program running as you, with nothing holding it back.** mog does not sandbox
+> plugins or limit what they do. Installing one is the same as running a script someone sent
+> you.
+
+Any plugin, including one that only claims to count words, can:
+
+- read, change and delete **any file your user account can**, not just the project, like your
+  SSH keys, browser profiles and other projects
+- read **every environment variable** mog was started with, which often holds API keys and
+  tokens like `ANTHROPIC_API_KEY`, `GITHUB_TOKEN` or cloud credentials
+- see the full text of every open file and every `changed` edit, including secret files that
+  `ai.exclude` keeps away from the AI, and every key it captures
+- use the network, start other programs, and keep doing all of this in the background for as
+  long as mog runs
+
+The protocol on this page only limits what a plugin can ask *mog* to do. Nothing limits what the
+program does by itself. So:
+
+- Read a plugin's code before installing it, and only install plugins from people you trust.
+- Pin a plugin to a version you read, see [Installing and turning plugins on](#installing-and-turning-plugins-on),
+  since an update can change what it does.
+- A project can never add a plugin, only your own config can, so opening a repository never runs
+  one.
+- `mog plugin install` says all of this and asks before it installs anything.
+
 ## The quick way
 
 ```sh
@@ -61,7 +88,8 @@ plugin.run()
 ## Installing and turning plugins on
 
 Plugins live in your global config only. A project can never add one, since a plugin runs code
-with your permissions. Only install plugins you trust.
+with your permissions and no sandbox, see [Plugins are not sandboxed](#plugins-are-not-sandboxed).
+Only install plugins you trust.
 
 There are two ways to have one:
 

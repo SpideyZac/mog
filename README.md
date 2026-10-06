@@ -38,7 +38,8 @@ mog .
   adapter (lldb-dap and debugpy work out of the box)
 - Plugins in any language, talking JSON-RPC over stdio, with SDKs for Python, Node and Rust.
   They add commands, react to edits and saves, show diagnostics and notes after lines, and
-  provide completion, hover, formatting and code actions
+  provide completion, hover, formatting and code actions. Plugins are not sandboxed, see
+  [`[plugins]`](#plugins)
 - Updates itself from signed GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
   to your config
@@ -443,6 +444,11 @@ Click a frame to look at it.
 
 ### `[plugins]`
 
+> **Plugins are not sandboxed.** A plugin runs as you and can read, change and delete any file
+> you can, read every environment variable (API keys and tokens included), see everything you
+> open and type, use the network and run other programs. Only install plugins you have read or
+> whose authors you trust. See [docs/plugins.md](docs/plugins.md#plugins-are-not-sandboxed).
+
 Plugins are programs in any language that add to mog, talking JSON-RPC over stdio. They can add
 commands, edit and open files, hear about edits and saves, tidy a file before it is saved, show
 diagnostics, notes after lines and status line text, and provide completion, hover, formatting
@@ -481,7 +487,7 @@ args = ["/path/to/mog/examples/plugins/words.py"]
 ```
 
 Only your own config can add plugins, a project config cannot. Plugins run with your
-permissions, so only install ones you trust. One that crashes is restarted a few times, and
+permissions and no sandbox, so only install ones you trust. One that crashes is restarted a few times, and
 `plugins.log` shows what each one printed.
 
 ### `[ai]`

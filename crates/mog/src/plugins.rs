@@ -472,7 +472,11 @@ impl Plugins {
 
     /// Returns every plugin's state and log as text for the output panel.
     pub fn report(&self) -> String {
-        let mut text = String::new();
+        let mut text = String::from(
+            "plugins are not sandboxed: each runs as you and can read and change any file, read              environment variables and use the network
+
+",
+        );
         if self.entries.is_empty() {
             text.push_str("no plugins are configured, see docs/plugins.md\n");
         }

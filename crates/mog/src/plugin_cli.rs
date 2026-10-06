@@ -2,7 +2,8 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, fs, io,
+    env, fs,
+    io::{self, IsTerminal as _, Write as _},
     path::{Path, PathBuf},
     process::{self, Command},
     time::Duration,
@@ -18,6 +19,13 @@ use crate::{
     plugins::{plugin_dir, resolve},
 };
 
+/// What `mog plugin install` says before it installs anything.
+const UNSANDBOXED: &str =
+    "WARNING: plugins are not sandboxed. A plugin runs as you, and mog does not limit what it does.
+It can read, change and delete any file you can, read every environment variable (API keys
+and tokens included), see everything you open and type, use the network and run programs.
+Only install plugins you have read or whose authors you trust.";
+
 /// How long `doctor` waits for a plugin to say hello.
 const DOCTOR_WAIT: Duration = Duration::from_secs(15);
 
@@ -31,7 +39,12 @@ pub async fn run(action: PluginAction) -> Result<()> {
     match action {
         PluginAction::List => list(&dir),
         PluginAction::New { name, language } => new(&dir, &name, language),
-        PluginAction::Install { source } => install(&dir, &source),
+        PluginAction::Install { source, yes } => {
+            if !yes {
+                confirm_install(&source)?;
+            }
+            install(&dir, &source)
+        }
         PluginAction::Remove { name } => remove(&dir, &name),
         PluginAction::Doctor { name } => doctor(&dir, name.as_deref()).await,
     }
@@ -201,6 +214,29 @@ fn is_git_url(source: &str) -> bool {
         || source.ends_with(".git")
 }
 
+/// Warns that plugins are not sandboxed and asks whether to install `source`.
+///
+/// # Errors
+///
+/// Returns an error if the answer is not yes, or there is nobody to ask.
+fn confirm_install(source: &str) -> Result<()> {
+    eprintln!(
+        "{UNSANDBOXED}
+"
+    );
+    if !io::stdin().is_terminal() {
+        bail!("pass --yes to install {source} without asking");
+    }
+    eprint!("install {source}? [y/N] ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+        bail!("not installed");
+    }
+    Ok(())
+}
+
 /// Installs the plugin at `source` into the plugins folder.
 fn install(dir: &Path, source: &str) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
@@ -247,7 +283,7 @@ fn install(dir: &Path, source: &str) -> Result<()> {
         manifest.version,
         dir.join(&manifest.name).display()
     );
-    println!("plugins run with your permissions, so only keep ones you trust");
+    println!("it runs as you with no sandbox, so remove it if you stop trusting it");
     Ok(())
 }
 

@@ -61,6 +61,9 @@ pub enum PluginAction {
     Install {
         /// A folder with a plugin.toml, or a git url.
         source: String,
+        /// Install without asking. Plugins are not sandboxed, so only for ones you trust.
+        #[arg(long)]
+        yes: bool,
     },
     /// Deletes a plugin from the plugins folder.
     Remove {
