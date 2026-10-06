@@ -30,7 +30,7 @@ const TAG_URL: &str = "https://api.github.com/repos/SpideyZac/mog/releases/tags/
 /// The secret halves live only in the release workflow, so a release uploaded by anyone else does
 /// not install even if its checksum matches. To rotate, ship a release that trusts the old and the
 /// new key, sign later releases with the new one, then drop the old one.
-const RELEASE_KEYS: &[&str] = &["RWQxm0+WtCFyKauL+lbkHe5SYv81b5BxDzeYRCmfEwgPf062L0qEbDxb",];
+const RELEASE_KEYS: &[&str] = &["RWQxm0+WtCFyKauL+lbkHe5SYv81b5BxDzeYRCmfEwgPf062L0qEbDxb"];
 
 /// The version of this build.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
