@@ -65,8 +65,15 @@ for plugins.
   `docs/plugin-protocol.schema.json`, the SDKs in `sdk/` and `crates/mog-plugin-sdk`, and the
   examples in `examples/plugins` in step with it. The SDKs are not copied into plugins: mog
   ships them (`crates/mog/src/sdk.rs`) and puts them on `PYTHONPATH` and `NODE_PATH`.
-- Plugin screen and keys: widgets are drawn by `mog_tui::PluginWidgets`, and
-  `crates/mog/src/app/plugin_host/screen.rs` handles `draw`, `capture`, `cursor` and `timer`.
+- Plugin screen and keys: `mog_tui` draws widgets (`PluginWidgets`), notifications (`Toasts`),
+  panels (`PluginPanels`) and the flair canvas (`PluginCanvases`), and
+  `crates/mog/src/app/plugin_host/screen.rs` handles `draw`, `capture`, `cursor`, `timer`,
+  `toast`, `panel` and `canvas`.
+- Plugin contributions (themes, keys, highlight queries, chat tools) are applied in
+  `crates/mog/src/app/plugin_host/contributions.rs`, workspace edits in `plugin_host/edits.rs`.
+- `mog plugin` is `crates/mog/src/plugin_cli.rs`, with installs and updates in
+  `plugin_cli/source.rs` and the doctor in `plugin_cli/doctor.rs`. Plugins are not sandboxed, so
+  keep saying so wherever installing one is explained.
 - Releases: `docs/releasing.md`, templates in `packaging/`, workflows in `.github/workflows`.
 - Debugger: `mog-dap` is the client, `crates/mog/src/debug.rs` runs sessions, built in adapters
   are in `mog-config/src/tasks.rs`. Tasks and their output parsing live in
