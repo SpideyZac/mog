@@ -227,7 +227,10 @@ version, so an edit worked out from old text never lands in the wrong place.
 
 Open files change in the editor, one undo step each. Files that are not open are changed and
 saved on disk. A `workspace_edit` checks every part first and changes nothing if one does not
-fit.
+fit. Parts for the same file are merged into one edit, so their changes are all in offsets of the
+text before the edit and must not overlap each other. Files on disk are written to temp files
+first and only replace the real ones once every one of them was written, so a full disk or a
+missing folder leaves every file as it was.
 
 Actions run in order and stop at the first one that fails. A list with a broken action, like a
 missing field or an unknown type, is refused whole with an error that says which one, so

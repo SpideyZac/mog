@@ -868,9 +868,10 @@ mod tests {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig};
     use mog_core::{Command, Key, KeyChord};
+    use mog_plugin::parse_actions;
     use mog_tui::{Context, CursorShape, PromptKind, popups::PLUGIN_PICKED_COMMAND};
     use ratatui::{Terminal, backend::TestBackend};
-    use serde_json::{json, to_string};
+    use serde_json::{Value, json, to_string};
     use tokio::time;
 
     use super::{App, FRAME_TIME, IDLE_FRAME_TIME, Overlay};
@@ -1615,6 +1616,112 @@ three
             .await
             .expect("drawn");
         assert!(!fish(&screen), "{screen}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Runs the actions in `json` the way a plugin would ask for them.
+    fn plugin_actions(app: &mut App, json: Value) -> Result<(), String> {
+        let actions = parse_actions(&json).expect("valid actions");
+        app.apply_actions(actions)
+    }
+
+    /// Two parts of a workspace edit for the same file both land, in offsets of the text
+    /// before the edit, whether the file is open or not.
+    #[tokio::test]
+    async fn merges_workspace_edits_for_one_file() {
+        let dir = temp_dir();
+        let open = dir.join("open.txt");
+        let closed = dir.join("closed.txt");
+        fs::write(
+            &open,
+            "hello world
+",
+        )
+        .expect("write");
+        fs::write(
+            &closed, "abc def
+",
+        )
+        .expect("write");
+        let mut app = start(&open);
+        let edit = |path: &Path, start: usize, end: usize, text: &str| json!({ "path": path, "changes": [{ "start": start, "end": end, "text": text }] });
+        let edits = json!({ "actions": [{ "type": "workspace_edit", "edits": [
+            edit(&open, 0, 5, "HELLO"),
+            edit(&closed, 0, 3, "ABC"),
+            edit(&open, 6, 11, "WORLD"),
+            edit(&closed, 4, 7, "DEF"),
+        ] }] });
+        plugin_actions(&mut app, edits).expect("applied");
+        assert_eq!(
+            app.editor.document().text().to_string(),
+            "HELLO WORLD
+"
+        );
+        assert_eq!(
+            fs::read_to_string(&closed).expect("read"),
+            "ABC DEF
+"
+        );
+        app.execute_command(Command::Undo);
+        assert_eq!(
+            app.editor.document().text().to_string(),
+            "hello world
+"
+        );
+        let overlapping = json!({ "actions": [{ "type": "workspace_edit", "edits": [
+            edit(&closed, 0, 3, "x"),
+            edit(&closed, 2, 5, "y"),
+        ] }] });
+        assert!(plugin_actions(&mut app, overlapping).is_err());
+        assert_eq!(
+            fs::read_to_string(&closed).expect("read"),
+            "ABC DEF
+"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A workspace edit that fails on one file leaves every other file as it was.
+    #[tokio::test]
+    async fn workspace_edits_are_all_or_nothing() {
+        let dir = temp_dir();
+        let open = dir.join("open.txt");
+        let first = dir.join("first.txt");
+        fs::write(
+            &open, "open
+",
+        )
+        .expect("write");
+        fs::write(
+            &first, "first
+",
+        )
+        .expect("write");
+        let mut app = start(&open);
+        let unwritable = dir.join("missing").join("folder").join("new.txt");
+        let edits = json!({ "actions": [{ "type": "workspace_edit", "edits": [
+            { "path": first, "changes": [{ "start": 0, "end": 5, "text": "FIRST" }] },
+            { "path": open, "changes": [{ "start": 0, "end": 4, "text": "OPEN" }] },
+            { "path": unwritable, "changes": [{ "start": 0, "end": 0, "text": "new" }] },
+        ] }] });
+        assert!(plugin_actions(&mut app, edits).is_err());
+        assert_eq!(
+            fs::read_to_string(&first).expect("read"),
+            "first
+"
+        );
+        assert_eq!(
+            app.editor.document().text().to_string(),
+            "open
+"
+        );
+        assert!(!unwritable.exists());
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .expect("list")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
         let _ = fs::remove_dir_all(dir);
     }
 

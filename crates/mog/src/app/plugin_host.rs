@@ -11,11 +11,10 @@ use std::{
 
 use futures::future;
 use mog_core::{
-    Change, Command, Diagnostic, Document, KeyChord, Range, Severity, Transaction,
-    command::UnknownCommand,
+    Change, Command, Diagnostic, KeyChord, Range, Severity, Transaction, command::UnknownCommand,
 };
 use mog_plugin::{
-    Action, Edit, FileEdit, Level, PluginEvent, parse_actions, parse_segment,
+    Action, Edit, Level, PluginEvent, parse_actions, parse_segment,
     protocol::{parse_action, parse_selections},
 };
 use mog_tui::{
@@ -31,6 +30,7 @@ use crate::{
     plugins::{PluginUpdate, ask_providers, split_command},
 };
 
+mod edits;
 mod screen;
 
 use screen::ScreenState;
@@ -191,14 +191,6 @@ fn sequential_changes(transactions: &[&Transaction]) -> Vec<Value> {
         }
     }
     changes
-}
-
-/// Where a part of a workspace edit goes, checked and ready to apply.
-enum Target {
-    /// An open document, by index.
-    Open(usize, Vec<Change>),
-    /// A file that is not open, read from disk.
-    Closed(Box<Document>, Transaction),
 }
 
 impl App {
@@ -959,73 +951,6 @@ impl App {
                 Action::Output { title, text } => self.show_output(&title, &text),
             }
         }
-        Ok(())
-    }
-
-    /// Applies changes to one or more files, all of them or none.
-    ///
-    /// Open files change in the editor as one undo step each. Files that are not open are
-    /// changed and saved on disk.
-    ///
-    /// # Errors
-    ///
-    /// Returns why a part does not fit, like a stale version or overlapping changes, before
-    /// anything changed.
-    fn apply_workspace_edit(&mut self, edits: Vec<FileEdit>) -> Result<(), String> {
-        let mut targets = Vec::with_capacity(edits.len());
-        for edit in edits {
-            let path = self.resolve_path(edit.path.as_deref());
-            let changes = to_changes(edit.changes);
-            let name = path.as_ref().map_or_else(
-                || "the focused file".to_owned(),
-                |path| path.display().to_string(),
-            );
-            if let Some(index) = self.find_document(path.as_deref()) {
-                let document = &self.editor.documents()[index];
-                if let Some(version) = edit.version
-                    && version != document.version()
-                {
-                    return Err(format!(
-                        "{name} changed since version {version}, it is at {} now",
-                        document.version()
-                    ));
-                }
-                let tx = Transaction::try_new(changes.clone())
-                    .map_err(|err| format!("{name}: {err}"))?;
-                tx.check_bounds(document.text().len_chars())
-                    .map_err(|err| format!("{name}: {err}"))?;
-                targets.push(Target::Open(index, changes));
-            } else {
-                let path = path.ok_or("no file is open")?;
-                let document =
-                    Document::open(&path).map_err(|err| format!("could not open {name}: {err}"))?;
-                let tx = Transaction::try_new(changes).map_err(|err| format!("{name}: {err}"))?;
-                tx.check_bounds(document.text().len_chars())
-                    .map_err(|err| format!("{name}: {err}"))?;
-                targets.push(Target::Closed(Box::new(document), tx));
-            }
-        }
-        let focused = self.editor.active();
-        for target in targets {
-            match target {
-                Target::Open(index, changes) => {
-                    self.editor.focus(index);
-                    self.editor
-                        .try_apply_changes(changes)
-                        .map_err(|err| err.to_string())?;
-                }
-                Target::Closed(mut document, tx) => {
-                    document.apply(tx, Range::point(0), false);
-                    document.save().map_err(|err| {
-                        format!(
-                            "could not save {}: {err}",
-                            document.path().unwrap_or(Path::new("?")).display()
-                        )
-                    })?;
-                }
-            }
-        }
-        self.editor.focus(focused);
         Ok(())
     }
 
