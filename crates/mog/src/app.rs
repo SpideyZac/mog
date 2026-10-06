@@ -1632,6 +1632,8 @@ three
             .expect("drawn");
         assert!(!fish(&screen), "{screen}");
         app.plugins.get("aquarium").expect("plugin").stop();
+        plugins_until(&mut app, |app| app.plugins.get("aquarium").is_none()).await;
+        drop(app);
         let _ = fs::remove_dir_all(dir);
     }
 
