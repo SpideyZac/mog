@@ -12,14 +12,9 @@ entry at it:
 See docs/plugins.md for the protocol.
 """
 
-import os
 import re
-import sys
 
-# a copy of the sdk sits next to this file, so the folder works wherever it is installed
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from mog_plugin import Plugin, change, edit, open_file, status  # noqa: E402
+from mog_plugin import Plugin, change, edit, open_file, status
 
 NOTE = re.compile(r"\b(TODO|FIXME)\b:?\s*(.*)")
 

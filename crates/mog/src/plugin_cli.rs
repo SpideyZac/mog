@@ -18,12 +18,6 @@ use crate::{
     plugins::{plugin_dir, resolve},
 };
 
-/// The Python SDK, copied into new Python plugins.
-const PYTHON_SDK: &str = include_str!("../../../sdk/python/mog_plugin.py");
-
-/// The JavaScript SDK, copied into new Node plugins.
-const NODE_SDK: &str = include_str!("../../../sdk/node/mog-plugin.js");
-
 /// How long `doctor` waits for a plugin to say hello.
 const DOCTOR_WAIT: Duration = Duration::from_secs(15);
 
@@ -113,23 +107,14 @@ fn new(dir: &Path, name: &str, language: Language) -> Result<()> {
     fs::create_dir_all(&folder)
         .with_context(|| format!("could not create {}", folder.display()))?;
     // python is python3 on most systems but just python on windows
-    let (program, windows, main, source, sdk_name, sdk) = match language {
+    let (program, windows, main, source) = match language {
         Language::Python => (
             "python3",
             "\ncommand_windows = \"python\"",
             "main.py",
             python_template(name),
-            "mog_plugin.py",
-            PYTHON_SDK,
         ),
-        Language::Node => (
-            "node",
-            "",
-            "main.js",
-            node_template(name),
-            "mog-plugin.js",
-            NODE_SDK,
-        ),
+        Language::Node => ("node", "", "main.js", node_template(name)),
     };
     let manifest = format!(
         "name = \"{name}\"\nversion = \"0.1.0\"\ndescription = \"Says hello.\"\nprotocol = 2\n\
@@ -139,7 +124,6 @@ fn new(dir: &Path, name: &str, language: Language) -> Result<()> {
     );
     create(&folder.join(MANIFEST_FILE), &manifest)?;
     create(&folder.join(main), &source)?;
-    create(&folder.join(sdk_name), sdk)?;
     println!("created {}", folder.display());
     println!("restart mog or run plugins.restart, then run `{name}: Say hello` from the palette");
     Ok(())
@@ -151,11 +135,9 @@ fn python_template(name: &str) -> String {
         r#""""The {name} plugin for mog. See docs/plugins.md in the mog repository."""
 
 import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from mog_plugin import Plugin, status  # noqa: E402
+# mog puts the sdk that ships with it on the import path
+from mog_plugin import Plugin, status
 
 plugin = Plugin()
 
@@ -178,7 +160,8 @@ fn node_template(name: &str) -> String {
         r#"// The {name} plugin for mog. See docs/plugins.md in the mog repository.
 
 const path = require("node:path");
-const {{ Plugin, status }} = require("./mog-plugin");
+// mog puts the sdk that ships with it on NODE_PATH
+const {{ Plugin, status }} = require("mog-plugin");
 
 const plugin = new Plugin();
 
@@ -399,26 +382,6 @@ mod tests {
         assert!(check_name("a.b").is_err());
     }
 
-    /// The example plugins' copies of the python sdk are the current one.
-    #[test]
-    fn example_sdk_is_current() {
-        assert_eq!(
-            super::PYTHON_SDK,
-            include_str!("../../../examples/plugins/todo/mog_plugin.py"),
-            "copy sdk/python/mog_plugin.py into examples/plugins/todo"
-        );
-        assert_eq!(
-            super::PYTHON_SDK,
-            include_str!("../../../examples/plugins/vim/mog_plugin.py"),
-            "copy sdk/python/mog_plugin.py into examples/plugins/vim"
-        );
-        assert_eq!(
-            super::PYTHON_SDK,
-            include_str!("../../../examples/plugins/aquarium/mog_plugin.py"),
-            "copy sdk/python/mog_plugin.py into examples/plugins/aquarium"
-        );
-    }
-
     /// Git urls are told apart from folders.
     #[test]
     fn spots_git_urls() {
@@ -436,7 +399,7 @@ mod tests {
         let installed = base.join("installed");
         new(&made, "hello", Language::Node).expect("created");
         assert!(made.join("hello/plugin.toml").is_file());
-        assert!(made.join("hello/mog-plugin.js").is_file());
+        assert!(made.join("hello/main.js").is_file());
         assert!(new(&made, "hello", Language::Python).is_err());
         install(&installed, &made.join("hello").to_string_lossy()).expect("installed");
         assert!(installed.join("hello/main.js").is_file());

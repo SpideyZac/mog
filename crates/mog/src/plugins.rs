@@ -19,6 +19,8 @@ use mog_plugin::{
 use serde_json::Value;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
 
+use crate::sdk;
+
 /// The prefix of every plugin command name, like `plugin.words.count`.
 pub const PREFIX: &str = "plugin.";
 
@@ -231,6 +233,7 @@ pub fn resolve(
         command,
         args,
         dir: manifest.as_ref().map(|manifest| manifest.dir.clone()),
+        sdk: sdk::dir(),
         settings: config.settings.clone(),
         timeout,
         instance: 0,

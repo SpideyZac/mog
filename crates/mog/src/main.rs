@@ -11,6 +11,7 @@ mod git;
 mod lsp;
 mod plugin_cli;
 mod plugins;
+mod sdk;
 mod session;
 mod settings;
 mod tasks;

@@ -1400,7 +1400,7 @@ mod tests {
         let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/todo");
         let folder = dir.join("todo-plugin");
         fs::create_dir_all(&folder).expect("plugin folder");
-        for name in ["todo.py", "mog_plugin.py", "plugin.toml"] {
+        for name in ["todo.py", "plugin.toml"] {
             let text = fs::read_to_string(example.join(name)).expect("the example exists");
             let text = text.replace(
                 "activation = [\"startup\"]",

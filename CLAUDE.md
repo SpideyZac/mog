@@ -62,8 +62,8 @@ for plugins.
 - Plugin protocol: `mog-plugin` speaks it, `crates/mog/src/plugins.rs` runs the plugins and
   `crates/mog/src/app/plugin_host.rs` answers them. Keep `docs/plugins.md`,
   `docs/plugin-protocol.schema.json`, the SDKs in `sdk/` and `crates/mog-plugin-sdk`, and the
-  examples in `examples/plugins` in step with it. The `mog_plugin.py` in each folder under
-  `examples/plugins` is a copy of `sdk/python/mog_plugin.py`, a test checks they match.
+  examples in `examples/plugins` in step with it. The SDKs are not copied into plugins: mog
+  ships them (`crates/mog/src/sdk.rs`) and puts them on `PYTHONPATH` and `NODE_PATH`.
 - Plugin screen and keys: widgets are drawn by `mog_tui::PluginWidgets`, and
   `crates/mog/src/app/plugin_host/screen.rs` handles `draw`, `capture`, `cursor` and `timer`.
 - Releases: `docs/releasing.md`, templates in `packaging/`, workflows in `.github/workflows`.

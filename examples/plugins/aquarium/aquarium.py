@@ -6,13 +6,9 @@ plugin only says what to draw. It hides with the rest of the flair in serious mo
 `flair.disabled = ["plugin.aquarium"]` turns it off.
 """
 
-import os
 import random
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from mog_plugin import Plugin, span, status  # noqa: E402
+from mog_plugin import Plugin, span, status
 
 plugin = Plugin()
 

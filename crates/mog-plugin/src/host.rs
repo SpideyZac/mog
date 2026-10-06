@@ -6,7 +6,9 @@
 
 use std::{
     collections::HashMap,
-    env, io,
+    env,
+    ffi::OsString,
+    io,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{
@@ -67,6 +69,8 @@ pub struct Spec {
     pub args: Vec<String>,
     /// The plugin folder, when it has a manifest.
     pub dir: Option<PathBuf>,
+    /// The folder with the SDKs that ship with mog, put on the plugin's import paths.
+    pub sdk: Option<PathBuf>,
     /// Settings from the config, sent in `initialize`.
     pub settings: Value,
     /// How long a command may take.
@@ -134,6 +138,15 @@ fn program_path(command: &str) -> PathBuf {
         .flat_map(|dir| ["exe", "cmd", "bat"].map(|ext| dir.join(&program).with_extension(ext)))
         .find(|candidate| candidate.is_file())
         .unwrap_or(program)
+}
+
+/// Returns the search path in the environment variable `name` with `dir` added at the end.
+fn with_path(name: &str, dir: PathBuf) -> OsString {
+    let mut paths: Vec<PathBuf> = env::var_os(name)
+        .map(|paths| env::split_paths(&paths).collect())
+        .unwrap_or_default();
+    paths.push(dir);
+    env::join_paths(&paths).unwrap_or_default()
 }
 
 /// A message waiting to be sent to the plugin.
@@ -224,6 +237,13 @@ impl Plugin {
             .kill_on_drop(true);
         if let Some(dir) = &spec.dir {
             command.env("MOG_PLUGIN_DIR", dir);
+        }
+        // last on the path, so a copy of the sdk next to the plugin still wins
+        if let Some(sdk) = &spec.sdk {
+            command
+                .env("MOG_SDK_DIR", sdk)
+                .env("PYTHONPATH", with_path("PYTHONPATH", sdk.join("python")))
+                .env("NODE_PATH", with_path("NODE_PATH", sdk.join("node")));
         }
         let mut child = command.spawn()?;
         let (Some(stdin), Some(stdout), Some(stderr)) =

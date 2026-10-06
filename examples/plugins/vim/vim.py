@@ -8,12 +8,8 @@ esc in insert mode, sets the cursor shape and draws the keys typed so far on the
 Not covered: the dot command, macros, marks, text objects and named registers.
 """
 
-import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from mog_plugin import Plugin, change, command, edit, select, status  # noqa: E402
+from mog_plugin import Plugin, change, command, edit, select, status
 
 plugin = Plugin()
 

@@ -20,8 +20,8 @@ mog plugin new hello                    # a python plugin, or --language node
 mog plugin doctor                       # starts every plugin and shows what it offers
 ```
 
-`mog plugin new` makes a folder in the plugins folder of your config with a `plugin.toml`, a
-main file and a copy of the SDK. Restart mog or run `Plugins: Restart all plugins`, then run
+`mog plugin new` makes a folder in the plugins folder of your config with a `plugin.toml` and a
+main file. Restart mog or run `Plugins: Restart all plugins`, then run
 `hello: Say hello` from the command palette.
 
 The SDKs do the framing and dispatch so a plugin is just its handlers:
@@ -32,6 +32,11 @@ The SDKs do the framing and dispatch so a plugin is just its handlers:
 | Node 18+ | [`sdk/node/mog-plugin.js`](../sdk/node/mog-plugin.js), one file, no dependencies | `mog plugin new x --language node` |
 | Rust | the `mog-plugin-sdk` crate in this repository | its crate docs |
 | anything else | read on, it is a hundred lines | [`examples/plugins/words.py`](../examples/plugins/words.py) with no SDK |
+
+The Python and Node SDKs ship inside mog. mog writes the ones that match it to a folder it names
+in `MOG_SDK_DIR` and adds that to `PYTHONPATH` and `NODE_PATH`, so `from mog_plugin import ...`
+and `require("mog-plugin")` work with nothing next to the plugin. A copy of the SDK in the plugin
+folder still wins, to pin an older one.
 
 Two bigger examples show how far a plugin can go:
 [`examples/plugins/vim`](../examples/plugins/vim) takes over the keyboard to add vim motions, and
@@ -117,8 +122,8 @@ menu = true                       # also in the editor's right click menu
 | `command` | the first time one of its commands runs, which waits for it |
 | `language:<extension>` | the first time a file with that extension gets focus |
 
-The plugin gets `MOG_PLUGIN_DIR` and `MOG_VERSION` in its environment and runs in the project
-folder.
+The plugin gets `MOG_PLUGIN_DIR`, `MOG_VERSION` and `MOG_SDK_DIR` in its environment, with the
+SDKs on `PYTHONPATH` and `NODE_PATH`, and runs in the project folder.
 
 ## Starting up
 
