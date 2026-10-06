@@ -3,9 +3,16 @@
 //! Wraps tree-sitter grammars and turns their highlight captures into a small set of
 //! [`Kind`]s that themes know how to color.
 
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{
+        LazyLock, PoisonError, RwLock,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
-use tree_sitter::Language;
+use tree_sitter::{Language, Query};
 
 pub mod engine;
 
@@ -202,6 +209,61 @@ pub fn language_for(path: &Path) -> Option<&'static str> {
 fn source_for(language: &str) -> Option<(Language, String, &'static str)> {
     let (lang, highlights, injections, _locals) = grammar_parts(language)?;
     Some((lang, highlights, injections))
+}
+
+/// Highlight queries plugins add to languages, by language.
+static EXTRA_HIGHLIGHTS: LazyLock<RwLock<HashMap<&'static str, String>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Goes up whenever [`EXTRA_HIGHLIGHTS`] changes, so highlighters load grammars again.
+static EXTRA_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Returns the extra highlight queries for `language`, empty when there are none.
+fn extra_highlights(language: &str) -> String {
+    EXTRA_HIGHLIGHTS
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(language)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Returns how often the extra highlight queries changed.
+fn extra_version() -> u64 {
+    EXTRA_VERSION.load(Ordering::Relaxed)
+}
+
+/// Replaces the highlight queries added to languages, each `(language, query)` with the language
+/// by name, alias or extension, like `markdown` or `md`. Later queries win where they capture
+/// the same text.
+///
+/// Returns a problem for each query that names an unknown language or does not compile, which
+/// is left out.
+pub fn set_extra_highlights(queries: &[(String, String)]) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut extra: HashMap<&'static str, String> = HashMap::new();
+    for (name, query) in queries {
+        let Some(language) = resolve_language(name) else {
+            problems.push(format!("highlights for `{name}`: mog has no such language"));
+            continue;
+        };
+        let Some((grammar, base, _)) = source_for(language) else {
+            continue;
+        };
+        let mut combined = extra.get(language).cloned().unwrap_or_default();
+        combined.push('\n');
+        combined.push_str(query);
+        if let Err(err) = Query::new(&grammar, &format!("{base}\n{combined}")) {
+            problems.push(format!("highlights for `{name}`: {err}"));
+            continue;
+        }
+        extra.insert(language, combined);
+    }
+    *EXTRA_HIGHLIGHTS
+        .write()
+        .unwrap_or_else(PoisonError::into_inner) = extra;
+    EXTRA_VERSION.fetch_add(1, Ordering::Relaxed);
+    problems
 }
 
 /// Returns the grammar and the highlight, injection and locals queries of `language`.
@@ -422,7 +484,35 @@ fn grammar_parts(language: &str) -> Option<(Language, String, &'static str, &'st
 mod tests {
     use std::path::Path;
 
-    use super::{Highlighter, Kind, LANGUAGES, Span, language_for, resolve_language};
+    use super::{
+        Highlighter, Kind, LANGUAGES, Span, language_for, resolve_language, set_extra_highlights,
+    };
+
+    /// Queries from plugins add colors to a language, and broken ones are refused.
+    #[test]
+    fn adds_plugin_highlights() {
+        let text = "local mog = 1";
+        let before = Highlighter::new().highlight("lua", text);
+        let problems = set_extra_highlights(&[
+            (
+                "lua".into(),
+                "((identifier) @keyword (#eq? @keyword \"mog\"))".into(),
+            ),
+            ("lua".into(), "(nonsense) @keyword".into()),
+            ("klingon".into(), "(x) @keyword".into()),
+        ]);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        let mut highlighter = Highlighter::new();
+        let after = highlighter.highlight("lua", text);
+        assert_eq!(kind_at(&after, 7), Some(Kind::Keyword), "{after:?}");
+        assert_ne!(kind_at(&before, 7), Some(Kind::Keyword));
+        set_extra_highlights(&[]);
+        assert_ne!(
+            kind_at(&highlighter.highlight("lua", text), 7),
+            Some(Kind::Keyword),
+            "a highlighter loads grammars again when they change"
+        );
+    }
 
     /// Extensions map to languages and unknown ones do not.
     #[test]

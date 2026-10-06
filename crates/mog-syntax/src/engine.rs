@@ -13,7 +13,7 @@ use tree_sitter::{
     StreamingIterator, Tree,
 };
 
-use crate::{CAPTURES, Kind, Span, resolve_language, source_for};
+use crate::{CAPTURES, Kind, Span, extra_highlights, extra_version, resolve_language, source_for};
 
 /// How deep code inside code inside code is followed.
 const MAX_DEPTH: usize = 3;
@@ -69,7 +69,11 @@ impl Grammar {
     /// Compiles the grammar called `name`, or `None` if it is unknown or its queries are broken.
     fn load(name: &str) -> Option<Self> {
         let (language, highlights, injections) = source_for(name)?;
-        let highlights = Query::new(&language, &highlights).ok()?;
+        // queries from plugins come last so they win, and a broken one never costs the colors
+        let extra = extra_highlights(name);
+        let highlights = Query::new(&language, &format!("{highlights}\n{extra}"))
+            .or_else(|_| Query::new(&language, &highlights))
+            .ok()?;
         let injections = (!injections.is_empty())
             .then(|| Query::new(&language, injections).ok())
             .flatten();
@@ -111,6 +115,8 @@ pub struct Highlighter {
     grammars: HashMap<&'static str, Option<Arc<Grammar>>>,
     /// The parser, reused for every language.
     parser: Parser,
+    /// The version of the extra highlight queries the grammars were loaded with.
+    extra: u64,
 }
 
 impl Default for Highlighter {
@@ -118,6 +124,7 @@ impl Default for Highlighter {
         Self {
             grammars: HashMap::new(),
             parser: Parser::new(),
+            extra: extra_version(),
         }
     }
 }
@@ -130,6 +137,11 @@ impl Highlighter {
 
     /// Returns the grammar for `language`, loading it the first time.
     pub fn grammar(&mut self, language: &'static str) -> Option<Arc<Grammar>> {
+        let extra = extra_version();
+        if extra != self.extra {
+            self.extra = extra;
+            self.grammars.clear();
+        }
         self.grammars
             .entry(language)
             .or_insert_with(|| Grammar::load(language).map(Arc::new))
