@@ -173,9 +173,7 @@ settings = { loud = true }   # handed to the plugin instead of the config's
 
 [[files]]
 path = "notes.txt"
-text = "first
-TODO: water the mog
-"   # read from disk when left out
+text = "first\nTODO: water the mog\n"   # read from disk when left out
 
 [[steps]]
 name = "marks the note when the file opens"
