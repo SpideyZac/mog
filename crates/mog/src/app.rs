@@ -1597,7 +1597,7 @@ three
     /// The aquarium example draws fish as flair, which turning off its flair hides.
     #[tokio::test]
     async fn runs_the_aquarium_plugin() {
-        if std::env::var("CI").is_ok() {
+        if env::var("CI").is_ok() {
             return;
         }
         let Some(python) = python() else {
