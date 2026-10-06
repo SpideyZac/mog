@@ -1,5 +1,7 @@
 //! A filterable list with a query line, used by the palette, finder and key list.
 
+use std::collections::BTreeSet;
+
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use mog_core::{Key, KeyChord, fuzzy_match};
 use ratatui::{
@@ -22,6 +24,8 @@ pub struct PickerItem {
     pub hint: String,
     /// An optional color for a marker before the label.
     pub marker: Option<Style>,
+    /// Text shown next to the list while the item is highlighted.
+    pub preview: Option<String>,
 }
 
 impl PickerItem {
@@ -32,7 +36,15 @@ impl PickerItem {
             detail: String::new(),
             hint: String::new(),
             marker: None,
+            preview: None,
         }
+    }
+
+    /// Sets the text shown next to the list while the item is highlighted.
+    #[must_use]
+    pub fn preview(mut self, preview: impl Into<String>) -> Self {
+        self.preview = Some(preview.into());
+        self
     }
 
     /// Sets the detail text.
@@ -87,14 +99,45 @@ pub struct Picker {
     list_area: Rect,
     /// Where the query cursor was drawn.
     cursor: Option<Position>,
+    /// Whether several items can be chosen with tab before accepting.
+    multi: bool,
+    /// The chosen items by their index in the original list.
+    chosen: BTreeSet<usize>,
 }
 
 impl Picker {
-    /// Replaces the items and clears the query.
+    /// Replaces the items and clears the query and the choice.
     pub fn reset(&mut self, items: Vec<PickerItem>) {
         self.items = items;
         self.query.clear();
+        self.chosen.clear();
+        self.multi = false;
         self.refilter();
+    }
+
+    /// Lets several items be chosen with tab, or only one.
+    pub fn set_multi(&mut self, multi: bool) {
+        self.multi = multi;
+        self.chosen.clear();
+    }
+
+    /// Returns the chosen items by their index in the original list, in order.
+    pub fn chosen(&self) -> Vec<usize> {
+        self.chosen.iter().copied().collect()
+    }
+
+    /// Returns the highlighted item.
+    pub fn current_item(&self) -> Option<&PickerItem> {
+        self.current().and_then(|index| self.items.get(index))
+    }
+
+    /// Chooses the highlighted item, or unchooses it.
+    fn toggle(&mut self) {
+        if let Some(index) = self.current()
+            && !self.chosen.remove(&index)
+        {
+            self.chosen.insert(index);
+        }
     }
 
     /// Replaces the items but keeps the query, for lists that change while typing.
@@ -163,6 +206,10 @@ impl Picker {
                     .map_or(PickerAction::None, PickerAction::Accept);
             }
             Key::Up => self.move_selection(-1),
+            Key::Tab if self.multi => {
+                self.toggle();
+                self.move_selection(1);
+            }
             Key::Down | Key::Tab => self.move_selection(1),
             Key::PageUp => self.move_selection(-page),
             Key::PageDown => self.move_selection(page),
@@ -193,6 +240,10 @@ impl Picker {
             MouseEventKind::Down(MouseButton::Left) => {
                 if area.contains(Position::new(event.column, event.row)) {
                     self.selected = self.scroll + usize::from(event.row - area.y);
+                    if self.multi {
+                        self.toggle();
+                        return PickerAction::None;
+                    }
                     return self
                         .current()
                         .map_or(PickerAction::None, PickerAction::Accept);
@@ -283,6 +334,16 @@ impl Picker {
             x = buf
                 .set_stringn(x, y, pointer, width, base.patch(theme.popup_title))
                 .0;
+            if self.multi {
+                let mark = if self.chosen.contains(index) {
+                    "[x] "
+                } else {
+                    "[ ] "
+                };
+                x = buf
+                    .set_stringn(x, y, mark, width, base.patch(theme.popup_title))
+                    .0;
+            }
             if let Some(style) = item.marker {
                 x = buf
                     .set_stringn(x, y, "\u{25cf} ", width, base.patch(style))
@@ -358,5 +419,31 @@ mod tests {
         }
         assert_eq!(press(&mut picker, Key::Enter), PickerAction::Accept(2));
         assert_eq!(press(&mut picker, Key::Esc), PickerAction::Cancel);
+    }
+
+    /// With several allowed, tab chooses rows and enter keeps them.
+    #[test]
+    fn chooses_several() {
+        let mut picker = Picker::default();
+        picker.reset(vec![
+            PickerItem::new("a").preview("first"),
+            PickerItem::new("b"),
+            PickerItem::new("c"),
+        ]);
+        picker.set_multi(true);
+        assert_eq!(
+            picker
+                .current_item()
+                .and_then(|item| item.preview.as_deref()),
+            Some("first")
+        );
+        press(&mut picker, Key::Tab);
+        press(&mut picker, Key::Down);
+        press(&mut picker, Key::Tab);
+        assert_eq!(picker.chosen(), [0, 2]);
+        press(&mut picker, Key::Up);
+        press(&mut picker, Key::Up);
+        press(&mut picker, Key::Tab);
+        assert_eq!(picker.chosen(), [2], "tab again unchooses");
     }
 }

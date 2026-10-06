@@ -19,7 +19,8 @@ use mog_plugin::{
     protocol::{parse_action, parse_selections},
 };
 use mog_tui::{
-    CommandInfo, CursorStyle, Overlay, PluginHealth, PluginSegment, PromptKind, Side, SymbolEntry,
+    CommandInfo, CursorStyle, Overlay, PluginHealth, PluginPick, PluginSegment, PromptKind, Side,
+    SymbolEntry,
     completion::{CompletionItem, ItemKind},
     picker::PickerItem,
 };
@@ -951,16 +952,25 @@ impl App {
                             .map(|item| match item {
                                 Value::String(label) => PickerItem::new(label),
                                 Value::Object(_) => {
-                                    PickerItem::new(item["label"].as_str().unwrap_or_default())
-                                        .detail(item["detail"].as_str().unwrap_or_default())
-                                        .hint(item["hint"].as_str().unwrap_or_default())
+                                    let row =
+                                        PickerItem::new(item["label"].as_str().unwrap_or_default())
+                                            .detail(item["detail"].as_str().unwrap_or_default())
+                                            .hint(item["hint"].as_str().unwrap_or_default());
+                                    match item["preview"].as_str() {
+                                        Some(preview) => row.preview(preview),
+                                        None => row,
+                                    }
                                 }
                                 other => PickerItem::new(other.to_string()),
                             })
                             .collect()
                     })
                     .unwrap_or_default();
-                self.ui.plugin_pick = Some((title, items));
+                self.ui.plugin_pick = Some(PluginPick {
+                    title,
+                    items,
+                    multi: params["multi"].as_bool().unwrap_or(false),
+                });
                 self.ui.open(Overlay::PluginPick);
                 self.plugin_state.waiting = Some((plugin, id));
                 return;
@@ -1132,19 +1142,24 @@ impl App {
 
     /// Passes the row picked from a plugin's list back to it.
     pub(super) fn plugin_picked(&mut self) {
-        let picked = self.ui.plugin_picked.take();
-        let item = picked.and_then(|index| {
-            self.ui
-                .plugin_pick
-                .as_ref()
-                .and_then(|(_, items)| items.get(index))
-                .map(|item| item.label.clone())
-        });
-        if let (Some((plugin, id)), Some(index), Some(item)) =
-            (self.plugin_state.waiting.take(), picked, item)
-        {
-            self.plugins
-                .respond(&plugin, id, Ok(json!({ "index": index, "item": item })));
+        let picked = self.ui.plugin_picked.take().unwrap_or_default();
+        let Some(pick) = self.ui.plugin_pick.as_ref() else {
+            return;
+        };
+        let chosen: Vec<(usize, String)> = picked
+            .into_iter()
+            .filter_map(|index| Some((index, pick.items.get(index)?.label.clone())))
+            .collect();
+        let Some((index, item)) = chosen.first().cloned() else {
+            return;
+        };
+        let mut answer = json!({ "index": index, "item": item });
+        if pick.multi {
+            answer["indices"] = json!(chosen.iter().map(|(index, _)| index).collect::<Vec<_>>());
+            answer["items"] = json!(chosen.iter().map(|(_, item)| item).collect::<Vec<_>>());
+        }
+        if let Some((plugin, id)) = self.plugin_state.waiting.take() {
+            self.plugins.respond(&plugin, id, Ok(answer));
         }
     }
 

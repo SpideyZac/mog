@@ -497,7 +497,7 @@ put other messages aside for later, like the SDKs do.
 | `editor/select` | `{ "path": "...", "selections": [...] }` | `{}` once set, opening the file if needed |
 | `editor/save` | `{ "path": "..." }` | `{}` once saved |
 | `actions` | `{ "actions": [...] }` | `{}` once the actions are done, or an error saying what failed |
-| `ui/pick` | `{ "title": "...", "items": ["a", { "label": "b", "detail": "...", "hint": "..." }] }` | `{ "index": 1, "item": "b" }`, or `null` if the user closed the list |
+| `ui/pick` | `{ "title": "...", "items": ["a", { "label": "b", "detail": "...", "hint": "...", "preview": "..." }], "multi": false }` | `{ "index": 1, "item": "b" }`, or `null` if the user closed the list. With `multi`, tab chooses rows and the answer also has `indices` and `items` of every chosen row, the highlighted one when none were chosen. Rows with a `preview` show it next to the list while highlighted |
 | `ui/prompt` | `{ "title": "...", "text": "start", "hint": "..." }` | `{ "text": "what was typed" }`, or `null` if the user closed it or left it empty |
 | `ui/layout` | `{}` | Where things are on screen, see [Drawing on the screen](#drawing-on-the-screen) |
 

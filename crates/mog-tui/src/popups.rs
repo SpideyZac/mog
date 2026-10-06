@@ -296,7 +296,7 @@ impl Popups {
             Some(Overlay::PluginPick) => ui
                 .plugin_pick
                 .as_ref()
-                .map(|(_, items)| items.clone())
+                .map(|pick| pick.items.clone())
                 .unwrap_or_default(),
             Some(Overlay::Tasks) => ui
                 .tasks
@@ -317,6 +317,11 @@ impl Popups {
             _ => Vec::new(),
         };
         self.picker.reset(items);
+        let multi = ui.overlay == Some(Overlay::PluginPick)
+            && ui.plugin_pick.as_ref().is_some_and(|pick| pick.multi);
+        if multi {
+            self.picker.set_multi(true);
+        }
     }
 
     /// Acts on the picked row `index` of the open popup.
@@ -398,7 +403,12 @@ impl Popups {
                 cx.ui.request(Command::Custom("task.start".into()));
             }
             Some(Overlay::PluginPick) => {
-                cx.ui.plugin_picked = Some(index);
+                let chosen = self.picker.chosen();
+                cx.ui.plugin_picked = Some(if chosen.is_empty() {
+                    vec![index]
+                } else {
+                    chosen
+                });
                 cx.ui.request(Command::Custom(PLUGIN_PICKED_COMMAND.into()));
             }
             Some(Overlay::Finder) => {
@@ -524,13 +534,19 @@ impl Layer for Popups {
             self.picker.set_items(Self::symbol_items(cx.ui));
         }
         let theme = cx.theme;
-        let plugin_title = cx
+        let pick = cx
             .ui
             .plugin_pick
             .as_ref()
-            .map(|(title, _)| title.clone())
-            .unwrap_or_default();
+            .filter(|_| cx.ui.overlay == Some(Overlay::PluginPick));
+        let plugin_title = pick.map(|pick| pick.title.clone()).unwrap_or_default();
+        let multi = pick.is_some_and(|pick| pick.multi);
+        let previews =
+            pick.is_some_and(|pick| pick.items.iter().any(|item| item.preview.is_some()));
         let (title, placeholder) = match cx.ui.overlay {
+            Some(Overlay::PluginPick) if multi => {
+                (plugin_title.as_str(), "type to filter, tab to choose...")
+            }
             Some(Overlay::PluginPick) => (plugin_title.as_str(), "type to filter..."),
             Some(Overlay::Palette) => ("\u{2318} command palette", "type a command..."),
             Some(Overlay::Finder) => ("\u{2315} find a file", "type part of a file name..."),
@@ -577,14 +593,46 @@ impl Layer for Popups {
             self.cursor = Some(Position::new(inner.x + 3 + typed, inner.y));
             return;
         }
-        self.area = popup::centered(area, PICKER_WIDTH, PICKER_HEIGHT);
+        let width = if previews {
+            PICKER_WIDTH * 3 / 2
+        } else {
+            PICKER_WIDTH
+        };
+        self.area = popup::centered(area, width, PICKER_HEIGHT);
         popup::dim_around(area, self.area, buf, theme);
         let inner = popup::frame(self.area, buf, theme, title);
-        let padded = Rect {
+        let mut padded = Rect {
             x: inner.x + 1,
             width: inner.width.saturating_sub(2),
             ..inner
         };
+        if previews {
+            let list = padded.width * 3 / 5;
+            let preview = Rect {
+                x: padded.x + list + 1,
+                width: padded.width.saturating_sub(list + 1),
+                ..padded
+            };
+            padded.width = list;
+            for y in preview.y..preview.bottom() {
+                buf.set_string(preview.x - 1, y, "\u{2502}", theme.popup_border);
+            }
+            if let Some(text) = self
+                .picker
+                .current_item()
+                .and_then(|item| item.preview.as_deref())
+            {
+                for (y, line) in (preview.y..preview.bottom()).zip(text.lines()) {
+                    buf.set_stringn(
+                        preview.x + 1,
+                        y,
+                        line,
+                        usize::from(preview.width.saturating_sub(1)),
+                        theme.popup,
+                    );
+                }
+            }
+        }
         self.picker.render(padded, buf, theme, placeholder);
         self.cursor = self.picker.cursor();
         if self.capturing.is_some() {

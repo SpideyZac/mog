@@ -931,6 +931,9 @@ mod tests {
             Key::Enter => KeyCode::Enter,
             Key::Backspace => KeyCode::Backspace,
             Key::Esc => KeyCode::Esc,
+            Key::Tab => KeyCode::Tab,
+            Key::Up => KeyCode::Up,
+            Key::Down => KeyCode::Down,
             Key::Home => KeyCode::Home,
             Key::End => KeyCode::End,
             other => panic!("press does not know {other:?}"),
@@ -1937,6 +1940,74 @@ plugin.run()
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// A plugin's list shows the preview of the highlighted row and lets several rows be chosen.
+    #[tokio::test]
+    async fn picks_several_with_previews() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let script = dir.join("pick.py");
+        fs::write(
+            &script,
+            r#"
+from mog_plugin import Plugin, insert
+
+plugin = Plugin()
+
+
+@plugin.command("choose", title="Choose")
+def choose(context, args):
+    items = [{"label": name, "preview": f"all about {name}"} for name in ("apple", "pear", "plum")]
+    picked = plugin.ask("ui/pick", {"title": "fruit", "items": items, "multi": True})
+    return [insert(",".join(picked["items"]))] if picked else []
+
+
+plugin.run()
+"#,
+        )
+        .expect("plugin");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.plugins.insert(
+            "fruit".into(),
+            PluginConfig {
+                command: python.into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        plugins_until(&mut app, |app| {
+            app.ui
+                .commands
+                .iter()
+                .any(|info| info.name == "plugin.fruit.choose")
+        })
+        .await;
+        app.execute_command("plugin.fruit.choose".parse().expect("command"));
+        plugins_until(&mut app, |app| app.ui.overlay == Some(Overlay::PluginPick)).await;
+        let screen = app
+            .snapshot("140x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert!(screen.contains("all about apple"), "{screen}");
+        assert!(screen.contains("[ ] pear"), "{screen}");
+        for key in ["tab", "tab", "tab"] {
+            app.handle_event(press(key));
+        }
+        app.handle_event(press("up"));
+        app.handle_event(press("tab"));
+        app.handle_event(press("enter"));
+        app.run_requests();
+        plugins_until(&mut app, |app| app.editor.document().text().len_chars() > 0).await;
+        assert_eq!(app.editor.document().text().to_string(), "apple,plum");
+        let _ = fs::remove_dir_all(dir);
+    }
+
     /// Runs the actions in `json` the way a plugin would ask for them.
     fn plugin_actions(app: &mut App, json: Value) -> Result<(), String> {
         let actions = parse_actions(&json).expect("valid actions");
@@ -2115,7 +2186,7 @@ plugin.run()
         app.editor.select(end, end);
         app.execute_command("plugin.words.filler".parse().expect("command"));
         plugins_until(&mut app, |app| app.ui.overlay == Some(Overlay::PluginPick)).await;
-        app.ui.plugin_picked = Some(2);
+        app.ui.plugin_picked = Some(vec![2]);
         app.ui.close();
         app.execute_command(PLUGIN_PICKED_COMMAND.parse().expect("command"));
         plugins_until(&mut app, |app| {

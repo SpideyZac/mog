@@ -559,13 +559,22 @@
               "items": {
                 "oneOf": [
                   { "type": "string" },
-                  { "type": "object", "required": ["label"], "properties": { "label": { "type": "string" }, "detail": { "type": "string" }, "hint": { "type": "string" } } }
+                  { "type": "object", "required": ["label"], "properties": { "label": { "type": "string" }, "detail": { "type": "string" }, "hint": { "type": "string" }, "preview": { "type": "string" } } }
                 ]
               }
-            }
+            },
+            "multi": { "type": "boolean" }
           }
         },
-        "result": { "type": ["object", "null"], "properties": { "index": { "type": "integer" }, "item": { "type": "string" } } }
+        "result": {
+          "type": ["object", "null"],
+          "properties": {
+            "index": { "type": "integer" },
+            "item": { "type": "string" },
+            "indices": { "type": "array", "items": { "type": "integer" } },
+            "items": { "type": "array", "items": { "type": "string" } }
+          }
+        }
       }
     }
   }

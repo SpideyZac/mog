@@ -135,6 +135,17 @@ pub enum Overlay {
     PluginPick,
 }
 
+/// A list a plugin asked the user to pick from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PluginPick {
+    /// What the list is for.
+    pub title: String,
+    /// The rows.
+    pub items: Vec<PickerItem>,
+    /// Whether several rows can be chosen.
+    pub multi: bool,
+}
+
 /// A short text a plugin put in the status line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginSegment {
@@ -416,13 +427,13 @@ pub struct Ui {
     /// Clicks on plugin segments without a command, for the app to pass on.
     pub segment_clicks: Vec<SegmentClick>,
     /// The title and items of the list a plugin asked the user to pick from.
-    pub plugin_pick: Option<(String, Vec<PickerItem>)>,
+    pub plugin_pick: Option<PluginPick>,
     /// Plugin commands in the right click menu, as `(title, command)`.
     pub plugin_menu: Vec<(String, String, Option<When>)>,
     /// Text plugins show after lines, by file and line, as `(text, color)`.
     pub plugin_decorations: HashMap<PathBuf, BTreeMap<usize, (String, Option<String>)>>,
     /// The item picked from that list, for the app to pass on.
-    pub plugin_picked: Option<usize>,
+    pub plugin_picked: Option<Vec<usize>>,
     /// The widgets plugins drew on the screen.
     pub plugin_widgets: Vec<PluginWidget>,
     /// How each running plugin is doing.
