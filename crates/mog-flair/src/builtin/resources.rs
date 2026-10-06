@@ -1,4 +1,5 @@
-//! A resource monitor under the file explorer, with real cpu, ram and gpu when it can find one.
+//! A resource monitor under the file explorer, with real cpu, ram and gpu when it can find one,
+//! and how much memory and time plugins take.
 
 use std::{
     collections::VecDeque,
@@ -30,6 +31,12 @@ const LABEL: usize = 4;
 
 /// The width of the percentage column.
 const PERCENT: usize = 5;
+
+/// How long a plugin answer can take before it shows as slow, like mog's slow plugin warning.
+const SLOW: Duration = Duration::from_secs(1);
+
+/// How long a plugin answer can take before it shows as getting slow.
+const SLUGGISH: Duration = Duration::from_millis(100);
 
 /// Shows cpu, ram and gpu usage.
 pub struct Resources {
@@ -99,6 +106,38 @@ fn percent(fraction: f32) -> String {
     format!("{:>4.0}%", (fraction * 100.0).clamp(0.0, 100.0))
 }
 
+/// Returns `took` in at most five columns, like ` 12ms` or ` 1.5s`.
+fn latency(took: Duration) -> String {
+    if took < Duration::from_secs(1) {
+        format!("{:>3}ms", took.as_millis())
+    } else {
+        format!("{:>4.1}s", took.as_secs_f32().min(99.9))
+    }
+}
+
+/// Returns the plugin row: a summary, its color and the slowest recent answer time.
+fn plugin_row(cx: &FlairContext<'_>, width: usize) -> (String, Color, String) {
+    let plugins = &cx.ui.plugin_health;
+    let p = cx.theme.palette;
+    if plugins.is_empty() {
+        return (format!("{:<width$}", "none"), p.dim, String::new());
+    }
+    let memory: u64 = plugins.iter().filter_map(|plugin| plugin.memory).sum();
+    let worst = plugins.iter().filter_map(|plugin| plugin.p95).max();
+    let summary = format!("{} on {}MB", plugins.len(), memory >> 20);
+    let color = match worst {
+        _ if plugins.iter().any(|plugin| plugin.timeouts > 0) => p.red,
+        Some(took) if took >= SLOW => p.red,
+        Some(took) if took >= SLUGGISH => p.yellow,
+        _ => p.green,
+    };
+    (
+        format!("{summary:<width$.width$}"),
+        color,
+        worst.map(latency).unwrap_or_default(),
+    )
+}
+
 /// Returns the color for a load of `fraction`, from calm to on fire.
 fn load_color(cx: &FlairContext<'_>, fraction: f32) -> Color {
     let p = cx.theme.palette;
@@ -115,11 +154,11 @@ impl Flair for Resources {
     }
 
     fn description(&self) -> &str {
-        "A resource monitor under the file explorer. The gpu is mining $MOG."
+        "A resource monitor under the file explorer, with plugins. The gpu is mining $MOG."
     }
 
     fn placement(&self) -> Placement {
-        Placement::Sidebar { height: 4 }
+        Placement::Sidebar { height: 5 }
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &FlairContext<'_>) {
@@ -133,7 +172,7 @@ impl Flair for Resources {
         let theme = cx.theme;
         let inner = sidebar_frame(area, buf, theme, "system");
         let width = usize::from(inner.width);
-        if width < LABEL + PERCENT + 2 || inner.height < 3 {
+        if width < LABEL + PERCENT + 2 || inner.height < 4 {
             return;
         }
         let graph = width - LABEL - PERCENT;
@@ -194,13 +233,17 @@ impl Flair for Resources {
             theme.palette.accent,
             &percent(gpu),
         );
+        let (plugins, color, slowest) = plugin_row(cx, graph);
+        row(buf, inner.y + 3, "plug", &plugins, color, &slowest);
     }
 }
 
 #[cfg(test)]
 /// Tests for the resource monitor.
 mod tests {
-    use super::percent;
+    use std::time::Duration;
+
+    use super::{latency, percent};
 
     /// Percentages are padded and clamped.
     #[test]
@@ -208,5 +251,13 @@ mod tests {
         assert_eq!(percent(0.61), "  61%");
         assert_eq!(percent(2.0), " 100%");
         assert_eq!(percent(-1.0), "   0%");
+    }
+
+    /// Plugin answer times fit the percentage column.
+    #[test]
+    fn formats_latency() {
+        assert_eq!(latency(Duration::from_millis(12)), " 12ms");
+        assert_eq!(latency(Duration::from_millis(1500)), " 1.5s");
+        assert_eq!(latency(Duration::from_secs(500)), "99.9s");
     }
 }
