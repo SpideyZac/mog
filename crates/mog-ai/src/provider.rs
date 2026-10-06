@@ -3,6 +3,7 @@
 use std::{future::Future, path::PathBuf, pin::Pin};
 
 use ropey::Rope;
+use serde_json::Value;
 use thiserror::Error;
 
 /// A boxed future, used so [`AiProvider`] works as a trait object.
@@ -83,6 +84,21 @@ pub struct CompletionFile {
 /// Gets each piece of a chat reply as it streams in.
 pub type OnText<'a> = &'a (dyn Fn(&str) + Send + Sync);
 
+/// A tool the model may call while chatting, like one a plugin adds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tool {
+    /// The name the model calls it by, letters, digits, `_` and `-`.
+    pub name: String,
+    /// What it does and when to use it, for the model.
+    pub description: String,
+    /// A JSON schema of its input, an object.
+    pub input_schema: Value,
+}
+
+/// Runs the tool called `name` with `input`, giving its output or why it failed.
+pub type CallTool<'a> =
+    &'a (dyn Fn(String, Value) -> BoxFuture<'static, Result<String, String>> + Send + Sync);
+
 /// An AI backend that can chat, complete code, or both.
 pub trait AiProvider: Send + Sync {
     /// Returns a short unique name like `claude`.
@@ -98,6 +114,20 @@ pub trait AiProvider: Send + Sync {
     ) -> BoxFuture<'a, Result<String, AiError>> {
         let _ = (system, messages, on_text);
         Box::pin(async move { Err(AiError::Unsupported(format!("{} chat", self.id()))) })
+    }
+
+    /// Chats like [`AiProvider::chat`], letting the model call `tools` through `call` as often
+    /// as it needs before it answers. Providers without tool use just chat.
+    fn chat_with_tools<'a>(
+        &'a self,
+        system: &'a str,
+        messages: &'a [ChatMessage],
+        tools: &'a [Tool],
+        call: CallTool<'a>,
+        on_text: OnText<'a>,
+    ) -> BoxFuture<'a, Result<String, AiError>> {
+        let _ = (tools, call);
+        self.chat(system, messages, on_text)
     }
 
     /// Suggests texts to insert at the cursor, best first, or none if nothing is worth suggesting.

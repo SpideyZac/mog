@@ -3,6 +3,7 @@
 //! Claude only chats. Inline suggestions come from Copilot, which is built for them.
 
 use std::{
+    collections::HashMap,
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
@@ -11,7 +12,7 @@ use reqwest::{Client, Response, StatusCode, header::RETRY_AFTER};
 use serde_json::{Value, json};
 use tokio::time;
 
-use crate::provider::{AiError, AiProvider, BoxFuture, ChatMessage, OnText, Role};
+use crate::provider::{AiError, AiProvider, BoxFuture, CallTool, ChatMessage, OnText, Role, Tool};
 
 /// The Messages API endpoint.
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -36,6 +37,9 @@ const READ_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How many times a request is tried before giving up on a busy or flaky API.
 const MAX_ATTEMPTS: u32 = 3;
+
+/// How many times in one answer the model may call tools before mog stops it.
+const MAX_TOOL_ROUNDS: usize = 16;
 
 /// The longest wait between tries, even if the API asks for more.
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
@@ -133,6 +137,11 @@ impl Claude {
 
     /// Streams the reply to `body`, passing text to `on_text`, and returns all of it.
     async fn stream(&self, body: Value, on_text: OnText<'_>) -> Result<String, AiError> {
+        self.stream_reply(body, on_text).await?.finish()
+    }
+
+    /// Streams the reply to `body`, passing text to `on_text`, and returns it once it ends.
+    async fn stream_reply(&self, body: Value, on_text: OnText<'_>) -> Result<Reply, AiError> {
         let mut response = self.post(&body).await?;
         let mut parser = SseParser::default();
         let mut reply = Reply::default();
@@ -146,7 +155,64 @@ impl Claude {
                 break;
             }
         }
-        reply.finish()
+        Ok(reply)
+    }
+
+    /// Chats with `tools`, running the ones the model calls and sending back what they gave,
+    /// until it answers.
+    async fn chat_tools(
+        &self,
+        system: &str,
+        messages: &[ChatMessage],
+        tools: &[Tool],
+        call: CallTool<'_>,
+        on_text: OnText<'_>,
+    ) -> Result<String, AiError> {
+        let mut body = request_body(&self.model, CHAT_MAX_TOKENS, Some(system), messages);
+        body["tools"] = tools_json(tools);
+        let mut text = String::new();
+        for _ in 0..MAX_TOOL_ROUNDS {
+            let reply = self.stream_reply(body.clone(), on_text).await?;
+            text.push_str(&reply.text);
+            match reply.stop_reason.as_deref() {
+                Some("tool_use") => {}
+                // a refusal or a cut off can leave a tool call half written, so none run
+                Some("refusal") => return Err(AiError::Refused),
+                Some("max_tokens") if reply.calls().next().is_some() => {
+                    return Err(AiError::Api("the reply was cut off in a tool call".into()));
+                }
+                _ => return reply.finish().map(|_| text),
+            }
+            let mut results = Vec::new();
+            for (id, name, input) in reply.calls() {
+                let note = format!("\n\n[{name}]\n\n");
+                on_text(&note);
+                text.push_str(&note);
+                let result = match (reply.invalid.get(id), input.is_object()) {
+                    (Some(raw), _) => Err(json!({ "INVALID_JSON": raw }).to_string()),
+                    (None, false) => Err("the input must be a JSON object".to_owned()),
+                    (None, true) => call(name.to_owned(), input.clone()).await,
+                };
+                let (content, is_error) = match result {
+                    Ok(content) => (content, false),
+                    Err(error) => (error, true),
+                };
+                results.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "content": content,
+                    "is_error": is_error,
+                }));
+            }
+            // the whole turn goes back as it came, thinking blocks too, so it stays valid
+            if let Some(messages) = body["messages"].as_array_mut() {
+                messages.push(json!({ "role": "assistant", "content": reply.blocks }));
+                messages.push(json!({ "role": "user", "content": results }));
+            }
+        }
+        Err(AiError::Api(format!(
+            "the model called tools {MAX_TOOL_ROUNDS} times without answering"
+        )))
     }
 }
 
@@ -183,6 +249,21 @@ fn error_message(status: StatusCode, body: &str) -> String {
             }
         });
     format!("{status}: {message}")
+}
+
+/// Returns `tools` as the Messages API wants them, streaming their input as it is written.
+fn tools_json(tools: &[Tool]) -> Value {
+    tools
+        .iter()
+        .map(|tool| {
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+                "eager_input_streaming": true,
+            })
+        })
+        .collect()
 }
 
 /// Builds a streaming Messages API request body.
@@ -260,6 +341,12 @@ impl SseParser {
 struct Reply {
     /// The text so far.
     text: String,
+    /// Every content block as it should be sent back, by index.
+    blocks: Vec<Value>,
+    /// The input of each tool call being written, as JSON text, by block index.
+    inputs: HashMap<usize, String>,
+    /// Tool call inputs that were not valid JSON, by tool use id.
+    invalid: HashMap<String, String>,
     /// Why the model stopped, once it says.
     stop_reason: Option<String>,
     /// Whether the stream said it is over.
@@ -267,13 +354,102 @@ struct Reply {
 }
 
 impl Reply {
+    /// Returns the tool calls in the reply as `(id, name, input)`.
+    fn calls(&self) -> impl Iterator<Item = (&str, &str, &Value)> {
+        self.blocks.iter().filter_map(|block| {
+            (block["type"] == "tool_use").then_some(())?;
+            Some((
+                block["id"].as_str()?,
+                block["name"].as_str()?,
+                &block["input"],
+            ))
+        })
+    }
+
+    /// Returns the block at the index `event` names, if it started.
+    fn block(&mut self, event: &Value) -> Option<&mut Value> {
+        let index = usize::try_from(event["index"].as_u64()?).ok()?;
+        self.blocks.get_mut(index)
+    }
+
+    /// Appends `text` to the string field `key` of the block `event` is about.
+    fn append(&mut self, event: &Value, key: &str, text: &str) {
+        if let Some(block) = self.block(event) {
+            let mut joined = block[key].as_str().unwrap_or_default().to_owned();
+            joined.push_str(text);
+            block[key] = json!(joined);
+        }
+    }
+
     /// Takes in one event, returning text it added.
     fn handle(&mut self, event: &Value) -> Result<Option<String>, AiError> {
+        let delta = &event["delta"];
         match event["type"].as_str() {
-            Some("content_block_delta") if event["delta"]["type"] == "text_delta" => {
-                let text = event["delta"]["text"].as_str().unwrap_or_default();
+            Some("content_block_start") => {
+                let index = event["index"]
+                    .as_u64()
+                    .and_then(|index| usize::try_from(index).ok())
+                    .unwrap_or(self.blocks.len());
+                let mut block = event["content_block"].clone();
+                if block["type"] == "tool_use" {
+                    self.inputs.insert(index, String::new());
+                    block["input"] = json!({});
+                }
+                if self.blocks.len() <= index {
+                    self.blocks.resize(index + 1, Value::Null);
+                }
+                self.blocks[index] = block;
+            }
+            Some("content_block_delta") if delta["type"] == "text_delta" => {
+                let text = delta["text"].as_str().unwrap_or_default();
                 self.text.push_str(text);
+                self.append(event, "text", text);
                 return Ok(Some(text.to_owned()).filter(|text| !text.is_empty()));
+            }
+            Some("content_block_delta") if delta["type"] == "thinking_delta" => {
+                self.append(
+                    event,
+                    "thinking",
+                    delta["thinking"].as_str().unwrap_or_default(),
+                );
+            }
+            Some("content_block_delta") if delta["type"] == "signature_delta" => {
+                if let Some(block) = self.block(event) {
+                    block["signature"] = delta["signature"].clone();
+                }
+            }
+            Some("content_block_delta") if delta["type"] == "input_json_delta" => {
+                let index = event["index"]
+                    .as_u64()
+                    .and_then(|index| usize::try_from(index).ok());
+                if let Some(input) = index.and_then(|index| self.inputs.get_mut(&index)) {
+                    input.push_str(delta["partial_json"].as_str().unwrap_or_default());
+                }
+            }
+            Some("content_block_stop") => {
+                let index = event["index"]
+                    .as_u64()
+                    .and_then(|index| usize::try_from(index).ok());
+                let Some((index, raw)) =
+                    index.and_then(|index| Some((index, self.inputs.remove(&index)?)))
+                else {
+                    return Ok(None);
+                };
+                // inputs stream as written, so they are checked strictly here
+                let parsed = if raw.trim().is_empty() {
+                    Ok(json!({}))
+                } else {
+                    serde_json::from_str::<Value>(&raw)
+                };
+                if let Some(block) = self.blocks.get_mut(index) {
+                    match parsed {
+                        Ok(input) => block["input"] = input,
+                        Err(_) => {
+                            let id = block["id"].as_str().unwrap_or_default().to_owned();
+                            self.invalid.insert(id, raw);
+                        }
+                    }
+                }
             }
             Some("message_delta") => {
                 if let Some(reason) = event["delta"]["stop_reason"].as_str() {
@@ -316,6 +492,20 @@ impl AiProvider for Claude {
         let body = request_body(&self.model, CHAT_MAX_TOKENS, Some(system), messages);
         Box::pin(self.stream(body, on_text))
     }
+
+    fn chat_with_tools<'a>(
+        &'a self,
+        system: &'a str,
+        messages: &'a [ChatMessage],
+        tools: &'a [Tool],
+        call: CallTool<'a>,
+        on_text: OnText<'a>,
+    ) -> BoxFuture<'a, Result<String, AiError>> {
+        if tools.is_empty() {
+            return self.chat(system, messages, on_text);
+        }
+        Box::pin(self.chat_tools(system, messages, tools, call, on_text))
+    }
 }
 
 #[cfg(test)]
@@ -327,11 +517,156 @@ mod tests {
     use serde_json::json;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
+        net::{TcpListener, TcpStream},
     };
 
     use super::{Claude, Reply, SseParser, error_message, is_retryable, request_body};
-    use crate::provider::{AiError, AiProvider, ChatMessage, Role};
+    use crate::provider::{AiError, AiProvider, BoxFuture, ChatMessage, Role, Tool};
+
+    /// Returns `events` as a streamed HTTP answer.
+    fn sse_answer(events: &[serde_json::Value]) -> String {
+        let stream: String = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect();
+        format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\
+             connection: close\r\n\r\n{stream}",
+            stream.len()
+        )
+    }
+
+    /// Reads one whole HTTP request from `socket` and returns its body.
+    async fn read_body(socket: &mut TcpStream) -> String {
+        let mut seen = Vec::new();
+        let mut buffer = vec![0; 1 << 16];
+        loop {
+            let read = socket.read(&mut buffer).await.unwrap_or(0);
+            if read == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buffer[..read]);
+            let text = String::from_utf8_lossy(&seen).into_owned();
+            let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                continue;
+            };
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())?
+                })
+                .unwrap_or(0);
+            if body.len() >= length {
+                return body.to_owned();
+            }
+        }
+        String::new()
+    }
+
+    /// A tool call runs, its result goes back with the whole turn, and the answer after it
+    /// comes through.
+    #[tokio::test]
+    async fn runs_tools() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let url = format!(
+            "http://{}/v1/messages",
+            listener.local_addr().expect("addr")
+        );
+        let start = |index: u64, block: serde_json::Value| json!({ "type": "content_block_start", "index": index, "content_block": block });
+        let delta = |index: u64, delta: serde_json::Value| json!({ "type": "content_block_delta", "index": index, "delta": delta });
+        let stop = |index: u64| json!({ "type": "content_block_stop", "index": index });
+        let first = [
+            start(0, json!({ "type": "thinking", "thinking": "" })),
+            delta(0, json!({ "type": "thinking_delta", "thinking": "" })),
+            delta(0, json!({ "type": "signature_delta", "signature": "sig" })),
+            stop(0),
+            start(1, json!({ "type": "text", "text": "" })),
+            delta(1, json!({ "type": "text_delta", "text": "Looking." })),
+            stop(1),
+            start(
+                2,
+                json!({ "type": "tool_use", "id": "toolu_1", "name": "count", "input": {} }),
+            ),
+            delta(
+                2,
+                json!({ "type": "input_json_delta", "partial_json": "{\"pa" }),
+            ),
+            delta(
+                2,
+                json!({ "type": "input_json_delta", "partial_json": "th\": \"a.md\"}" }),
+            ),
+            stop(2),
+            json!({ "type": "message_delta", "delta": { "stop_reason": "tool_use" } }),
+            json!({ "type": "message_stop" }),
+        ];
+        let second = [
+            start(0, json!({ "type": "text", "text": "" })),
+            delta(0, json!({ "type": "text_delta", "text": "Two." })),
+            stop(0),
+            json!({ "type": "message_delta", "delta": { "stop_reason": "end_turn" } }),
+            json!({ "type": "message_stop" }),
+        ];
+        let server = tokio::spawn(async move {
+            let mut bodies = Vec::new();
+            for answer in [sse_answer(&first), sse_answer(&second)] {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                bodies.push(read_body(&mut socket).await);
+                let _ = socket.write_all(answer.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+            bodies
+        });
+        let claude = Claude::with_url(url, "key", "model");
+        let tools = [Tool {
+            name: "count".into(),
+            description: "Counts notes".into(),
+            input_schema: json!({ "type": "object" }),
+        }];
+        let call = |name: String,
+                    input: serde_json::Value|
+         -> BoxFuture<'static, Result<String, String>> {
+            Box::pin(async move {
+                Ok(format!(
+                    "{name} {} = 2",
+                    input["path"].as_str().unwrap_or("?")
+                ))
+            })
+        };
+        let reply = claude
+            .chat_with_tools("system", &[user("how many?")], &tools, &call, &|_: &str| {})
+            .await
+            .expect("reply");
+        assert_eq!(reply, "Looking.\n\n[count]\n\nTwo.");
+        let bodies = server.await.expect("server");
+        let first: serde_json::Value = serde_json::from_str(&bodies[0]).expect("json");
+        assert_eq!(first["tools"][0]["eager_input_streaming"], true);
+        let second: serde_json::Value = serde_json::from_str(&bodies[1]).expect("json");
+        let messages = second["messages"].as_array().expect("messages");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["signature"], "sig");
+        assert_eq!(messages[1]["content"][2]["input"]["path"], "a.md");
+        assert_eq!(
+            messages[2]["content"][0],
+            json!({ "type": "tool_result", "tool_use_id": "toolu_1", "content": "count a.md = 2", "is_error": false })
+        );
+    }
+
+    /// A tool input that is not valid JSON goes back as an error instead of running the tool.
+    #[test]
+    fn spots_broken_tool_input() {
+        let mut reply = Reply::default();
+        let events = [
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "tool_use", "id": "t", "name": "x", "input": {} } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "input_json_delta", "partial_json": "{\"a\": " } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+        ];
+        for event in &events {
+            reply.handle(event).expect("ok");
+        }
+        assert_eq!(reply.invalid.get("t").map(String::as_str), Some("{\"a\": "));
+    }
 
     /// A user message saying `text`.
     fn user(text: &str) -> ChatMessage {

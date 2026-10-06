@@ -9,5 +9,6 @@ pub mod provider;
 pub use claude::Claude;
 pub use copilot::{Copilot, CopilotEvent, CopilotStatus, DeviceCode};
 pub use provider::{
-    AiError, AiProvider, BoxFuture, ChatMessage, CompletionFile, CompletionRequest, OnText, Role,
+    AiError, AiProvider, BoxFuture, CallTool, ChatMessage, CompletionFile, CompletionRequest,
+    OnText, Role, Tool,
 };
