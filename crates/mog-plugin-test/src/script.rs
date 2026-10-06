@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use mog_plugin::{DEFAULT_TIMEOUT, Spec};
+use mog_plugin::{DEFAULT_TIMEOUT, Spec, protocol::OWN_EVENTS};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -21,9 +21,6 @@ const WAIT: Duration = Duration::from_secs(2);
 
 /// How long a step with nothing to wait for lets the plugin work.
 const SETTLE: Duration = Duration::from_millis(50);
-
-/// Events a plugin gets without listing them, since it set them up itself.
-const OWN_EVENTS: &[&str] = &["click", "timer"];
 
 /// A test of a plugin.
 #[derive(Debug, Default, Deserialize)]

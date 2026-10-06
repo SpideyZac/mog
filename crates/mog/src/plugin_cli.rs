@@ -2,24 +2,23 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, fs,
+    fs,
     io::{self, IsTerminal as _, Write as _},
     path::{self, Path, PathBuf},
     process,
-    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use mog_config::Config;
-use mog_plugin::{MANIFEST_FILE, Manifest, Plugin, PluginEvent, Spec, discover};
+use mog_plugin::{MANIFEST_FILE, Manifest, Spec, discover};
 use mog_plugin_test::{Script, run_script};
-use tokio::{sync::mpsc, time};
 
 use crate::{
     cli::{Language, PluginAction},
     plugins::{plugin_dir, resolve},
 };
 
+mod doctor;
 mod source;
 
 use source::{Record, Source, Trust, fetch, newer};
@@ -30,9 +29,6 @@ WARNING: plugins are not sandboxed. A plugin runs as you, and mog does not limit
 It can read, change and delete any file you can, read every environment variable (API keys
 and tokens included), see everything you open and type, use the network and run programs.
 Only install plugins you have read or whose authors you trust.";
-
-/// How long `doctor` waits for a plugin to say hello.
-const DOCTOR_WAIT: Duration = Duration::from_secs(15);
 
 /// Runs a `mog plugin` action.
 ///
@@ -76,7 +72,7 @@ pub async fn run(action: PluginAction) -> Result<()> {
             yes,
         } => update(&dir, name.as_deref(), rev, allow_unsigned, yes).await,
         PluginAction::Remove { name } => remove(&dir, &name),
-        PluginAction::Doctor { name } => doctor(&dir, name.as_deref()).await,
+        PluginAction::Doctor { name } => doctor::run(&dir, name.as_deref()).await,
         PluginAction::Test { plugin, scripts } => test(&dir, &plugin, scripts).await,
     }
 }
@@ -527,107 +523,6 @@ async fn test(dir: &Path, plugin: &str, scripts: Vec<PathBuf>) -> Result<()> {
     println!("{passed} passed, {failed} failed");
     if failed > 0 {
         bail!("{failed} step(s) failed");
-    }
-    Ok(())
-}
-
-/// Starts each plugin, or just the one called `only`, and reports what it says.
-async fn doctor(dir: &Path, only: Option<&str>) -> Result<()> {
-    let config = Config::load().unwrap_or_default();
-    let mut manifests = BTreeMap::new();
-    for manifest in discover(dir) {
-        match manifest {
-            Ok(manifest) => {
-                manifests.insert(manifest.name.clone(), manifest);
-            }
-            Err(err) => println!("broken: {err}"),
-        }
-    }
-    let mut names: Vec<String> = manifests
-        .keys()
-        .chain(config.plugins.keys())
-        .cloned()
-        .collect();
-    names.sort();
-    names.dedup();
-    names.retain(|name| only.is_none_or(|only| only == name));
-    if names.is_empty() {
-        bail!("no plugins to check");
-    }
-    let root = env::current_dir().unwrap_or_default();
-    let mut failed = 0;
-    for name in names {
-        let configured = config.plugins.get(&name);
-        if configured.is_some_and(|config| !config.enabled) {
-            println!("{name}: turned off in the config");
-            continue;
-        }
-        let spec = match resolve(&name, configured, manifests.remove(&name)) {
-            Ok((spec, _)) => spec,
-            Err(err) => {
-                println!("{name}: {err}");
-                failed += 1;
-                continue;
-            }
-        };
-        println!("{name}: {} {}", spec.command, spec.args.join(" "));
-        let (events, mut receiver) = mpsc::channel(64);
-        let plugin = match Plugin::start(&spec, &root, events) {
-            Ok(plugin) => plugin,
-            Err(err) => {
-                println!("  could not start: {err}");
-                failed += 1;
-                continue;
-            }
-        };
-        let answer = time::timeout(DOCTOR_WAIT, async {
-            let mut log = Vec::new();
-            while let Some((_, event)) = receiver.recv().await {
-                match event {
-                    PluginEvent::Ready { hello, .. } => return Ok((hello, log)),
-                    PluginEvent::Exited { reason, .. } => {
-                        return Err(reason.unwrap_or_else(|| "it exited".into()));
-                    }
-                    PluginEvent::Log { line, .. } => log.push(line),
-                    _ => {}
-                }
-            }
-            Err("it went away".to_owned())
-        })
-        .await;
-        drop(plugin);
-        match answer {
-            Ok(Ok((hello, log))) => {
-                println!("  ok, protocol {}", hello.protocol);
-                for command in &hello.commands {
-                    println!(
-                        "  command plugin.{name}.{} \"{}\"",
-                        command.name, command.title
-                    );
-                }
-                if !hello.events.is_empty() {
-                    let events: Vec<&str> = hello.events.iter().map(String::as_str).collect();
-                    println!("  listens for {}", events.join(", "));
-                }
-                for (provider, _) in &hello.providers {
-                    println!("  provides {provider}");
-                }
-                for line in log {
-                    println!("  stderr: {line}");
-                }
-            }
-            Ok(Err(reason)) => {
-                println!("  failed: {reason}");
-                failed += 1;
-            }
-            Err(_) => {
-                println!("  did not answer in {}s", DOCTOR_WAIT.as_secs());
-                failed += 1;
-            }
-        }
-    }
-    if failed > 0 {
-        bail!("{failed} plugin(s) need attention");
     }
     Ok(())
 }

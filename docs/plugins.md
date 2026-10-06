@@ -44,7 +44,7 @@ program does by itself. So:
 
 ```sh
 mog plugin new hello                    # a python plugin, or --language node
-mog plugin doctor                       # starts every plugin and shows what it offers
+mog plugin doctor                       # starts every plugin, shows what it offers and what is off
 mog plugin test hello                   # runs its tests against a fake editor
 ```
 
@@ -598,6 +598,21 @@ slow to read skips ticks rather than getting a pile of them. For moving and anim
 mog do it with `frames` and `motion` instead.
 
 ## When things go wrong
+
+`mog plugin doctor [name]` starts each plugin, prints what it offers, and points out what will not
+work the way you meant, as problems (something fails, and the command exits with an error),
+warnings and notes:
+
+- a command in the manifest that the plugin does not offer, or one it offers that the manifest
+  leaves out, so it is missing from the palette until the plugin runs
+- a plugin that starts on a command but lists none, so it never starts
+- a provider for files the plugin does not start for, like `completion` for `rs` with only
+  `language:md` activation
+- a `protocolVersion` that differs from the manifest's `protocol`, or protocol 1
+- events mog never sends and providers it does not know, which are never used
+- suggested keys mog cannot read, or that already run another command
+- a slow start, what it printed to stderr, where it was installed from and whether an archive was
+  signed
 
 - A command that takes too long times out with a message, see [Running a command](#running-a-command).
 - A plugin has 10 seconds to answer `initialize` or it is stopped.

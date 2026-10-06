@@ -31,6 +31,9 @@ pub const EVENTS: &[&str] = &[
     "before_save",
 ];
 
+/// Events a plugin gets for things it set up itself, without listing them in `events`.
+pub const OWN_EVENTS: &[&str] = &["click", "timer"];
+
 /// Every request a plugin can send to mog.
 pub const REQUESTS: &[&str] = &[
     "editor/context",
@@ -220,6 +223,8 @@ pub struct Hello {
     pub events: BTreeSet<String>,
     /// The providers it registers, by name like `completion`.
     pub providers: Vec<(String, Languages)>,
+    /// Providers it listed that mog does not know, so it is never asked for them.
+    pub unknown_providers: Vec<String>,
 }
 
 impl Hello {
@@ -322,8 +327,8 @@ pub fn parse_hello(result: &Value) -> Result<Hello, String> {
             .collect(),
         value => strings(value).into_iter().collect(),
     };
-    let providers = result["providers"]
-        .as_object()
+    let listed = result["providers"].as_object();
+    let providers = listed
         .map(|providers| {
             providers
                 .iter()
@@ -332,11 +337,18 @@ pub fn parse_hello(result: &Value) -> Result<Hello, String> {
                 .collect()
         })
         .unwrap_or_default();
+    let unknown_providers = listed
+        .into_iter()
+        .flat_map(|providers| providers.keys())
+        .filter(|name| !PROVIDERS.contains(&name.as_str()))
+        .cloned()
+        .collect();
     Ok(Hello {
         protocol,
         commands: parse_commands(&result["commands"])?,
         events,
         providers,
+        unknown_providers,
     })
 }
 

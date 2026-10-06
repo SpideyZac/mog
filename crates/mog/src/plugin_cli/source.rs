@@ -5,7 +5,7 @@ use std::{
     fmt::{self, Display, Formatter},
     fs::{self, File},
     io::{self, Cursor, Read},
-    path::{Component, Path, PathBuf},
+    path::{self, Component, Path, PathBuf},
     process::Command,
 };
 
@@ -107,7 +107,10 @@ pub fn is_git_url(source: &str) -> bool {
         || source.starts_with("http://")
         || source.starts_with("git@")
         || source.starts_with("ssh://")
-        || source.split('#').next().is_some_and(|url| url.ends_with(".git"))
+        || source
+            .split('#')
+            .next()
+            .is_some_and(|url| url.ends_with(".git"))
 }
 
 /// Returns whether `rev` looks like a commit hash rather than a tag or branch.
@@ -462,7 +465,7 @@ pub async fn fetch(source: &Source, staging: &Path, trust: &Trust) -> Result<Rec
             }
             copy_folder(path, staging)
                 .with_context(|| format!("could not copy {}", path.display()))?;
-            let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+            let path = path::absolute(path).unwrap_or_else(|_| path.clone());
             Ok(Record {
                 source: Source::Folder { path },
                 commit: None,
