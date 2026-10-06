@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::PathBuf,
+    time::Duration,
 };
 
 use mog_config::Config;
@@ -145,6 +146,19 @@ pub struct PluginSegment {
     pub color: Option<String>,
     /// A command clicking it runs.
     pub command: Option<String>,
+}
+
+/// How a running plugin is doing, for the resource monitor.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PluginHealth {
+    /// The plugin name.
+    pub name: String,
+    /// The memory its process uses in bytes, when known.
+    pub memory: Option<u64>,
+    /// How long 95 in 100 of its recent answers took at most.
+    pub p95: Option<Duration>,
+    /// How many of its requests timed out.
+    pub timeouts: u64,
 }
 
 /// Whether Copilot can be used, as shown in the status line.
@@ -379,6 +393,8 @@ pub struct Ui {
     pub plugin_picked: Option<usize>,
     /// The widgets plugins drew on the screen.
     pub plugin_widgets: Vec<PluginWidget>,
+    /// How each running plugin is doing.
+    pub plugin_health: Vec<PluginHealth>,
     /// Clicks on plugin widgets, for the app to pass on.
     pub widget_clicks: Vec<WidgetClick>,
     /// The look of the text cursor a plugin asked for.

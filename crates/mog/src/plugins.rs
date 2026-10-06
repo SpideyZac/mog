@@ -14,7 +14,8 @@ use futures::future;
 use mog_config::{PluginConfig, config_dir};
 use mog_core::KeyChord;
 use mog_plugin::{
-    Action, DEFAULT_TIMEOUT, Hello, Manifest, Plugin, PluginCommand, PluginEvent, Spec, discover,
+    Action, DEFAULT_TIMEOUT, Hello, Manifest, Plugin, PluginCommand, PluginEvent, Spec, Stats,
+    discover,
 };
 use serde_json::Value;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
@@ -29,6 +30,15 @@ const MAX_RESTARTS: u32 = 5;
 
 /// How long a plugin has to run before a crash no longer counts as crashing in a row.
 const STABLE_AFTER: Duration = Duration::from_secs(60);
+
+/// How many requests may time out within [`TIMEOUT_WINDOW`] before mog stops a plugin.
+const MAX_TIMEOUTS: usize = 5;
+
+/// The time [`MAX_TIMEOUTS`] are counted over.
+const TIMEOUT_WINDOW: Duration = Duration::from_secs(300);
+
+/// How often mog says a plugin is slow at most.
+const SLOW_WARNING_EVERY: Duration = Duration::from_secs(60);
 
 /// How many stderr lines are kept for each plugin.
 const LOG_LINES: usize = 500;
@@ -94,6 +104,10 @@ struct Entry {
     restart_at: Option<Instant>,
     /// What it printed to stderr, newest last.
     log: VecDeque<String>,
+    /// Why mog stopped it, when it did, like timing out too often.
+    disabled: Option<String>,
+    /// When mog last said it is slow.
+    warned: Option<Instant>,
 }
 
 impl Entry {
@@ -122,11 +136,11 @@ impl Entry {
         }
     }
 
-    /// Returns whether it crashed too often in a row and mog gave up on it.
+    /// Returns whether it crashed or timed out too often and mog gave up on it.
     fn gave_up(&self) -> bool {
         matches!(self.run, Run::Stopped)
             && self.restart_at.is_none()
-            && self.restarts >= MAX_RESTARTS
+            && (self.restarts >= MAX_RESTARTS || self.disabled.is_some())
     }
 
     /// Returns whether it starts as soon as mog does.
@@ -199,6 +213,38 @@ pub async fn ask_providers(
         .into_iter()
         .filter_map(|(plugin, answer)| Some((plugin, answer.ok()?)))
         .collect()
+}
+
+/// Returns `took` short, like `12ms` or `1.5s`.
+pub fn short_duration(took: Duration) -> String {
+    if took < Duration::from_secs(1) {
+        format!("{}ms", took.as_millis())
+    } else {
+        format!("{:.1}s", took.as_secs_f32())
+    }
+}
+
+/// Describes how fast a plugin answered and how much memory it uses, in one line.
+fn describe_stats(stats: &Stats, memory: Option<&u64>) -> String {
+    let mut line = format!("{} requests", stats.requests);
+    if let (Some(mean), Some(p95)) = (stats.mean(), stats.percentile(0.95)) {
+        let _ = write!(
+            line,
+            ", mean {}, p95 {}, slowest {}",
+            short_duration(mean),
+            short_duration(p95),
+            short_duration(stats.slowest)
+        );
+    }
+    let _ = write!(
+        line,
+        ", {} failed, {} timed out",
+        stats.failed, stats.timeouts
+    );
+    if let Some(bytes) = memory {
+        let _ = write!(line, ", {} MB", bytes / (1 << 20));
+    }
+    line
 }
 
 /// Returns the folder plugin folders are found in, `plugins` in the config directory.
@@ -311,6 +357,8 @@ impl Plugins {
                 started: Instant::now(),
                 restart_at: None,
                 log: VecDeque::new(),
+                disabled: None,
+                warned: None,
             });
         }
         let at_once: Vec<String> = self
@@ -354,10 +402,11 @@ impl Plugins {
             let Some(entry) = self.entries.get_mut(&name) else {
                 continue;
             };
-            let was_running = entry.plugin().is_some();
+            let was_running = entry.plugin().is_some() || entry.disabled.is_some();
             entry.run = Run::Stopped;
             entry.restarts = 0;
             entry.restart_at = None;
+            entry.disabled = None;
             if was_running || entry.starts_at_once() {
                 problems.extend(self.start(&name));
             }
@@ -445,6 +494,9 @@ impl Plugins {
                 Err(format!("{command} could not run, the plugin stopped")),
             ));
         }
+        if let Some(why) = &entry.disabled {
+            return format!("plugin {plugin} stopped, {why}. run plugins.restart to try again");
+        }
         if entry.started.elapsed() >= STABLE_AFTER {
             entry.restarts = 0;
         }
@@ -463,6 +515,59 @@ impl Plugins {
         )
     }
 
+    /// Warns about plugins that answered slowly and stops ones that keep timing out.
+    ///
+    /// Returns messages for the status line.
+    pub fn check_health(&mut self) -> Vec<String> {
+        let mut messages = Vec::new();
+        for (name, entry) in &mut self.entries {
+            let Some(plugin) = entry.plugin().cloned() else {
+                continue;
+            };
+            let slow = plugin.take_slow();
+            for (method, took) in &slow {
+                entry.log(format!("slow: {method} took {}ms", took.as_millis()));
+            }
+            if let Some((method, took)) = slow.iter().max_by_key(|(_, took)| *took)
+                && entry
+                    .warned
+                    .is_none_or(|at| at.elapsed() >= SLOW_WARNING_EVERY)
+            {
+                entry.warned = Some(Instant::now());
+                messages.push(format!(
+                    "plugin {name} is slow, {method} took {:.1}s. see plugins.log",
+                    took.as_secs_f32()
+                ));
+            }
+            let timeouts = plugin.stats().timeouts_within(TIMEOUT_WINDOW);
+            if timeouts >= MAX_TIMEOUTS && entry.disabled.is_none() {
+                let why = format!(
+                    "it timed out {timeouts} times in {} minutes",
+                    TIMEOUT_WINDOW.as_secs() / 60
+                );
+                entry.log(format!("stopped by mog: {why}"));
+                entry.disabled = Some(why);
+                plugin.stop();
+                messages.push(format!(
+                    "plugin {name} keeps timing out, mog stopped it. run plugins.restart to try \
+                     again"
+                ));
+            }
+        }
+        messages
+    }
+
+    /// Returns each running plugin's name, process id and request stats.
+    pub fn health(&self) -> Vec<(String, Option<u32>, Stats)> {
+        self.entries
+            .iter()
+            .filter_map(|(name, entry)| {
+                let plugin = entry.plugin()?;
+                Some((name.clone(), plugin.pid(), plugin.stats()))
+            })
+            .collect()
+    }
+
     /// Adds a line a plugin printed to its log.
     pub fn log(&mut self, plugin: &str, line: String) {
         if let Some(entry) = self.entries.get_mut(plugin) {
@@ -470,8 +575,9 @@ impl Plugins {
         }
     }
 
-    /// Returns every plugin's state and log as text for the output panel.
-    pub fn report(&self) -> String {
+    /// Returns every plugin's state, request stats and log as text for the output panel, with
+    /// the memory each process uses from `memory`.
+    pub fn report(&self, memory: &BTreeMap<String, u64>) -> String {
         let mut text = String::from(
             "plugins are not sandboxed: each runs as you and can read and change any file, read \
              environment variables and use the network\n\n",
@@ -484,6 +590,10 @@ impl Plugins {
                 (Run::Ready(_, hello), _) => format!("running, protocol {}", hello.protocol),
                 (Run::Starting(_), _) => "starting".to_owned(),
                 (Run::Stopped, Some(_)) => "crashed, restarting soon".to_owned(),
+                (Run::Stopped, None) if entry.disabled.is_some() => format!(
+                    "stopped by mog, {}",
+                    entry.disabled.as_deref().unwrap_or_default()
+                ),
                 (Run::Stopped, None) if entry.restarts >= MAX_RESTARTS => {
                     "crashed too often, stopped".to_owned()
                 }
@@ -502,6 +612,13 @@ impl Plugins {
                 entry.spec.command,
                 entry.spec.args.join(" ")
             );
+            if let Some(plugin) = entry.plugin() {
+                let _ = writeln!(
+                    text,
+                    "   {}",
+                    describe_stats(&plugin.stats(), memory.get(name))
+                );
+            }
             for line in &entry.log {
                 let _ = writeln!(text, "   {line}");
             }
@@ -597,6 +714,7 @@ impl Plugins {
                     // asking for a command of a plugin mog gave up on is a deliberate retry
                     if entry.gave_up() {
                         entry.restarts = 0;
+                        entry.disabled = None;
                     }
                 }
                 if let Some(problem) = self.start(&plugin) {
@@ -684,13 +802,14 @@ impl Plugins {
 #[cfg(test)]
 /// Tests for the plugin manager.
 mod tests {
-    use std::{collections::BTreeMap, env, fs, path::Path, process};
+    use std::{collections::BTreeMap, env, fs, path::Path, process, time::Duration};
 
     use mog_config::PluginConfig;
-    use mog_plugin::Manifest;
-    use serde_json::Value;
+    use mog_plugin::{Manifest, Plugin, protocol::parse_hello};
+    use serde_json::{Value, json};
+    use tokio::{io, sync::mpsc};
 
-    use super::{Plugins, command_name, split_command};
+    use super::{Plugins, Run, command_name, split_command};
 
     /// Commands get namespaced by plugin, carry arguments after a colon, and unknown ones do not
     /// run.
@@ -763,7 +882,58 @@ mod tests {
             );
         }
         assert!(plugins.exited("crashy", None).contains("crashed 5 times"));
-        assert!(plugins.report().contains("crashed too often"));
+        assert!(
+            plugins
+                .report(&BTreeMap::new())
+                .contains("crashed too often")
+        );
+    }
+
+    /// A plugin that keeps timing out is warned about, then stopped until it is asked for again.
+    #[tokio::test]
+    async fn stops_plugins_that_keep_timing_out() {
+        let mut plugins = Plugins::new(Path::new("."), None);
+        let mut configs = BTreeMap::new();
+        configs.insert(
+            "stuck".to_owned(),
+            PluginConfig {
+                command: "definitely-not-a-program".into(),
+                ..PluginConfig::default()
+            },
+        );
+        let _ = plugins.configure(&configs);
+        // a plugin over pipes that never reads, so every request times out
+        let (mog_side, _plugin_side) = io::duplex(1 << 16);
+        let (reader, writer) = io::split(mog_side);
+        let (events, _events) = mpsc::channel(8);
+        let (plugin, _task) = Plugin::connect(
+            "stuck",
+            0,
+            reader,
+            writer,
+            Value::Null,
+            Duration::from_secs(1),
+            events,
+        );
+        let entry = plugins.entries.get_mut("stuck").expect("entry");
+        let hello = parse_hello(&json!({ "protocolVersion": 2 })).expect("hello");
+        entry.run = Run::Ready(plugin.clone(), hello);
+        for _ in 0..5 {
+            let _ = plugin
+                .request("provide/hover", Value::Null, Duration::from_millis(1))
+                .await;
+        }
+        let messages = plugins.check_health();
+        assert!(messages[0].contains("is slow"), "{messages:?}");
+        assert!(messages[1].contains("keeps timing out"), "{messages:?}");
+        assert!(plugins.check_health().is_empty(), "said once");
+        assert!(plugins.exited("stuck", None).contains("timed out 5 times"));
+        let entry = &plugins.entries["stuck"];
+        assert!(entry.restart_at.is_none(), "not restarted on its own");
+        assert!(entry.gave_up());
+        assert!(plugins.report(&BTreeMap::new()).contains("stopped by mog"));
+        plugins.restart_all();
+        assert!(plugins.entries["stuck"].disabled.is_none());
     }
 
     /// Neither a command nor a file getting focus skips the wait after a crash.

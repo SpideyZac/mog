@@ -6,7 +6,7 @@ use std::{
     fs,
     future::Future,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures::future;
@@ -18,11 +18,12 @@ use mog_plugin::{
     protocol::{parse_action, parse_selections},
 };
 use mog_tui::{
-    CommandInfo, CursorStyle, Overlay, PluginSegment, PromptKind,
+    CommandInfo, CursorStyle, Overlay, PluginHealth, PluginSegment, PromptKind,
     completion::{CompletionItem, ItemKind},
     picker::PickerItem,
 };
 use serde_json::{Value, json};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 use super::App;
 use crate::{
@@ -37,6 +38,9 @@ use screen::ScreenState;
 
 /// How long plugins get to change a file before it is saved.
 const BEFORE_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// How often the memory and speed of plugins is read again.
+const HEALTH_EVERY: Duration = Duration::from_secs(2);
 
 /// How long the cursor has to rest before plugins hear where it is.
 const SELECTION_DELAY: Duration = Duration::from_millis(150);
@@ -70,6 +74,12 @@ pub struct PluginState {
     pub code_actions: Vec<(String, Vec<Action>)>,
     /// What plugins put on the screen and which keys they take.
     screen: ScreenState,
+    /// Reads how much memory plugin processes use, made the first time it is needed.
+    system: Option<System>,
+    /// When the plugin health was last read.
+    health_at: Option<Instant>,
+    /// The memory each plugin process used when last read, in bytes.
+    memory: BTreeMap<String, u64>,
 }
 
 /// Reads a severity name.
@@ -222,8 +232,51 @@ impl App {
 
     /// Shows every plugin's state and log in the output panel, for `plugins.log`.
     pub(super) fn show_plugin_log(&mut self) {
-        let report = self.plugins.report();
+        self.refresh_plugin_health(true);
+        let report = self.plugins.report(&self.plugin_state.memory);
         self.show_output("plugins", &report);
+    }
+
+    /// Reads how much memory and time each plugin takes, for the resource monitor and the
+    /// plugin log, at most every [`HEALTH_EVERY`] unless `now`.
+    fn refresh_plugin_health(&mut self, now: bool) {
+        let state = &mut self.plugin_state;
+        let due = state
+            .health_at
+            .is_none_or(|at| at.elapsed() >= HEALTH_EVERY);
+        if !now && (!due || self.ui.idle) {
+            return;
+        }
+        state.health_at = Some(Instant::now());
+        let health = self.plugins.health();
+        let pids: Vec<Pid> = health
+            .iter()
+            .filter_map(|(_, pid, _)| pid.map(Pid::from_u32))
+            .collect();
+        state.memory.clear();
+        if !pids.is_empty() {
+            let system = state.system.get_or_insert_with(System::new);
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&pids),
+                true,
+                ProcessRefreshKind::nothing().with_memory(),
+            );
+            for (name, pid, _) in &health {
+                let memory = pid.and_then(|pid| system.process(Pid::from_u32(pid)));
+                if let Some(process) = memory {
+                    state.memory.insert(name.clone(), process.memory());
+                }
+            }
+        }
+        self.ui.plugin_health = health
+            .into_iter()
+            .map(|(name, _, stats)| PluginHealth {
+                memory: state.memory.get(&name).copied(),
+                p95: stats.percentile(0.95),
+                timeouts: stats.timeouts,
+                name,
+            })
+            .collect();
     }
 
     /// Shows `text` in the output panel under `title`.
@@ -1030,10 +1083,12 @@ impl App {
     /// rests and whether the user went idle. Also restarts plugins that crashed a while ago.
     pub(super) fn sync_plugin_events(&mut self, typing: bool) {
         self.sync_plugin_screen();
-        let problems = self.plugins.restart_due();
+        let mut problems = self.plugins.restart_due();
+        problems.extend(self.plugins.check_health());
         if !problems.is_empty() {
             self.editor.set_status(problems.join("; "));
         }
+        self.refresh_plugin_health(false);
         let open: BTreeSet<PathBuf> = self
             .editor
             .documents()

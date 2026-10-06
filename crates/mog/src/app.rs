@@ -857,6 +857,7 @@ async fn changed(watcher: Option<&FolderWatcher>) {
 /// Scripted tests that drive the whole app through terminal events.
 mod tests {
     use std::{
+        collections::BTreeMap,
         env, fs,
         path::{Path, PathBuf},
         process,
@@ -1363,7 +1364,7 @@ mod tests {
             else {
                 panic!(
                     "the plugin did not answer in time:\n{}",
-                    app.plugins.report()
+                    app.plugins.report(&BTreeMap::new())
                 );
             };
             let update = update.expect("an update");

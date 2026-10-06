@@ -571,6 +571,15 @@ mog do it with `frames` and `motion` instead.
   in a row mog gives up until you run `Plugins: Restart all plugins` or one of its commands. A
   plugin that ran for a minute before crashing starts the count over. Commands run while it waits
   to restart wait with it, and opening a file of its language does not start it early.
+- A request other than `command` that takes over a second counts as slow. mog says so in the
+  status line, at most once a minute for each plugin, and notes it in the plugin log.
+- A plugin whose requests time out 5 times within 5 minutes is stopped and not restarted until
+  you run `Plugins: Restart all plugins` or one of its commands.
+- `Plugins: Show plugins and their logs` shows for each running plugin how many requests it got,
+  how long it took to answer (mean, 95th percentile and slowest), how many failed or timed out,
+  and how much memory it uses. The resource monitor flair under the explorer shows how many
+  plugins run, their memory together and the slowest recent answer time, red when one is slow or
+  timed out.
 - Reloading the config restarts plugins whose settings changed and starts new ones.
 - Commands run while a plugin is starting wait for it, and fail with a message if it stops.
 

@@ -53,8 +53,8 @@ pub use tabs::Tabs;
 pub use theme::Theme;
 pub use theme_editor::ThemeEditor;
 pub use ui::{
-    CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, PluginSegment, Prompt, PromptKind,
-    Segment, Side, SignatureHint, SplitState, SymbolEntry, Ui, UiEvent,
+    CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, PluginHealth, PluginSegment, Prompt,
+    PromptKind, Segment, Side, SignatureHint, SplitState, SymbolEntry, Ui, UiEvent,
 };
 pub use widgets::{
     Anchor, CursorShape, CursorStyle, Edge, Motion, PluginWidget, PluginWidgets, WidgetClick,
