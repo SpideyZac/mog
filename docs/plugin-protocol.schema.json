@@ -397,6 +397,29 @@
       "type": "object",
       "properties": { "params": { "$ref": "#/$defs/actions" } }
     },
+    "toast": {
+      "description": "plugin to mog notification.",
+      "type": "object",
+      "properties": {
+        "params": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "title": { "type": "string" },
+            "text": { "type": "string" },
+            "level": { "enum": ["info", "warning", "error"] },
+            "progress": { "oneOf": [{ "type": "number", "minimum": 0, "maximum": 100 }, { "const": true }] },
+            "timeout": { "type": "integer", "minimum": 0 },
+            "done": { "type": "boolean" },
+            "buttons": {
+              "type": "array",
+              "maxItems": 4,
+              "items": { "type": "object", "required": ["title"], "properties": { "title": { "type": "string" }, "command": { "type": "string" } } }
+            }
+          }
+        }
+      }
+    },
     "segment": {
       "description": "plugin to mog notification.",
       "type": "object",

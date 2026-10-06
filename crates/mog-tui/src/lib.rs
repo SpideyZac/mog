@@ -28,6 +28,7 @@ pub mod status_line;
 pub mod tabs;
 pub mod theme;
 pub mod theme_editor;
+pub mod toasts;
 pub mod ui;
 pub mod widgets;
 
@@ -52,6 +53,7 @@ pub use status_line::StatusLine;
 pub use tabs::Tabs;
 pub use theme::Theme;
 pub use theme_editor::ThemeEditor;
+pub use toasts::{Toast, ToastButton, ToastClick, ToastLevel, ToastProgress, Toasts};
 pub use ui::{
     CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, PluginHealth, PluginPick,
     PluginSegment, Prompt, PromptKind, Segment, SegmentClick, Side, SignatureHint, SplitState,

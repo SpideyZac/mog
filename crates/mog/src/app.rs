@@ -31,7 +31,7 @@ use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CursorStyle,
     DebugPanel, EditorView, EventResult, Explorer, Focus, GitPanel, Minimap, OutputPanel, Overlay,
     PluginWidgets, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar,
-    SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Ui, UiEvent, input,
+    SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Toasts, Ui, UiEvent, input,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -321,6 +321,7 @@ impl App {
         ui.explorer_footer = flair.sidebar_height();
         compositor.push(Box::new(flair));
         compositor.push(Box::new(PluginWidgets::new()));
+        compositor.push(Box::new(Toasts::new()));
         compositor.push(Box::new(StatusLine::new()));
         compositor.push(Box::new(CompletionMenu::new()));
         compositor.push(Box::new(Popups::new()));
@@ -871,7 +872,7 @@ mod tests {
     };
     use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig, ThemeConfig};
     use mog_core::{Command, Key, KeyChord};
-    use mog_plugin::parse_actions;
+    use mog_plugin::{PluginEvent, parse_actions};
     use mog_tui::{
         Context, CursorShape, PluginSegment, PromptKind, Side, popups::PLUGIN_PICKED_COMMAND,
     };
@@ -884,6 +885,7 @@ mod tests {
         ai::call_tool,
         cli::Args,
         debug::DebugUpdate,
+        plugins::PluginUpdate,
         session::{State, Swap},
         tasks::TaskEvent,
     };
@@ -2005,6 +2007,79 @@ plugin.run()
         app.run_requests();
         plugins_until(&mut app, |app| app.editor.document().text().len_chars() > 0).await;
         assert_eq!(app.editor.document().text().to_string(), "apple,plum");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Hands `app` a notification from `plugin`, as if it sent it.
+    fn notify(app: &mut App, plugin: &str, method: &str, params: Value) {
+        app.handle_plugin(PluginUpdate::Event(PluginEvent::Notification {
+            plugin: plugin.into(),
+            method: method.into(),
+            params,
+        }));
+    }
+
+    /// Plugin notifications show with progress and buttons, update in place, run out and close.
+    #[tokio::test]
+    async fn shows_toasts() {
+        let dir = temp_dir();
+        let mut app = start(&dir);
+        notify(
+            &mut app,
+            "index",
+            "toast",
+            json!({ "id": "run", "title": "Indexing", "text": "312 files", "progress": 50,
+                    "buttons": [{ "title": "Stop" }] }),
+        );
+        notify(
+            &mut app,
+            "index",
+            "toast",
+            json!({ "id": "gone", "title": "Quick", "timeout": 1 }),
+        );
+        time::sleep(Duration::from_millis(20)).await;
+        let screen = app
+            .snapshot("100x20", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert!(
+            screen.contains("Indexing") && screen.contains("50%"),
+            "{screen}"
+        );
+        assert!(!screen.contains("Quick"), "it ran out: {screen}");
+        notify(
+            &mut app,
+            "index",
+            "toast",
+            json!({ "id": "run", "title": "Indexing", "progress": 90, "buttons": [{ "title": "Stop" }] }),
+        );
+        let screen = app
+            .snapshot("100x20", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert!(
+            screen.contains("90%") && !screen.contains("50%"),
+            "{screen}"
+        );
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains("[ Stop ]"))
+            .expect("a button");
+        let column = line[..line.find("[ Stop ]").expect("button")]
+            .chars()
+            .count();
+        let at = |n: usize| u16::try_from(n).expect("fits");
+        app.handle_event(click(at(column + 2), at(row), MouseButton::Left));
+        assert_eq!(app.ui.toast_clicks.len(), 1);
+        assert_eq!(app.ui.toast_clicks[0].button, 0);
+        notify(
+            &mut app,
+            "index",
+            "toast",
+            json!({ "id": "run", "done": true }),
+        );
+        assert!(app.ui.toasts.is_empty());
         let _ = fs::remove_dir_all(dir);
     }
 

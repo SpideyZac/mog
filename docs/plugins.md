@@ -472,6 +472,7 @@ A plugin does not have to wait to be asked. These notifications can be sent at a
 | `cursor` | `{ "shape": "block", "blink": false }` | Sets the cursor shape, see [The cursor](#the-cursor) |
 | `capture` | `{ "keys": "all", "except": ["ctrl+s"] }` | Takes keys before the editor, see [Taking keys](#taking-keys) |
 | `timer` | `{ "id": "...", "every": 500 }` | Sends the `timer` event every so many milliseconds, 0 stops it, see [Timers](#timers) |
+| `toast` | `{ "id": "...", "title": "...", "text": "...", "level": "info", "progress": 40, "timeout": 6000, "buttons": [...] }` | Shows a notification in the top right corner, or replaces the one with the same `id`, see [Notifications](#notifications) |
 
 A diagnostic is `{ "start": 0, "end": 4, "severity": "warning", "message": "..." }` in char
 offsets, or `{ "line": 2, "column": 0, "end_line": 2, "end_column": 4, ... }`. Severities are
@@ -530,8 +531,9 @@ More events come without asking for them in `events`, since a plugin only gets t
 it set up itself: `click` when the user clicks one of its [widgets](#drawing-on-the-screen),
 with the widget `id`, the `x` and `y` of the click inside it and the `button` (`left`, `right` or
 `middle`), `segment_click` when the user clicks one of its status line segments that has no
-`command`, with the segment `id` (`null` for the one without an id) and the `button`, and
-`timer` with the `id` of one of its [timers](#timers).
+`command`, with the segment `id` (`null` for the one without an id) and the `button`,
+`toast_click` for a [notification](#notifications) button without a `command`, and `timer` with
+the `id` of one of its [timers](#timers).
 
 `before_save` is a request, not a notification. Answer with `{ "changes": [...] }` in char
 offsets of the `text` it sent, like a formatter would, or `{ "changes": [] }`. mog waits up to 2
@@ -625,6 +627,35 @@ The request `ui/layout` answers where things are, to place widgets with:
   "theme": "mog"
 }
 ```
+
+## Notifications
+
+The notification `toast` shows a box in the top right corner of the editor, newest at the top,
+for things worth more than a status line message:
+
+```json
+{
+  "id": "index",
+  "title": "Indexing",
+  "text": "312 of 900 files",
+  "level": "info",
+  "progress": 35,
+  "buttons": [{ "title": "Stop", "command": "plugin.search.stop" }, { "title": "Hide" }]
+}
+```
+
+| field | default | means |
+| --- | --- | --- |
+| `id` | `toast` | Which notification of this plugin it is. Sending the same `id` again changes it in place |
+| `title`, `text` | | The bold first line and the message under it, wrapped to fit, up to four lines |
+| `level` | `info` | `info`, `warning` or `error`, which colors the border and mark |
+| `progress` | | A number from 0 to 100 for a progress bar, or `true` for a busy bar that moves |
+| `timeout` | 6000 | Milliseconds until it goes away, 0 to stay. With `progress` it stays until `done` |
+| `buttons` | | Up to four `{ "title", "command" }`. A button runs its command, or without one sends the `toast_click` event with the `id` and the `button` index. A notification without progress closes when a button is pressed |
+| `done` | `false` | Removes the notification, so does a `toast` with no `title` and no `text` |
+
+The user can close any of them with the `×`. A plugin can show eight at once, and mog shows the
+newest four that fit.
 
 ## Taking keys
 

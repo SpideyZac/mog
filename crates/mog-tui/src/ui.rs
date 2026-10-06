@@ -30,6 +30,7 @@ use crate::{
     settings::SettingKey,
     status_line::STATUS_HEIGHT,
     theme_editor::ThemeDraft,
+    toasts::{Toast, ToastClick},
     widgets::{CursorStyle, PluginWidget, WidgetClick},
 };
 
@@ -438,6 +439,10 @@ pub struct Ui {
     pub plugin_widgets: Vec<PluginWidget>,
     /// How each running plugin is doing.
     pub plugin_health: Vec<PluginHealth>,
+    /// Notifications plugins show, oldest first.
+    pub toasts: Vec<Toast>,
+    /// Clicks on notification buttons without a command, for the app to pass on.
+    pub toast_clicks: Vec<ToastClick>,
     /// Clicks on plugin widgets, for the app to pass on.
     pub widget_clicks: Vec<WidgetClick>,
     /// The look of the text cursor a plugin asked for.

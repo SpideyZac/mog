@@ -33,7 +33,7 @@ pub const EVENTS: &[&str] = &[
 ];
 
 /// Events a plugin gets for things it set up itself, without listing them in `events`.
-pub const OWN_EVENTS: &[&str] = &["click", "timer", "segment_click"];
+pub const OWN_EVENTS: &[&str] = &["click", "timer", "segment_click", "toast_click"];
 
 /// Every request a plugin can send to mog.
 pub const REQUESTS: &[&str] = &[
@@ -65,6 +65,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "cursor",
     "capture",
     "timer",
+    "toast",
 ];
 
 /// Every action a plugin can ask for.

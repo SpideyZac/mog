@@ -10,7 +10,8 @@ use std::{
 use mog_core::KeyChord;
 use mog_plugin::parse_actions;
 use mog_tui::{
-    Anchor, CursorShape, CursorStyle, Edge, Focus, Motion, PluginWidget, WidgetLine, WidgetSpan,
+    Anchor, CursorShape, CursorStyle, Edge, Focus, Motion, PluginWidget, Toast, ToastButton,
+    ToastLevel, ToastProgress, WidgetLine, WidgetSpan,
 };
 use ratatui::layout::Rect;
 use serde_json::{Value, json};
@@ -28,6 +29,15 @@ const MAX_FRAMES: usize = 64;
 
 /// The widest and tallest a widget can be, in cells.
 const MAX_SIZE: usize = 400;
+
+/// The most notifications one plugin can show at once.
+const MAX_TOASTS: usize = 8;
+
+/// The most buttons one notification can have.
+const MAX_BUTTONS: usize = 4;
+
+/// How long a notification without progress stays unless it says otherwise.
+const TOAST_TIME: Duration = Duration::from_secs(6);
 
 /// The most timers one plugin can have.
 const MAX_TIMERS: usize = 16;
@@ -172,6 +182,68 @@ fn parse_frame(value: &Value) -> Result<Vec<WidgetLine>, String> {
         .collect()
 }
 
+/// Reads a `toast` message from `plugin`, or `None` when it removes the notification.
+///
+/// # Errors
+///
+/// Returns what is wrong with it, like a button with no title.
+pub fn parse_toast(plugin: &str, value: &Value) -> Result<Option<Toast>, String> {
+    let title = value["title"].as_str().unwrap_or_default().to_owned();
+    let text = value["text"].as_str().unwrap_or_default().to_owned();
+    if value["done"].as_bool().unwrap_or(false) || (title.is_empty() && text.is_empty()) {
+        return Ok(None);
+    }
+    let level = match value["level"].as_str() {
+        Some("warning") => ToastLevel::Warning,
+        Some("error") => ToastLevel::Error,
+        _ => ToastLevel::Info,
+    };
+    let progress = match &value["progress"] {
+        Value::Bool(true) => Some(ToastProgress::Busy),
+        Value::Number(percent) => {
+            let percent = percent.as_f64().unwrap_or(0.0).clamp(0.0, 100.0);
+            Some(ToastProgress::Percent(percent.round() as u8))
+        }
+        _ => None,
+    };
+    let timeout = match value["timeout"].as_u64() {
+        Some(0) => None,
+        Some(ms) => Some(Duration::from_millis(ms)),
+        None if progress.is_some() => None,
+        None => Some(TOAST_TIME),
+    };
+    let buttons = value["buttons"]
+        .as_array()
+        .map(|buttons| {
+            buttons
+                .iter()
+                .take(MAX_BUTTONS)
+                .map(|button| {
+                    Ok(ToastButton {
+                        title: button["title"]
+                            .as_str()
+                            .ok_or("a button needs a `title`")?
+                            .to_owned(),
+                        command: button["command"].as_str().map(str::to_owned),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Some(Toast {
+        plugin: plugin.to_owned(),
+        id: value["id"].as_str().unwrap_or("toast").to_owned(),
+        title,
+        text,
+        level,
+        progress,
+        buttons,
+        shown_at: Instant::now(),
+        timeout,
+    }))
+}
+
 /// Reads a `draw` message from `plugin`, or `None` when it has nothing to show.
 ///
 /// # Errors
@@ -287,6 +359,7 @@ impl App {
             }),
             "capture" => parse_capture(params).map(|capture| self.set_capture(plugin, capture)),
             "timer" => self.set_timer(plugin, params),
+            "toast" => self.show_toast(plugin, params),
             _ => return None,
         })
     }
@@ -325,6 +398,38 @@ impl App {
                 return Err(format!("a plugin can have at most {MAX_WIDGETS} widgets"));
             }
             None => widgets.push(widget),
+        }
+        Ok(())
+    }
+
+    /// Shows, changes or removes a notification of `plugin`.
+    fn show_toast(&mut self, plugin: &str, params: &Value) -> Result<(), String> {
+        let toast = parse_toast(plugin, params)?;
+        let id = params["id"].as_str().unwrap_or("toast");
+        let toasts = &mut self.ui.toasts;
+        let at = toasts
+            .iter()
+            .position(|toast| toast.plugin == plugin && toast.id == id);
+        match (toast, at) {
+            (None, Some(at)) => {
+                toasts.remove(at);
+            }
+            (None, None) => {}
+            (Some(mut toast), Some(at)) => {
+                // updating progress keeps a busy bar moving smoothly
+                if toast.progress.is_some() {
+                    toast.shown_at = toasts[at].shown_at;
+                }
+                toasts[at] = toast;
+            }
+            (Some(_), None)
+                if toasts.iter().filter(|toast| toast.plugin == plugin).count() >= MAX_TOASTS =>
+            {
+                return Err(format!(
+                    "a plugin can show at most {MAX_TOASTS} notifications"
+                ));
+            }
+            (Some(toast), None) => toasts.push(toast),
         }
         Ok(())
     }
@@ -383,6 +488,14 @@ impl App {
                 plugin.event("timer", json!({ "id": timer.id }));
             }
         }
+        for click in mem::take(&mut self.ui.toast_clicks) {
+            if let Some(plugin) = self.plugins.get(&click.plugin) {
+                plugin.event(
+                    "toast_click",
+                    json!({ "id": click.id, "button": click.button }),
+                );
+            }
+        }
         for click in mem::take(&mut self.ui.segment_clicks) {
             let (plugin, id) = match click.segment.split_once('/') {
                 Some((plugin, id)) => (plugin.to_owned(), Some(id.to_owned())),
@@ -429,6 +542,7 @@ impl App {
         self.ui
             .plugin_widgets
             .retain(|widget| widget.plugin != plugin);
+        self.ui.toasts.retain(|toast| toast.plugin != plugin);
         let screen = &mut self.plugin_state.screen;
         screen.captures.remove(plugin);
         screen.timers.retain(|timer| timer.plugin != plugin);

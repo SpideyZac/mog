@@ -161,6 +161,7 @@
 - [x] Plugin status segments with backgrounds, sides and click events, and right click menu
   entries with `when` conditions
 - [x] Plugin pick lists with previews and choosing several rows
+- [x] Plugin notifications with progress bars and buttons
 - [x] Plugin timeouts, cancellation, crash restarts and logs
 - [x] Plugin SDKs for Python, Node and Rust
 - [x] `mog plugin` to make, install, list, check and remove plugins
