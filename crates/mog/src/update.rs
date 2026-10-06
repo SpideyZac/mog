@@ -213,7 +213,7 @@ pub async fn update_now() -> Result<String, String> {
 }
 
 /// Returns the `major.minor.patch` numbers of `version`, ignoring a `v` and any suffix.
-fn numbers(version: &str) -> Option<(u64, u64, u64)> {
+pub fn version_numbers(version: &str) -> Option<(u64, u64, u64)> {
     let core = version.trim_start_matches('v').split(['-', '+']).next()?;
     let mut parts = core.split('.').map(|part| part.parse::<u64>().ok());
     Some((
@@ -225,7 +225,7 @@ fn numbers(version: &str) -> Option<(u64, u64, u64)> {
 
 /// Returns whether `candidate` is a newer version than `current`.
 pub fn is_newer(candidate: &str, current: &str) -> bool {
-    match (numbers(candidate), numbers(current)) {
+    match (version_numbers(candidate), version_numbers(current)) {
         (Some(candidate), Some(current)) => candidate > current,
         _ => false,
     }
@@ -391,8 +391,12 @@ async fn fetch_release(client: &Client, url: &str) -> Result<Release, String> {
         .map_err(|err| err.to_string())
 }
 
-/// Downloads the file at `url`.
-async fn download(client: &Client, url: &str) -> Result<Vec<u8>, String> {
+/// Downloads the file at `url`, up to 256 MB.
+///
+/// # Errors
+///
+/// Returns why it could not be downloaded, with the HTTP status if there was one.
+pub async fn download(client: &Client, url: &str) -> Result<Vec<u8>, String> {
     let mut response = client
         .get(url)
         .timeout(DOWNLOAD_TIMEOUT)

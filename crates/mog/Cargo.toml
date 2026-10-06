@@ -55,11 +55,8 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sysinfo.workspace = true
-tokio.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-zip.workspace = true
-
-[target.'cfg(not(windows))'.dependencies]
-flate2.workspace = true
 tar.workspace = true
+tokio.workspace = true
+toml.workspace = true
+flate2.workspace = true
+zip.workspace = true

@@ -463,7 +463,9 @@ config, and start when they are needed:
 
 ```sh
 mog plugin new hello          # a python plugin, --language node for javascript
-mog plugin install <folder or git url>
+mog plugin install <folder, git url#version or signed archive>
+mog plugin outdated           # which plugins have a newer version
+mog plugin update             # update them, asking first
 mog plugin list
 mog plugin doctor             # starts each plugin and shows what it offers
 mog plugin test hello         # runs its tests against a fake editor, without mog

@@ -96,8 +96,8 @@ There are two ways to have one:
 
 1. **A plugin folder** with a `plugin.toml`, in the `plugins` folder next to your config
    (`~/.config/mog/plugins` on Linux, see `mog plugin list` for yours). mog finds these on its
-   own. `mog plugin install <folder or git url>` copies one there and `mog plugin remove
-   <name>` deletes it.
+   own. `mog plugin install` puts one there, see [Installing and updating](#installing-and-updating),
+   and `mog plugin remove <name>` deletes it.
 2. **A config entry** that names a program:
 
 ```toml
@@ -119,6 +119,41 @@ settings = { loud = true }      # handed to the plugin in initialize
 
 `Plugins: Show plugins and their logs` (`plugins.log`) shows each plugin, whether it runs and the
 last 500 lines it printed to stderr. Print debugging output to stderr, never to stdout.
+
+## Installing and updating
+
+```sh
+mog plugin install ./todo                                     # a folder, copied
+mog plugin install https://github.com/me/todo#v1.2.0          # git at a tag, branch or commit
+mog plugin install https://github.com/me/todo --rev main      # the same with --rev
+mog plugin install https://example.com/todo-1.2.0.tar.gz --key RWQ...   # a signed archive
+mog plugin outdated                                           # what has a newer version
+mog plugin update todo                                        # to the newest, or --rev v1.3.0
+mog plugin update                                             # every plugin with an update
+```
+
+`install` warns that plugins are not sandboxed and asks first, `--yes` skips the question.
+`update` asks too, since an update runs new code as you. Each installed plugin gets a
+`.mog-install.toml` that says where it came from, which `outdated` and `update` read.
+
+- **Git** installs keep the commit they got and drop the `.git` folder. A plugin pinned to a
+  version tag like `v1.2.0` updates to the newest version tag, one on a branch to the newest
+  commit of that branch, and one pinned to a commit never updates by itself. Pin a version you
+  have read: nothing stops a later commit from doing something else.
+- **Archives** are a `.tar.gz` or `.zip` from a url or a file, with the plugin at the top or in
+  one folder. They must be signed with [minisign](https://jedisct1.github.io/minisign/): mog
+  fetches `<archive>.minisig` from next to it and checks it with the author's public key, given
+  with `--key`. The key is kept, so updates must be signed with the same one. When the signature
+  names a file (minisign does by default), it must be the archive's name, so an old signed
+  archive cannot be passed off as a newer one. `--allow-unsigned` installs an archive without
+  checking, which `outdated` marks as UNSIGNED. Archives may not hold links or climb out of their
+  folder, and unpack to at most 128 MB.
+- **Folders** are copied without `.git`, `__pycache__` and `node_modules`. `update` copies them
+  again.
+
+To publish a signed archive, make a key pair once with `minisign -G`, put the public key where
+people find it, like the README, and sign each release with `minisign -Sm todo-1.2.0.tar.gz`.
+Upload the archive and the `.minisig` next to it.
 
 ## The manifest
 

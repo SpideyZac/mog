@@ -5,7 +5,7 @@ use std::{
     env, fs,
     io::{self, IsTerminal as _, Write as _},
     path::{self, Path, PathBuf},
-    process::{self, Command},
+    process,
     time::Duration,
 };
 
@@ -19,6 +19,10 @@ use crate::{
     cli::{Language, PluginAction},
     plugins::{plugin_dir, resolve},
 };
+
+mod source;
+
+use source::{Record, Source, Trust, fetch, newer};
 
 /// What `mog plugin install` says before it installs anything.
 const UNSANDBOXED: &str = "\
@@ -40,12 +44,37 @@ pub async fn run(action: PluginAction) -> Result<()> {
     match action {
         PluginAction::List => list(&dir),
         PluginAction::New { name, language } => new(&dir, &name, language),
-        PluginAction::Install { source, yes } => {
-            if !yes {
-                confirm_install(&source)?;
-            }
-            install(&dir, &source)
+        PluginAction::Install {
+            source,
+            rev,
+            key,
+            allow_unsigned,
+            yes,
+        } => {
+            let source = Source::parse(&source, rev.as_deref())?;
+            confirm(UNSANDBOXED, &format!("install {source}"), yes)?;
+            let trust = Trust {
+                key,
+                allow_unsigned,
+            };
+            let (manifest, record) = install(&dir, &source, &trust, None).await?;
+            println!(
+                "installed {} {} into {}, {}",
+                manifest.name,
+                manifest.version,
+                dir.join(&manifest.name).display(),
+                describe(&record)
+            );
+            println!("it runs as you with no sandbox, so remove it if you stop trusting it");
+            Ok(())
         }
+        PluginAction::Outdated => outdated(&dir),
+        PluginAction::Update {
+            name,
+            rev,
+            allow_unsigned,
+            yes,
+        } => update(&dir, name.as_deref(), rev, allow_unsigned, yes).await,
         PluginAction::Remove { name } => remove(&dir, &name),
         PluginAction::Doctor { name } => doctor(&dir, name.as_deref()).await,
         PluginAction::Test { plugin, scripts } => test(&dir, &plugin, scripts).await,
@@ -190,99 +219,214 @@ plugin.run();
     )
 }
 
-/// Copies the folder `from` into `to`, skipping a `.git` folder.
-fn copy_folder(from: &Path, to: &Path) -> io::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            if entry.file_name() != ".git" {
-                copy_folder(&entry.path(), &target)?;
-            }
-        } else {
-            fs::copy(entry.path(), target)?;
-        }
-    }
-    Ok(())
-}
-
-/// Returns whether `source` looks like a git url rather than a folder.
-fn is_git_url(source: &str) -> bool {
-    source.starts_with("https://")
-        || source.starts_with("http://")
-        || source.starts_with("git@")
-        || source.starts_with("ssh://")
-        || source.ends_with(".git")
-}
-
-/// Warns that plugins are not sandboxed and asks whether to install `source`.
+/// Warns with `warning` and asks whether to `what`, unless `yes` says to go ahead.
 ///
 /// # Errors
 ///
 /// Returns an error if the answer is not yes, or there is nobody to ask.
-fn confirm_install(source: &str) -> Result<()> {
-    eprintln!("{UNSANDBOXED}\n");
-    if !io::stdin().is_terminal() {
-        bail!("pass --yes to install {source} without asking");
+fn confirm(warning: &str, what: &str, yes: bool) -> Result<()> {
+    if yes {
+        return Ok(());
     }
-    eprint!("install {source}? [y/N] ");
+    eprintln!("{warning}\n");
+    if !io::stdin().is_terminal() {
+        bail!("pass --yes to {what} without asking");
+    }
+    eprint!("{what}? [y/N] ");
     io::stderr().flush()?;
     let mut answer = String::new();
     io::stdin().read_line(&mut answer)?;
     if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
-        bail!("not installed");
+        bail!("nothing changed");
     }
     Ok(())
 }
 
-/// Installs the plugin at `source` into the plugins folder.
-fn install(dir: &Path, source: &str) -> Result<()> {
+/// Moves the plugin in `staging` to `target`, replacing what is there only when `replace`, and
+/// putting the old one back if the move fails.
+fn put_in_place(staging: &Path, target: &Path, replace: bool) -> Result<()> {
+    if !target.exists() {
+        return fs::rename(staging, target)
+            .with_context(|| format!("could not move the plugin to {}", target.display()));
+    }
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !replace {
+        bail!(
+            "{name} is already installed, update it with `mog plugin update {name}` or remove it \
+             with `mog plugin remove {name}`"
+        );
+    }
+    let old = target.with_file_name(format!(".old-{name}-{}", process::id()));
+    let _ = fs::remove_dir_all(&old);
+    fs::rename(target, &old).with_context(|| format!("could not move {}", target.display()))?;
+    if let Err(err) = fs::rename(staging, target) {
+        let _ = fs::rename(&old, target);
+        return Err(err)
+            .with_context(|| format!("could not move the plugin to {}", target.display()));
+    }
+    let _ = fs::remove_dir_all(&old);
+    Ok(())
+}
+
+/// Installs the plugin from `source` into the plugins folder `dir`. When `replacing` names a
+/// plugin, it replaces that one and the new one must have the same name.
+///
+/// Returns its manifest and where it came from.
+async fn install(
+    dir: &Path,
+    source: &Source,
+    trust: &Trust,
+    replacing: Option<&str>,
+) -> Result<(Manifest, Record)> {
     fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     let staging = dir.join(format!(".installing-{}", process::id()));
     let _ = fs::remove_dir_all(&staging);
-    let fetched = if is_git_url(source) {
-        let status = Command::new("git")
-            .args(["clone", "--depth", "1", source])
-            .arg(&staging)
-            .status()
-            .context("could not run git, is it installed?")?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(anyhow!("git clone failed"))
-        }
-    } else {
-        let from = PathBuf::from(source);
-        if !from.join(MANIFEST_FILE).is_file() {
-            bail!("{} has no {MANIFEST_FILE}", from.display());
-        }
-        copy_folder(&from, &staging).with_context(|| format!("could not copy {source}"))
-    };
-    let installed = fetched.and_then(|()| {
+    let installed = async {
+        let record = fetch(source, &staging, trust).await?;
         let manifest = Manifest::read(&staging).map_err(|err| anyhow!(err))?;
         check_name(&manifest.name)?;
-        let target = dir.join(&manifest.name);
-        if target.exists() {
-            bail!(
-                "{} is already installed, remove it first with `mog plugin remove {}`",
-                manifest.name,
-                manifest.name
+        if let Some(name) = replacing
+            && manifest.name != name
+        {
+            bail!("{source} is the plugin {}, not {name}", manifest.name);
+        }
+        record.write(&staging)?;
+        put_in_place(&staging, &dir.join(&manifest.name), replacing.is_some())?;
+        Ok((manifest, record))
+    }
+    .await;
+    let _ = fs::remove_dir_all(&staging);
+    installed
+}
+
+/// Describes an installed plugin's record in a few words, like `git v1.2.0 (abc12345)`.
+fn describe(record: &Record) -> String {
+    match &record.source {
+        Source::Folder { path } => format!("copied from {}", path.display()),
+        Source::Git { url, rev } => {
+            let commit = record.commit.as_deref().unwrap_or_default();
+            let at = rev.as_deref().unwrap_or("the default branch");
+            format!("git {url} at {at} ({})", commit.get(..8).unwrap_or(commit))
+        }
+        Source::Archive { location } => {
+            let signed = if record.key.is_some() {
+                "signed"
+            } else {
+                "UNSIGNED"
+            };
+            format!("{signed} archive {location}")
+        }
+    }
+}
+
+/// Prints the plugins installed with `mog plugin install` that have an update.
+fn outdated(dir: &Path) -> Result<()> {
+    let mut any = false;
+    for manifest in discover(dir).into_iter().filter_map(Result::ok) {
+        let name = &manifest.name;
+        let Some(record) = Record::read(&manifest.dir) else {
+            println!("  {name}: not installed with mog plugin install, update it by hand");
+            continue;
+        };
+        any = true;
+        match (&record.source, newer(&record)) {
+            (_, Ok(Some(newer))) => println!(
+                "  {name}: {} -> {}, run `mog plugin update {name}`",
+                newer.from, newer.to
+            ),
+            (Source::Git { rev: Some(rev), .. }, Ok(None)) if rev.len() >= 7 => {
+                println!("  {name}: up to date, or pinned to {rev}");
+            }
+            (Source::Git { .. }, Ok(None)) => println!("  {name}: up to date"),
+            (Source::Archive { .. }, Ok(None)) => {
+                println!("  {name}: from an archive, `mog plugin update {name}` fetches it again");
+            }
+            (Source::Folder { .. }, Ok(None)) => {
+                println!("  {name}: from a folder, `mog plugin update {name}` copies it again");
+            }
+            (_, Err(err)) => println!("  {name}: could not check, {err}"),
+        }
+    }
+    if !any {
+        println!("no plugins were installed with mog plugin install");
+    }
+    Ok(())
+}
+
+/// Updates the plugin called `name`, or every one with an update, to `rev` or the newest
+/// version.
+async fn update(
+    dir: &Path,
+    name: Option<&str>,
+    rev: Option<String>,
+    allow_unsigned: bool,
+    yes: bool,
+) -> Result<()> {
+    let installed: Vec<(Manifest, Record)> = discover(dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|manifest| name.is_none_or(|name| manifest.name == name))
+        .filter_map(|manifest| {
+            let record = Record::read(&manifest.dir)?;
+            Some((manifest, record))
+        })
+        .collect();
+    if installed.is_empty() {
+        bail!(match name {
+            Some(name) => format!("{name} was not installed with mog plugin install"),
+            None => "no plugins were installed with mog plugin install".to_owned(),
+        });
+    }
+    if rev.is_some() && name.is_none() {
+        bail!("--rev needs the name of the plugin to update");
+    }
+    let mut updated = 0;
+    for (manifest, record) in installed {
+        let plugin = manifest.name.as_str();
+        let (source, change) = match (&record.source, &rev) {
+            (Source::Git { .. }, Some(rev)) => {
+                (record.source.at(Some(rev.clone())), format!("to {rev}"))
+            }
+            (Source::Git { .. }, None) => match newer(&record)? {
+                Some(newer) => (
+                    record.source.at(newer.rev.clone()),
+                    format!("from {} to {}", newer.from, newer.to),
+                ),
+                None => {
+                    println!("{plugin} is up to date");
+                    continue;
+                }
+            },
+            (_, Some(_)) => bail!("--rev only works for plugins installed from git"),
+            (other, None) => (other.clone(), format!("from {other}")),
+        };
+        let trust = Trust {
+            key: record.key.clone(),
+            allow_unsigned,
+        };
+        confirm(
+            "An update runs new code as you, with no sandbox. Read what changed if you can.",
+            &format!("update {plugin} {change}"),
+            yes,
+        )?;
+        let (manifest, new_record) = install(dir, &source, &trust, Some(plugin)).await?;
+        if new_record.sha256.is_some() && new_record.sha256 == record.sha256 {
+            println!("{plugin} did not change");
+        } else {
+            println!(
+                "updated {plugin} to {} ({})",
+                manifest.version,
+                describe(&new_record)
             );
         }
-        fs::rename(&staging, &target)
-            .with_context(|| format!("could not move the plugin to {}", target.display()))?;
-        Ok(manifest)
-    });
-    let _ = fs::remove_dir_all(&staging);
-    let manifest = installed?;
-    println!(
-        "installed {} {} into {}",
-        manifest.name,
-        manifest.version,
-        dir.join(&manifest.name).display()
-    );
-    println!("it runs as you with no sandbox, so remove it if you stop trusting it");
+        updated += 1;
+    }
+    if updated == 0 && name.is_none() {
+        println!("everything is up to date");
+    }
     Ok(())
 }
 
@@ -493,7 +637,13 @@ async fn doctor(dir: &Path, only: Option<&str>) -> Result<()> {
 mod tests {
     use std::{env, fs, path::Path, process};
 
-    use super::{check_name, install, is_git_url, new, remove, test};
+    use mog_plugin::Manifest;
+
+    use super::{
+        check_name, install, new, remove,
+        source::{Record, Source, Trust},
+        test,
+    };
     use crate::cli::Language;
 
     /// Names stay simple so they work as folder names and command prefixes.
@@ -527,17 +677,68 @@ mod tests {
         .expect("the tests pass");
     }
 
-    /// Git urls are told apart from folders.
-    #[test]
-    fn spots_git_urls() {
-        assert!(is_git_url("https://github.com/me/plugin"));
-        assert!(is_git_url("git@github.com:me/plugin.git"));
-        assert!(!is_git_url("./plugins/words"));
+    /// Runs git in `dir`, panicking if it fails.
+    fn git(dir: &Path, args: &[&str]) {
+        let status = process::Command::new("git")
+            .args(["-c", "user.name=mog", "-c", "user.email=mog@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git runs");
+        assert!(status.status.success(), "git {args:?}: {status:?}");
     }
 
-    /// A new plugin can be installed elsewhere and removed, and names never clash.
-    #[test]
-    fn creates_installs_and_removes() {
+    /// A plugin installed from git at a tag knows a newer tag exists and updates to it.
+    #[tokio::test]
+    async fn installs_and_updates_from_git() {
+        if process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let base = env::temp_dir().join(format!("mog-plugin-git-{}", process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let work = base.join("work");
+        fs::create_dir_all(&work).expect("dir");
+        git(&work, &["init", "--quiet", "--initial-branch=main"]);
+        for version in ["1.0.0", "1.1.0"] {
+            let manifest = format!("name = \"hello\"\nversion = \"{version}\"\ncommand = \"x\"\n");
+            fs::write(work.join("plugin.toml"), manifest).expect("manifest");
+            git(&work, &["add", "."]);
+            git(&work, &["commit", "--quiet", "-m", version]);
+            git(&work, &["tag", &format!("v{version}")]);
+        }
+        let bare = base.join("hello.git");
+        git(&base, &["clone", "--quiet", "--bare", "work", "hello.git"]);
+        let plugins = base.join("plugins");
+        let url = bare.to_string_lossy().replace('\\', "/");
+        let source = Source::parse(&format!("{url}#v1.0.0"), None).expect("source");
+        let (manifest, record) = install(&plugins, &source, &Trust::default(), None)
+            .await
+            .expect("installed");
+        assert_eq!(manifest.version, "1.0.0");
+        assert!(!plugins.join("hello/.git").exists());
+        assert_eq!(Record::read(&plugins.join("hello")), Some(record.clone()));
+        let newer = super::newer(&record).expect("checked").expect("newer");
+        assert_eq!(
+            (newer.from.as_str(), newer.to.as_str()),
+            ("v1.0.0", "v1.1.0")
+        );
+        super::update(&plugins, Some("hello"), None, false, true)
+            .await
+            .expect("updated");
+        let updated = Manifest::read(&plugins.join("hello")).expect("manifest");
+        assert_eq!(updated.version, "1.1.0");
+        let record = Record::read(&plugins.join("hello")).expect("record");
+        assert!(super::newer(&record).expect("checked").is_none());
+        let _ = fs::remove_dir_all(base);
+    }
+
+    /// A new plugin can be installed elsewhere, replaced, and removed, and names never clash.
+    #[tokio::test]
+    async fn creates_installs_and_removes() {
         let base = env::temp_dir().join(format!("mog-plugin-cli-{}", process::id()));
         let _ = fs::remove_dir_all(&base);
         let made = base.join("made");
@@ -546,9 +747,28 @@ mod tests {
         assert!(made.join("hello/plugin.toml").is_file());
         assert!(made.join("hello/main.js").is_file());
         assert!(new(&made, "hello", Language::Python).is_err());
-        install(&installed, &made.join("hello").to_string_lossy()).expect("installed");
+        let source = Source::Folder {
+            path: made.join("hello"),
+        };
+        let trust = Trust::default();
+        install(&installed, &source, &trust, None)
+            .await
+            .expect("installed");
         assert!(installed.join("hello/main.js").is_file());
-        assert!(install(&installed, &made.join("hello").to_string_lossy()).is_err());
+        assert!(
+            Record::read(&installed.join("hello")).is_some(),
+            "it remembers where it came from"
+        );
+        assert!(install(&installed, &source, &trust, None).await.is_err());
+        install(&installed, &source, &trust, Some("hello"))
+            .await
+            .expect("replaced");
+        assert!(
+            install(&installed, &source, &trust, Some("other"))
+                .await
+                .is_err(),
+            "an update cannot swap in another plugin"
+        );
         remove(&installed, "hello").expect("removed");
         assert!(!installed.join("hello").exists());
         assert!(remove(&installed, "hello").is_err());

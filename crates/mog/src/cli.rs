@@ -57,11 +57,38 @@ pub enum PluginAction {
         #[arg(long, value_enum, default_value_t = Language::Python)]
         language: Language,
     },
-    /// Copies a plugin folder, or clones a git repository, into the plugins folder.
+    /// Copies a plugin folder, clones a git repository, or unpacks a signed archive into the
+    /// plugins folder.
     Install {
-        /// A folder with a plugin.toml, or a git url.
+        /// A folder with a plugin.toml, a git url (`url#v1.2.0` pins a version), or a `.tar.gz`
+        /// or `.zip` url or file with a `.minisig` signature next to it.
         source: String,
+        /// The git tag, branch or commit to install.
+        #[arg(long)]
+        rev: Option<String>,
+        /// The minisign public key from the author that the archive must be signed with.
+        #[arg(long)]
+        key: Option<String>,
+        /// Install an archive with no signature.
+        #[arg(long)]
+        allow_unsigned: bool,
         /// Install without asking. Plugins are not sandboxed, so only for ones you trust.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Lists installed plugins that have a newer version.
+    Outdated,
+    /// Updates a plugin, or every one with an update, from where it was installed.
+    Update {
+        /// The plugin, every one when left out.
+        name: Option<String>,
+        /// The git tag, branch or commit to move to, instead of the newest.
+        #[arg(long)]
+        rev: Option<String>,
+        /// Update from an archive with no signature.
+        #[arg(long)]
+        allow_unsigned: bool,
+        /// Update without asking.
         #[arg(long)]
         yes: bool,
     },

@@ -163,3 +163,5 @@
 - [x] `mog plugin test` runs plugins against a fake editor with test scripts
 - [x] Plugin answer times and memory in the plugin log and the resource monitor, a slow plugin
   warning, and stopping plugins that keep timing out
+- [x] Install plugins from git at a version or from signed archives, `mog plugin outdated` and
+  `mog plugin update`
