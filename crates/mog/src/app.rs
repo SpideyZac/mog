@@ -30,8 +30,8 @@ use mog_term::TerminalPanel;
 use mog_tui::{
     Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CursorStyle,
     DebugPanel, EditorView, EventResult, Explorer, Focus, GitPanel, Minimap, OutputPanel, Overlay,
-    PluginWidgets, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup, SearchBar,
-    SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Toasts, Ui, UiEvent, input,
+    PluginPanels, PluginWidgets, Popups, ProjectSearchPanel, PromptKind, ReleaseNotesPopup,
+    SearchBar, SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Toasts, Ui, UiEvent, input,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -321,6 +321,7 @@ impl App {
         ui.explorer_footer = flair.sidebar_height();
         compositor.push(Box::new(flair));
         compositor.push(Box::new(PluginWidgets::new()));
+        compositor.push(Box::new(PluginPanels::new()));
         compositor.push(Box::new(Toasts::new()));
         compositor.push(Box::new(StatusLine::new()));
         compositor.push(Box::new(CompletionMenu::new()));
@@ -874,7 +875,8 @@ mod tests {
     use mog_core::{Command, Key, KeyChord};
     use mog_plugin::{PluginEvent, parse_actions};
     use mog_tui::{
-        Context, CursorShape, PluginSegment, PromptKind, Side, popups::PLUGIN_PICKED_COMMAND,
+        Context, CursorShape, PanelEvent, PluginSegment, PromptKind, Side,
+        popups::PLUGIN_PICKED_COMMAND,
     };
     use ratatui::{Terminal, backend::TestBackend};
     use serde_json::{Value, json, to_string};
@@ -2080,6 +2082,93 @@ plugin.run()
             json!({ "id": "run", "done": true }),
         );
         assert!(app.ui.toasts.is_empty());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Returns the row and column where `text` first shows on `screen`.
+    fn find_on(screen: &str, text: &str) -> (u16, u16) {
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(text))
+            .unwrap_or_else(|| panic!("{text} is not on the screen:\n{screen}"));
+        let column = line[..line.find(text).expect("found")].chars().count();
+        (
+            u16::try_from(row).expect("fits"),
+            u16::try_from(column).expect("fits"),
+        )
+    }
+
+    /// Plugin panels dock on the right and at the bottom, take turns on a side, and report
+    /// clicks and closing.
+    #[tokio::test]
+    async fn shows_plugin_panels() {
+        let dir = temp_dir();
+        let mut app = start(&dir);
+        notify(
+            &mut app,
+            "outline",
+            "panel",
+            json!({ "id": "tree", "title": "Outline", "lines": ["fn main", "fn helper"] }),
+        );
+        notify(
+            &mut app,
+            "outline",
+            "panel",
+            json!({ "id": "log", "title": "Log", "side": "bottom", "size": 6, "lines": ["started"] }),
+        );
+        notify(
+            &mut app,
+            "other",
+            "panel",
+            json!({ "id": "x", "title": "Other", "lines": ["hi"] }),
+        );
+        let screen = app
+            .snapshot("120x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        assert!(
+            screen.contains("Other") && screen.contains("Outline"),
+            "{screen}"
+        );
+        assert!(
+            !screen.contains("fn main"),
+            "the newest panel on a side is shown: {screen}"
+        );
+        let (log_row, _) = find_on(&screen, "started");
+        assert!(log_row > 20, "{screen}");
+        let (row, column) = find_on(&screen, " Outline ");
+        app.handle_event(click(column + 2, row, MouseButton::Left));
+        let screen = app
+            .snapshot("120x30", Duration::ZERO, &[])
+            .await
+            .expect("drawn");
+        let (row, column) = find_on(&screen, "fn helper");
+        app.handle_event(click(column + 3, row, MouseButton::Left));
+        assert_eq!(
+            app.ui.panel_events,
+            [PanelEvent::Click {
+                plugin: "outline".into(),
+                id: "tree".into(),
+                line: 1,
+                x: 3,
+                button: "left",
+            }]
+        );
+        app.ui.panel_events.clear();
+        let (row, _) = find_on(&screen, " Outline ");
+        let title = screen.lines().nth(usize::from(row)).expect("title row");
+        let close = title.rfind('\u{00d7}').expect("a close button");
+        let column = u16::try_from(title[..close].chars().count()).expect("fits");
+        app.handle_event(click(column, row, MouseButton::Left));
+        assert!(matches!(app.ui.panel_events[0], PanelEvent::Closed { .. }));
+        notify(
+            &mut app,
+            "outline",
+            "panel",
+            json!({ "id": "log", "remove": true }),
+        );
+        assert!(app.ui.plugin_panels.iter().all(|panel| panel.id != "log"));
         let _ = fs::remove_dir_all(dir);
     }
 

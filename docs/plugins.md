@@ -473,6 +473,7 @@ A plugin does not have to wait to be asked. These notifications can be sent at a
 | `capture` | `{ "keys": "all", "except": ["ctrl+s"] }` | Takes keys before the editor, see [Taking keys](#taking-keys) |
 | `timer` | `{ "id": "...", "every": 500 }` | Sends the `timer` event every so many milliseconds, 0 stops it, see [Timers](#timers) |
 | `toast` | `{ "id": "...", "title": "...", "text": "...", "level": "info", "progress": 40, "timeout": 6000, "buttons": [...] }` | Shows a notification in the top right corner, or replaces the one with the same `id`, see [Notifications](#notifications) |
+| `panel` | `{ "id": "...", "title": "...", "side": "right", "size": 40, "lines": [...] }` | Shows or fills a panel docked on the right or at the bottom, see [Panels](#panels) |
 
 A diagnostic is `{ "start": 0, "end": 4, "severity": "warning", "message": "..." }` in char
 offsets, or `{ "line": 2, "column": 0, "end_line": 2, "end_column": 4, ... }`. Severities are
@@ -532,8 +533,9 @@ it set up itself: `click` when the user clicks one of its [widgets](#drawing-on-
 with the widget `id`, the `x` and `y` of the click inside it and the `button` (`left`, `right` or
 `middle`), `segment_click` when the user clicks one of its status line segments that has no
 `command`, with the segment `id` (`null` for the one without an id) and the `button`,
-`toast_click` for a [notification](#notifications) button without a `command`, and `timer` with
-the `id` of one of its [timers](#timers).
+`toast_click` for a [notification](#notifications) button without a `command`, `panel_click` and
+`panel_closed` for its [panels](#panels), and `timer` with the `id` of one of its
+[timers](#timers).
 
 `before_save` is a request, not a notification. Answer with `{ "changes": [...] }` in char
 offsets of the `text` it sent, like a formatter would, or `{ "changes": [] }`. mog waits up to 2
@@ -656,6 +658,34 @@ for things worth more than a status line message:
 
 The user can close any of them with the `×`. A plugin can show eight at once, and mog shows the
 newest four that fit.
+
+## Panels
+
+The notification `panel` docks a panel of styled text on the right of the editor or under it,
+for things like an outline, a test tree or a log:
+
+```json
+{ "id": "tests", "title": "Tests", "side": "right", "size": 40, "lines": ["\u2713 parses", [{ "text": "\u2717 saves", "fg": "red" }]] }
+```
+
+| field | default | means |
+| --- | --- | --- |
+| `id` | `panel` | Which panel of this plugin it is. Sending the same `id` again changes it |
+| `title` | the plugin name | What its tab says |
+| `side` | `right` | `right` or `bottom` |
+| `size` | 40 or 10 | Columns wide on the right or rows tall at the bottom, at most a third of the width or half the height |
+| `lines` | | The rows, each a string or a list of spans like a [widget](#drawing-on-the-screen)'s. Left out, the rows stay as they were |
+| `open` | `true` | `false` hides it, keeping its rows |
+| `focus` | `false` | Shows it on top of the other panels on its side. A panel that opens goes on top by itself |
+| `scroll` | | The first row to show, or `"bottom"` to follow a log |
+| `remove` | `false` | Removes it |
+
+One panel shows on each side, the one opened last. The others on that side show as tabs in its
+title row, and clicking one shows it. The mouse wheel scrolls a panel. Clicking a row sends the
+event `panel_click` with the `id`, the `line` counted from 0 in `lines`, the `x` inside the row
+and the `button`, and closing it with the `\u00d7` sends `panel_closed` with the `id`. A plugin can
+have eight panels with up to 10000 rows each. `ui/layout` answers where the shown panels are as
+`panel_right` and `panel_bottom`.
 
 ## Taking keys
 

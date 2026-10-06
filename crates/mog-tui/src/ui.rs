@@ -23,6 +23,7 @@ use crate::{
     git_panel::GitPanelState,
     menu::MenuState,
     output::OutputState,
+    panels::{PanelEvent, PanelSide, PluginPanel},
     picker::PickerItem,
     project_search::ProjectSearchState,
     release_notes::ReleaseNotes,
@@ -378,6 +379,10 @@ pub struct Layout {
     pub debug: Rect,
     /// The terminal panel under the editor, empty when hidden.
     pub terminal: Rect,
+    /// The plugin panel on the right, empty when none is shown.
+    pub plugin_right: Rect,
+    /// The plugin panel under the editor, empty when none is shown.
+    pub plugin_bottom: Rect,
     /// The status line.
     pub status: Rect,
 }
@@ -441,6 +446,10 @@ pub struct Ui {
     pub plugin_health: Vec<PluginHealth>,
     /// Notifications plugins show, oldest first.
     pub toasts: Vec<Toast>,
+    /// Panels plugins fill.
+    pub plugin_panels: Vec<PluginPanel>,
+    /// What happened to plugin panels, for the app to pass on.
+    pub panel_events: Vec<PanelEvent>,
     /// Clicks on notification buttons without a command, for the app to pass on.
     pub toast_clicks: Vec<ToastClick>,
     /// Clicks on plugin widgets, for the app to pass on.
@@ -642,6 +651,16 @@ impl Ui {
             width: rest.width - chat_width,
             ..rest
         };
+        let plugin_width = self.panel_size(PanelSide::Right).min(above.width / 3);
+        let plugin_right = Rect {
+            x: above.right() - plugin_width,
+            width: plugin_width,
+            ..above
+        };
+        let above = Rect {
+            width: above.width - plugin_width,
+            ..above
+        };
         let terminal_height = if self.terminal_open {
             (above.height * 2 / 5).min(above.height.saturating_sub(TERMINAL_MIN_EDITOR))
         } else {
@@ -652,9 +671,19 @@ impl Ui {
             height: terminal_height,
             ..above
         };
-        let right = Rect {
+        let column = Rect {
             height: above.height - terminal_height,
             ..above
+        };
+        let plugin_height = self.panel_size(PanelSide::Bottom).min(column.height / 2);
+        let plugin_bottom = Rect {
+            y: column.bottom() - plugin_height,
+            height: plugin_height,
+            ..column
+        };
+        let right = Rect {
+            height: column.height - plugin_height,
+            ..column
         };
         let tabs_height = if self.config.ui.tabs {
             TABS_HEIGHT.min(right.height)
@@ -709,6 +738,8 @@ impl Ui {
             chat,
             debug,
             terminal,
+            plugin_right,
+            plugin_bottom,
             status,
         }
     }

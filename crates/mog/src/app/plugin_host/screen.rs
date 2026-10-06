@@ -10,8 +10,8 @@ use std::{
 use mog_core::KeyChord;
 use mog_plugin::parse_actions;
 use mog_tui::{
-    Anchor, CursorShape, CursorStyle, Edge, Focus, Motion, PluginWidget, Toast, ToastButton,
-    ToastLevel, ToastProgress, WidgetLine, WidgetSpan,
+    Anchor, CursorShape, CursorStyle, Edge, Focus, Motion, PanelEvent, PanelSide, PluginPanel,
+    PluginWidget, Toast, ToastButton, ToastLevel, ToastProgress, WidgetLine, WidgetSpan,
 };
 use ratatui::layout::Rect;
 use serde_json::{Value, json};
@@ -38,6 +38,12 @@ const MAX_BUTTONS: usize = 4;
 
 /// How long a notification without progress stays unless it says otherwise.
 const TOAST_TIME: Duration = Duration::from_secs(6);
+
+/// The most panels one plugin can have.
+const MAX_PANELS: usize = 8;
+
+/// The most rows a panel can hold.
+const MAX_PANEL_LINES: usize = 10_000;
 
 /// The most timers one plugin can have.
 const MAX_TIMERS: usize = 16;
@@ -360,6 +366,7 @@ impl App {
             "capture" => parse_capture(params).map(|capture| self.set_capture(plugin, capture)),
             "timer" => self.set_timer(plugin, params),
             "toast" => self.show_toast(plugin, params),
+            "panel" => self.show_panel(plugin, params),
             _ => return None,
         })
     }
@@ -434,6 +441,94 @@ impl App {
         Ok(())
     }
 
+    /// Shows, fills, hides or removes a panel of `plugin`.
+    fn show_panel(&mut self, plugin: &str, params: &Value) -> Result<(), String> {
+        let id = params["id"].as_str().unwrap_or("panel").to_owned();
+        let panels = &mut self.ui.plugin_panels;
+        let at = panels
+            .iter()
+            .position(|panel| panel.plugin == plugin && panel.id == id);
+        if params["remove"].as_bool().unwrap_or(false) {
+            if let Some(at) = at {
+                panels.remove(at);
+            }
+            return Ok(());
+        }
+        let side = match params["side"].as_str() {
+            None | Some("right") => PanelSide::Right,
+            Some("bottom") => PanelSide::Bottom,
+            Some(other) => return Err(format!("`{other}` is not a side, use right or bottom")),
+        };
+        let lines = match &params["lines"] {
+            Value::Null => at.map(|at| panels[at].lines.clone()).unwrap_or_default(),
+            lines => {
+                let rows = lines.as_array().ok_or("`lines` must be a list")?;
+                if rows.len() > MAX_PANEL_LINES {
+                    return Err(format!("a panel can have at most {MAX_PANEL_LINES} rows"));
+                }
+                rows.iter()
+                    .map(|row| match row {
+                        Value::Array(spans) => spans.iter().map(parse_span).collect(),
+                        other => Ok(vec![parse_span(other)?]),
+                    })
+                    .collect::<Result<Vec<WidgetLine>, String>>()?
+            }
+        };
+        let default_size: u16 = match side {
+            PanelSide::Right => 40,
+            PanelSide::Bottom => 10,
+        };
+        let size = params["size"]
+            .as_u64()
+            .map_or(u64::from(default_size), |size| size.clamp(3, 200));
+        let open = params["open"].as_bool().unwrap_or(true);
+        let previous = at.map(|at| panels[at].clone());
+        let scroll = match &params["scroll"] {
+            Value::String(end) if end == "bottom" => lines.len(),
+            value => value
+                .as_u64()
+                .and_then(|row| usize::try_from(row).ok())
+                .or_else(|| previous.as_ref().map(|panel| panel.scroll))
+                .unwrap_or(0),
+        };
+        let panel = PluginPanel {
+            plugin: plugin.to_owned(),
+            title: params["title"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| previous.as_ref().map(|panel| panel.title.clone()))
+                .unwrap_or_else(|| plugin.to_owned()),
+            id,
+            side,
+            size: u16::try_from(size).unwrap_or(default_size),
+            lines,
+            open,
+            opened: previous.as_ref().map_or(0, |panel| panel.opened),
+            scroll,
+        };
+        // a panel that opens, or asks to be shown, goes on top of its side
+        let raise = open
+            && (previous.as_ref().is_none_or(|panel| !panel.open)
+                || params["focus"].as_bool().unwrap_or(false));
+        let index = match at {
+            Some(at) => {
+                panels[at] = panel;
+                at
+            }
+            None if panels.iter().filter(|panel| panel.plugin == plugin).count() >= MAX_PANELS => {
+                return Err(format!("a plugin can have at most {MAX_PANELS} panels"));
+            }
+            None => {
+                panels.push(panel);
+                panels.len() - 1
+            }
+        };
+        if raise {
+            self.ui.raise_panel(index);
+        }
+        Ok(())
+    }
+
     /// Sets the keys `plugin` takes before the editor.
     fn set_capture(&mut self, plugin: &str, capture: Capture) {
         let captures = &mut self.plugin_state.screen.captures;
@@ -488,6 +583,25 @@ impl App {
                 plugin.event("timer", json!({ "id": timer.id }));
             }
         }
+        for event in mem::take(&mut self.ui.panel_events) {
+            let (plugin, kind, params) = match event {
+                PanelEvent::Click {
+                    plugin,
+                    id,
+                    line,
+                    x,
+                    button,
+                } => (
+                    plugin,
+                    "panel_click",
+                    json!({ "id": id, "line": line, "x": x, "button": button }),
+                ),
+                PanelEvent::Closed { plugin, id } => (plugin, "panel_closed", json!({ "id": id })),
+            };
+            if let Some(plugin) = self.plugins.get(&plugin) {
+                plugin.event(kind, params);
+            }
+        }
         for click in mem::take(&mut self.ui.toast_clicks) {
             if let Some(plugin) = self.plugins.get(&click.plugin) {
                 plugin.event(
@@ -530,6 +644,8 @@ impl App {
             "editor": rect(layout.editor),
             "split": (!layout.split.is_empty()).then(|| rect(layout.split)),
             "status": rect(layout.status),
+            "panel_right": (!layout.plugin_right.is_empty()).then(|| rect(layout.plugin_right)),
+            "panel_bottom": (!layout.plugin_bottom.is_empty()).then(|| rect(layout.plugin_bottom)),
             "cursor": self.ui.cursor_screen.map(|at| json!({ "x": at.x, "y": at.y })),
             "flair": config.flair.enabled && !config.ui.serious,
             "reduced_motion": config.ui.reduced_motion,
@@ -543,6 +659,7 @@ impl App {
             .plugin_widgets
             .retain(|widget| widget.plugin != plugin);
         self.ui.toasts.retain(|toast| toast.plugin != plugin);
+        self.ui.plugin_panels.retain(|panel| panel.plugin != plugin);
         let screen = &mut self.plugin_state.screen;
         screen.captures.remove(plugin);
         screen.timers.retain(|timer| timer.plugin != plugin);
