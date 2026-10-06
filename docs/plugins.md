@@ -356,7 +356,8 @@ mog sends `initialize` first:
 ```
 
 `capabilities` lists everything this mog understands, so a plugin can check before relying on
-something newer. Answer within 10 seconds with what the plugin offers:
+something newer. `ownEvents` are the events a plugin gets for things it set up itself, without
+listing them. Answer within 10 seconds with what the plugin offers:
 
 ```json
 {

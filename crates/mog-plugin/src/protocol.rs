@@ -591,6 +591,7 @@ pub fn initialize_params(root: &str, settings: &Value) -> Value {
         "settings": settings,
         "capabilities": {
             "events": EVENTS,
+            "ownEvents": OWN_EVENTS,
             "requests": REQUESTS,
             "notifications": NOTIFICATIONS,
             "actions": ACTIONS,
