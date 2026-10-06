@@ -14,8 +14,8 @@ use futures::future;
 use mog_config::{PluginConfig, config_dir};
 use mog_core::KeyChord;
 use mog_plugin::{
-    Action, DEFAULT_TIMEOUT, Hello, Manifest, Plugin, PluginCommand, PluginEvent, Spec, Stats,
-    discover,
+    Action, Contributions, DEFAULT_TIMEOUT, Hello, Manifest, Plugin, PluginCommand, PluginEvent,
+    PluginTool, Spec, Stats, discover,
 };
 use serde_json::Value;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
@@ -792,6 +792,37 @@ impl Plugins {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Returns what each plugin with a manifest adds without running, as `(plugin, contributions)`.
+    pub fn contributions(&self) -> Vec<(String, Contributions)> {
+        self.entries
+            .iter()
+            .filter_map(|(name, entry)| {
+                let manifest = entry.manifest.as_ref()?;
+                Some((name.clone(), manifest.contributes.clone()))
+            })
+            .collect()
+    }
+
+    /// Returns the tools ready plugins offer the AI chat, as `(plugin, tool, handle)`, from what
+    /// they said when they started and from their manifests.
+    pub fn tools(&self) -> Vec<(String, PluginTool, Plugin)> {
+        let mut tools = Vec::new();
+        for (name, entry) in &self.entries {
+            let Run::Ready(plugin, hello) = &entry.run else {
+                continue;
+            };
+            let listed = entry
+                .manifest
+                .iter()
+                .flat_map(|manifest| manifest.contributes.tools.iter())
+                .filter(|tool| !hello.tools.iter().any(|other| other.name == tool.name));
+            for tool in hello.tools.iter().chain(listed) {
+                tools.push((name.clone(), tool.clone(), plugin.clone()));
+            }
+        }
+        tools
     }
 
     /// Returns the ready plugins that provide `provider` for any file.

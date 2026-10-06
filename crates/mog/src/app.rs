@@ -867,7 +867,7 @@ mod tests {
 
     use clap::Parser;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig};
+    use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig, ThemeConfig};
     use mog_core::{Command, Key, KeyChord};
     use mog_plugin::parse_actions;
     use mog_tui::{Context, CursorShape, PromptKind, popups::PLUGIN_PICKED_COMMAND};
@@ -877,6 +877,7 @@ mod tests {
 
     use super::{App, FRAME_TIME, IDLE_FRAME_TIME, Overlay};
     use crate::{
+        ai::call_tool,
         cli::Args,
         debug::DebugUpdate,
         session::{State, Swap},
@@ -1792,6 +1793,94 @@ plugin.run()
             .collect();
         assert!(tasks.contains(&("lint", "echo lint")), "{tasks:?}");
         assert!(tasks.contains(&("build", "echo configured")), "{tasks:?}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// A plugin's manifest adds a theme, a key and highlight queries before it ever runs, and the
+    /// config still wins.
+    #[tokio::test]
+    async fn plugins_contribute_without_running() {
+        let dir = temp_dir();
+        let folder = dir.join("neon");
+        fs::create_dir_all(folder.join("themes")).expect("folder");
+        fs::write(
+            folder.join("plugin.toml"),
+            "name = \"neon\"\ncommand = \"definitely-not-a-program\"\nactivation = [\"command\"]\n\
+             [[commands]]\nname = \"glow\"\n\
+             [contributes]\nthemes = [\"themes/neon.toml\", \"themes/mine.toml\"]\n\
+             keys = { \"alt+shift+n\" = \"plugin.neon.glow\", \"ctrl+s\" = \"quit\" }\n",
+        )
+        .expect("manifest");
+        fs::write(
+            folder.join("themes/neon.toml"),
+            "base = \"mog\"\naccent = \"#ff00ff\"\n",
+        )
+        .expect("theme");
+        fs::write(folder.join("themes/mine.toml"), "accent = \"#00ff00\"\n").expect("theme");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.ui.theme = "neon".into();
+        config.themes.insert("mine".into(), ThemeConfig::default());
+        config.plugins.insert(
+            "neon".into(),
+            PluginConfig {
+                path: Some(folder),
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        assert_eq!(app.theme.name, "neon");
+        assert_eq!(
+            app.ui.config.themes["mine"],
+            ThemeConfig::default(),
+            "the config wins"
+        );
+        let chord = |key: &str| key.parse::<KeyChord>().expect("chord");
+        assert_eq!(
+            app.keymap.resolve(&chord("alt+shift+n")),
+            Some(Command::Custom("plugin.neon.glow".into()))
+        );
+        assert_eq!(app.keymap.resolve(&chord("ctrl+s")), Some(Command::Save));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The chat gets the tools running plugins offer and can call them.
+    #[tokio::test]
+    async fn plugins_offer_chat_tools() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let script = dir.join("tools.py");
+        fs::write(
+            &script,
+            "from mog_plugin import Plugin\nplugin = Plugin()\n\n\
+             @plugin.tool(\"shout\", \"Shouts\")\ndef shout(tool_input):\n    \
+             return tool_input[\"text\"].upper()\n\nplugin.run()\n",
+        )
+        .expect("plugin");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.plugins.insert(
+            "loud".into(),
+            PluginConfig {
+                command: python.into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        plugins_until(&mut app, |app| !app.plugin_chat_tools().is_empty()).await;
+        let tools = app.plugin_chat_tools();
+        assert_eq!(tools[0].name, "loud_shout");
+        let answer = call_tool(tools[0].clone(), json!({ "text": "hi" })).await;
+        assert_eq!(answer.as_deref(), Ok("HI"));
         let _ = fs::remove_dir_all(dir);
     }
 

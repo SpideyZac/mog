@@ -1892,6 +1892,7 @@ dependencies = [
  "mog-lsp",
  "mog-plugin",
  "mog-plugin-test",
+ "mog-syntax",
  "mog-term",
  "mog-tui",
  "notify",

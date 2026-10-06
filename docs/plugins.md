@@ -260,6 +260,62 @@ Rust tests can use the fake editor directly: the `mog-plugin-test` crate has `Fa
 starts a plugin or talks to one over in-memory pipes, and `run_script`. A test can open files,
 run commands, send events and keys, and look at everything the plugin did.
 
+## Contributing without running
+
+A manifest can add things to mog that need no running plugin, in a `[contributes]` table. They
+are read when mog starts and when the config is reloaded. Files are relative to the plugin folder
+and must stay inside it.
+
+```toml
+[contributes]
+themes = ["themes/neon.toml"]                   # each named after its file, here neon
+keys = { "alt+shift+t" = "plugin.todo.list" }   # bound when mog and the user left the key free
+highlights = { md = "queries/todo.scm" }        # added to that language's highlight query
+
+[[contributes.tools]]                           # for the AI chat, see below
+name = "count_notes"
+description = "Counts the TODO notes in a file of the project."
+input_schema = { type = "object", properties = { path = { type = "string" } }, required = ["path"] }
+```
+
+- **Themes** are written like a `[themes.<name>]` table in the config, with `base` and colors,
+  and show up in the theme list. A theme in the user's config with the same name wins.
+- **Keys** bind any command, not only the plugin's, the way the `keys` of a command do: only
+  when neither mog nor the user bound the key already.
+- **Highlights** are [tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/index.html)
+  for a language mog highlights, named like `rust`, `markdown` or by extension like `md`. They
+  come after mog's own, so their captures win, and use the same capture names (`keyword`,
+  `string`, `function`, `comment` and so on). A query that does not compile is reported and left
+  out, and the language keeps its colors.
+
+## Tools for the AI chat
+
+A running plugin can offer the Claude chat tools it may call while it answers, listed under
+`tools` in the `initialize` answer or under `[[contributes.tools]]` in the manifest:
+
+```json
+{ "name": "count_notes", "description": "...", "input_schema": { "type": "object", "properties": {} } }
+```
+
+Names use letters, digits, `_` and `-`, and the model sees them as `<plugin>_<name>`. Only
+plugins that are running offer their tools, so use `startup` activation for a plugin whose tools
+should always be there. When the model calls one, mog sends the request `tool/call` with `name`
+and `input`, and waits up to 60 seconds:
+
+```json
+{ "content": "3 notes" }
+```
+
+`content` is text for the model, other JSON is sent as JSON, and `{ "content": "...", "is_error":
+true }` or a JSON-RPC error tells the model the tool failed. The input is checked to be a JSON
+object, check the rest yourself. The chat shows `[name]` where a tool ran. The SDKs have
+`@plugin.tool(name, description, input_schema)` in Python, `plugin.tool(name, { description,
+inputSchema }, handler)` in Node and `.tool(name, description, schema, handler)` in Rust.
+
+Whatever a tool returns goes to the AI, and `ai.exclude` does not apply to it, so a tool must not
+hand out secret files. Remember that the plugin itself can read them anyway, see
+[Plugins are not sandboxed](#plugins-are-not-sandboxed).
+
 ## Starting up
 
 mog sends `initialize` first:
@@ -303,6 +359,7 @@ something newer. Answer within 10 seconds with what the plugin offers:
   `saved`, as in protocol 1.
 - `providers` are the [features](#providing-features) the plugin adds, each for a list of file
   extensions or `true` for every file.
+- `tools` are [tools for the AI chat](#tools-for-the-ai-chat).
 
 ## Running a command
 

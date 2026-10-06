@@ -38,8 +38,9 @@ mog .
   adapter (lldb-dap and debugpy work out of the box)
 - Plugins in any language, talking JSON-RPC over stdio, with SDKs for Python, Node and Rust.
   They add commands, react to edits and saves, show diagnostics and notes after lines, and
-  provide completion, hover, formatting and code actions. Plugins are not sandboxed, see
-  [`[plugins]`](#plugins)
+  provide completion, hover, formatting, code actions, definitions, references, symbols,
+  diagnostics and tasks, add themes, keys and highlighting, and give the Claude chat tools.
+  Plugins are not sandboxed, see [`[plugins]`](#plugins)
 - Updates itself from signed GitHub releases and shows what changed
 - Seven themes, a theme editor where you drag colors around, and a settings menu that writes
   to your config

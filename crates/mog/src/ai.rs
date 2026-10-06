@@ -12,8 +12,11 @@ use std::{
 use futures::future;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use mog_ai::{
-    ChatMessage, CompletionRequest, Copilot, CopilotEvent, CopilotStatus, DeviceCode, Role,
+    BoxFuture, ChatMessage, CompletionRequest, Copilot, CopilotEvent, CopilotStatus, DeviceCode,
+    Role, Tool,
 };
+use mog_plugin::{Plugin, PluginTool};
+use serde_json::{Value, json};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     time,
@@ -27,6 +30,39 @@ short and practical. Plain text renders best, avoid big markdown tables.";
 
 /// The most chars of conversation sent with a chat, counted from the newest message back.
 const MAX_CHAT_CHARS: usize = 400_000;
+
+/// How long a plugin tool may run for the chat.
+const TOOL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A plugin tool offered to the chat.
+#[derive(Debug, Clone)]
+pub struct ChatTool {
+    /// The name the model calls it by.
+    pub name: String,
+    /// The tool as the plugin described it.
+    pub tool: PluginTool,
+    /// The plugin that runs it.
+    pub plugin: Plugin,
+}
+
+/// Runs `tool` with `input` through `tool/call`, giving its text or why it failed.
+pub async fn call_tool(tool: ChatTool, input: Value) -> Result<String, String> {
+    let params = json!({ "name": tool.tool.name, "input": input });
+    let answer = tool
+        .plugin
+        .request("tool/call", params, TOOL_TIMEOUT)
+        .await?;
+    let content = match &answer["content"] {
+        Value::String(text) => text.clone(),
+        Value::Null => answer.to_string(),
+        other => other.to_string(),
+    };
+    if answer["is_error"].as_bool().unwrap_or(false) {
+        Err(content)
+    } else {
+        Ok(content)
+    }
+}
 
 /// How long typing has to pause before a ghost suggestion is requested.
 const GHOST_DELAY: Duration = Duration::from_millis(650);
@@ -248,10 +284,11 @@ impl Assistant {
         !self.providers.ghost.is_empty()
     }
 
-    /// Sends the conversation `history`, as `(from_user, text)` pairs, to the preferred provider.
+    /// Sends the conversation `history`, as `(from_user, text)` pairs, to the preferred provider,
+    /// which may call plugin `tools` while it answers.
     ///
     /// Returns `false` if no provider is enabled for chat.
-    pub fn chat(&self, history: &[(bool, String)]) -> bool {
+    pub fn chat(&self, history: &[(bool, String)], tools: Vec<ChatTool>) -> bool {
         let Some(provider) = self.providers.chat.first().cloned() else {
             return false;
         };
@@ -262,7 +299,28 @@ impl Assistant {
             let on_text = move |text: &str| {
                 let _ = streamed.send(AiReply::ChatText(text.to_owned()));
             };
-            let reply = match provider.chat(CHAT_SYSTEM, &messages, &on_text).await {
+            let described: Vec<Tool> = tools
+                .iter()
+                .map(|tool| Tool {
+                    name: tool.name.clone(),
+                    description: tool.tool.description.clone(),
+                    input_schema: tool.tool.input_schema.clone(),
+                })
+                .collect();
+            let call =
+                move |name: String, input: Value| -> BoxFuture<'static, Result<String, String>> {
+                    let tool = tools.iter().find(|tool| tool.name == name).cloned();
+                    Box::pin(async move {
+                        match tool {
+                            Some(tool) => call_tool(tool, input).await,
+                            None => Err(format!("there is no tool called {name}")),
+                        }
+                    })
+                };
+            let answer = provider
+                .chat_with_tools(CHAT_SYSTEM, &messages, &described, &call, &on_text)
+                .await;
+            let reply = match answer {
                 Ok(text) => AiReply::Chat(text.trim().to_owned()),
                 Err(err) => AiReply::ChatFailed(err.to_string()),
             };

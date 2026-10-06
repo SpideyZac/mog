@@ -44,6 +44,7 @@ mog-git.workspace = true
 mog-lsp.workspace = true
 mog-plugin.workspace = true
 mog-plugin-test.workspace = true
+mog-syntax.workspace = true
 mog-term.workspace = true
 mog-tui.workspace = true
 notify.workspace = true

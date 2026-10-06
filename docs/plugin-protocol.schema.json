@@ -192,6 +192,18 @@
                 "diagnostics": { "$ref": "#/$defs/languages" },
                 "tasks": { "$ref": "#/$defs/languages" }
               }
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,48}$" },
+                  "description": { "type": "string" },
+                  "input_schema": { "type": "object" }
+                }
+              }
             }
           }
         }
@@ -364,6 +376,14 @@
             }
           }
         }
+      }
+    },
+    "tool/call": {
+      "description": "mog to plugin request, the AI chat calls one of the plugin's tools.",
+      "type": "object",
+      "properties": {
+        "params": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "input": { "type": "object" } } },
+        "result": { "type": "object", "properties": { "content": {}, "is_error": { "type": "boolean" } } }
       }
     },
     "$/cancelRequest": {

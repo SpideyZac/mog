@@ -148,6 +148,7 @@ impl App {
         self.ui.config = config;
         self.editor.set_status("config reloaded");
         problems.extend(self.plugins.configure(&self.ui.config.plugins));
+        problems.extend(self.apply_plugin_contributions());
         self.refresh_commands();
         self.apply_config();
         if !problems.is_empty() {

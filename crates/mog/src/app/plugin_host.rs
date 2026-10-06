@@ -10,8 +10,9 @@ use std::{
 };
 
 use futures::future;
+use mog_config::ThemeConfig;
 use mog_core::{
-    Change, Command, Diagnostic, KeyChord, Range, Severity, Transaction, command::UnknownCommand,
+    Change, Command, Diagnostic, Range, Severity, Transaction, command::UnknownCommand,
 };
 use mog_plugin::{
     Action, Edit, Level, Plugin, PluginEvent, parse_actions, parse_segment,
@@ -32,6 +33,7 @@ use crate::{
     tasks::Task,
 };
 
+mod contributions;
 mod edits;
 mod screen;
 
@@ -88,6 +90,8 @@ pub struct PluginState {
     diagnosed: HashMap<(String, PathBuf), u64>,
     /// The tasks plugins offered when last asked.
     pub tasks: Vec<Task>,
+    /// The themes plugins added to the config, by name.
+    themes: BTreeMap<String, ThemeConfig>,
 }
 
 /// Reads a severity name.
@@ -340,7 +344,8 @@ impl App {
     ///
     /// Not part of [`App::new`] so snapshots and tests do not run other programs.
     pub fn start_plugins(&mut self) {
-        let problems = self.plugins.configure(&self.ui.config.plugins);
+        let mut problems = self.plugins.configure(&self.ui.config.plugins);
+        problems.extend(self.apply_plugin_contributions());
         self.refresh_commands();
         if !problems.is_empty() {
             self.editor.set_status(problems.join("; "));
@@ -424,27 +429,7 @@ impl App {
     /// Rebuilds the palette, key list and right click menu from the keymap and the plugin
     /// commands, binding the keys plugins suggest when nothing else uses them.
     pub(super) fn refresh_commands(&mut self) {
-        for (name, _, keys) in self.plugins.palette() {
-            for key in keys {
-                let Ok(chord) = key.parse::<KeyChord>() else {
-                    continue;
-                };
-                let configured = self
-                    .ui
-                    .config
-                    .keys
-                    .keys()
-                    .any(|other| other.parse::<KeyChord>().ok() == Some(chord));
-                if self
-                    .keymap
-                    .resolve(&chord)
-                    .is_none_or(|bound| bound.to_string() == name)
-                    && !configured
-                {
-                    self.keymap.bind(chord, Command::Custom(name.clone()));
-                }
-            }
-        }
+        self.bind_plugin_keys();
         let mut palette = commands::palette(&self.keymap);
         for (name, title, _) in self.plugins.palette() {
             let keys = self

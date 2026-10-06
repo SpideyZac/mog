@@ -59,7 +59,8 @@ impl App {
         }
         self.ui.chat.messages.push((true, text));
         self.ui.chat.scroll = 0;
-        if self.assistant.chat(&self.ui.chat.messages) {
+        let tools = self.plugin_chat_tools();
+        if self.assistant.chat(&self.ui.chat.messages, tools) {
             self.ui.chat.waiting = true;
         } else {
             self.ui.chat.messages.push((false, NO_AI.to_owned()));
