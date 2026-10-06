@@ -781,6 +781,21 @@ impl Plugins {
             .collect()
     }
 
+    /// Returns the ready plugins that provide `provider` for any file.
+    pub fn providers_any(&self, provider: &str) -> Vec<Plugin> {
+        self.entries
+            .values()
+            .filter_map(|entry| match &entry.run {
+                Run::Ready(plugin, hello)
+                    if hello.providers.iter().any(|(name, _)| name == provider) =>
+                {
+                    Some(plugin.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Waits for the next event from a current plugin or a finished command.
     pub async fn update(&mut self) -> Option<PluginUpdate> {
         loop {

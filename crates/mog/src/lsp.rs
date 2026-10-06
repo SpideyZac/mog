@@ -44,14 +44,16 @@ pub enum LspReply {
     },
     /// What is under the cursor, as text, for the char offset `pos`.
     Hover(String, usize),
-    /// Where a symbol is defined.
+    /// Where a symbol is defined, from a language server.
     Definition(PathBuf, Position),
+    /// A place to jump to, as a line and a char column from 0, like a plugin's definition.
+    Goto(PathBuf, usize, usize),
     /// Edits that format a file at a given document version.
     Format(PathBuf, u64, Vec<TextEdit>),
     /// Edits across files that rename a symbol.
     Rename(FileEdits),
-    /// Places a symbol is used.
-    References(Vec<(PathBuf, Position)>),
+    /// Places, like where a symbol is used, as `(path, line, column)` from 0.
+    References(Vec<(PathBuf, usize, usize)>),
     /// Code actions from the language server as titles with their edits, and from plugins as
     /// `(title, plugin, actions)`.
     Actions(Vec<CodeAction>, Vec<(String, String, Vec<Action>)>),
@@ -83,10 +85,18 @@ pub enum LspReply {
         /// What the project was searched for, `None` for the symbols of one file.
         query: Option<String>,
         /// What was found.
-        symbols: Vec<Symbol>,
+        symbols: Vec<SymbolEntry>,
     },
     /// A request found nothing or failed, with a message for the status line.
     Nothing(String),
+}
+
+/// Returns a server location as `(path, line, column)`, counting the column in UTF-16 units
+/// like the server does, which is close enough for a list of places.
+pub fn place((path, position): (PathBuf, Position)) -> (PathBuf, usize, usize) {
+    let line = usize::try_from(position.line).unwrap_or(0);
+    let column = usize::try_from(position.character).unwrap_or(0);
+    (path, line, column)
 }
 
 /// Converts a server completion to a menu item.

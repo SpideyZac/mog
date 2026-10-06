@@ -14,11 +14,11 @@ use mog_core::{
     Change, Command, Diagnostic, KeyChord, Range, Severity, Transaction, command::UnknownCommand,
 };
 use mog_plugin::{
-    Action, Edit, Level, PluginEvent, parse_actions, parse_segment,
+    Action, Edit, Level, Plugin, PluginEvent, parse_actions, parse_segment,
     protocol::{parse_action, parse_selections},
 };
 use mog_tui::{
-    CommandInfo, CursorStyle, Overlay, PluginHealth, PluginSegment, PromptKind,
+    CommandInfo, CursorStyle, Overlay, PluginHealth, PluginSegment, PromptKind, SymbolEntry,
     completion::{CompletionItem, ItemKind},
     picker::PickerItem,
 };
@@ -156,6 +156,111 @@ pub fn code_actions(answers: Vec<(String, Value)>) -> Vec<(String, String, Vec<A
                     let actions = parse_actions(&offer).ok()?;
                     Some((title, plugin.clone(), actions))
                 })
+        })
+        .collect()
+}
+
+/// Asks `providers` for `provider` in the background, or returns `None` when there are none.
+pub fn ask_these(
+    providers: Vec<Plugin>,
+    provider: &str,
+    params: Value,
+    timeout: Duration,
+) -> Option<impl Future<Output = Vec<(String, Value)>> + Send + 'static> {
+    if providers.is_empty() {
+        return None;
+    }
+    let method = format!("provide/{provider}");
+    Some(async move { ask_providers(providers, &method, params, timeout).await })
+}
+
+/// Returns `path` from a plugin made absolute against `root`.
+fn absolute(root: &Path, path: &str) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.to_owned()
+    } else {
+        root.join(path)
+    }
+}
+
+/// Reads the places plugins answered `provide/definition` or `provide/references` with, as
+/// `(path, line, column)`, either a `locations` list or one location. Relative paths are
+/// against `root`, and a missing path means `current`.
+pub fn locations(
+    answers: &[(String, Value)],
+    root: &Path,
+    current: Option<&Path>,
+) -> Vec<(PathBuf, usize, usize)> {
+    let place = |item: &Value| {
+        let path = match item["path"].as_str() {
+            Some(path) => absolute(root, path),
+            None => current?.to_owned(),
+        };
+        let line = usize::try_from(item["line"].as_u64()?).ok()?;
+        let column = item["column"]
+            .as_u64()
+            .and_then(|column| usize::try_from(column).ok())
+            .unwrap_or(0);
+        Some((path, line, column))
+    };
+    answers
+        .iter()
+        .flat_map(|(_, answer)| match answer["locations"].as_array() {
+            Some(items) => items.iter().filter_map(place).collect(),
+            None => place(answer).into_iter().collect::<Vec<_>>(),
+        })
+        .collect()
+}
+
+/// Returns the short kind name mog shows for a symbol kind a plugin named, like `fn` for
+/// `function`.
+fn symbol_kind(kind: &str) -> String {
+    match kind {
+        "function" => "fn",
+        "variable" => "let",
+        "constant" => "const",
+        "module" | "namespace" | "package" => "mod",
+        "property" => "field",
+        "constructor" => "new",
+        "interface" => "trait",
+        "enum_member" | "enummember" => "variant",
+        "type_parameter" => "type",
+        other => other,
+    }
+    .to_owned()
+}
+
+/// Reads the symbols plugins answered `provide/symbols` with. Relative paths are against
+/// `root`, and a missing path means `current`.
+pub fn symbol_entries(
+    answers: &[(String, Value)],
+    root: &Path,
+    current: Option<&Path>,
+) -> Vec<SymbolEntry> {
+    answers
+        .iter()
+        .flat_map(|(_, answer)| answer["symbols"].as_array().cloned().unwrap_or_default())
+        .filter_map(|item| {
+            let path = match item["path"].as_str() {
+                Some(path) => absolute(root, path),
+                None => current?.to_owned(),
+            };
+            let number = |key: &str| {
+                item[key]
+                    .as_u64()
+                    .and_then(|value| usize::try_from(value).ok())
+                    .unwrap_or(0)
+            };
+            Some(SymbolEntry {
+                name: item["name"].as_str()?.to_owned(),
+                kind: symbol_kind(item["kind"].as_str().unwrap_or("symbol")),
+                detail: item["detail"].as_str().unwrap_or_default().to_owned(),
+                depth: number("depth"),
+                line: number("line"),
+                column: number("column"),
+                path,
+            })
         })
         .collect()
 }
@@ -1261,10 +1366,6 @@ impl App {
         let providers = self
             .plugins
             .providers(provider, language(self.editor.document().path()).as_deref());
-        if providers.is_empty() {
-            return None;
-        }
-        let method = format!("provide/{provider}");
-        Some(async move { ask_providers(providers, &method, params, timeout).await })
+        ask_these(providers, provider, params, timeout)
     }
 }

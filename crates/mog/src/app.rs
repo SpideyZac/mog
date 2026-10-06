@@ -1620,6 +1620,95 @@ three
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// A plugin that knows where things are, for the provider tests.
+    const PLACES_PLUGIN: &str = r#"
+from mog_plugin import Plugin
+
+plugin = Plugin()
+
+
+@plugin.provide("definition")
+def definition(params):
+    return {"path": "notes.txt", "line": 2, "column": 1}
+
+
+@plugin.provide("references")
+def references(params):
+    return {"locations": [{"line": 0}, {"path": "notes.txt", "line": 1, "column": 2}]}
+
+
+@plugin.provide("symbols")
+def symbols(params):
+    if params.get("query") not in (None, "al"):
+        return {"symbols": []}
+    return {"symbols": [{"name": "alpha", "kind": "function", "line": 0}, {"name": "beta", "line": 1}]}
+
+
+plugin.run()
+"#;
+
+    /// Plugins answer go to definition, find references and symbols with no language server.
+    #[tokio::test]
+    async fn plugins_provide_places_and_symbols() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let file = dir.join("notes.txt");
+        fs::write(&file, "alpha\nbeta\ngamma\n").expect("write");
+        let script = dir.join("places.py");
+        fs::write(&script, PLACES_PLUGIN).expect("plugin");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.plugins.insert(
+            "places".into(),
+            PluginConfig {
+                command: python.into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        app.editor.open(&file).expect("open");
+        plugins_until(&mut app, |app| {
+            !app.plugins.providers_any("symbols").is_empty()
+        })
+        .await;
+        app.request_feature("definition");
+        feature_reply(&mut app).await;
+        assert_eq!(
+            app.editor.document().selection().head,
+            "alpha\nbeta\n".len() + 1,
+            "{:?} {:?}",
+            app.editor.status(),
+            app.editor.document().path()
+        );
+        app.request_feature("references");
+        feature_reply(&mut app).await;
+        assert_eq!(app.ui.overlay, Some(Overlay::References));
+        let places: Vec<(usize, usize)> = app
+            .ui
+            .references
+            .iter()
+            .map(|(_, line, column, _)| (*line, *column))
+            .collect();
+        assert_eq!(places, [(0, 0), (1, 2)]);
+        app.ui.close();
+        app.request_symbols(None);
+        feature_reply(&mut app).await;
+        let symbols: Vec<(&str, &str)> = app
+            .ui
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
+            .collect();
+        assert_eq!(symbols, [("alpha", "fn"), ("beta", "symbol")]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
     /// Runs the actions in `json` the way a plugin would ask for them.
     fn plugin_actions(app: &mut App, json: Value) -> Result<(), String> {
         let actions = parse_actions(&json).expect("valid actions");

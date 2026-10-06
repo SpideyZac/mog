@@ -5,10 +5,10 @@ use std::{io, time::Instant};
 use futures::future;
 use lsp_types::{Position as LspPosition, Range as LspRange};
 use mog_config::Install;
-use mog_core::{Command, Document, Range, Transaction};
+use mog_core::{Command, Document, Range, Transaction, movement};
 use mog_lsp::{LspEvent, convert, features::FileEdits};
 use mog_tui::{
-    Overlay, PromptKind, SignatureHint,
+    Overlay, PromptKind, SignatureHint, SymbolEntry,
     completion::{self, CompletionState},
     menu::{self, MenuAction, MenuItem},
 };
@@ -121,6 +121,8 @@ impl App {
             "hover" => Some("hover"),
             "actions" => Some("code_actions"),
             "format" => Some("formatting"),
+            "definition" => Some("definition"),
+            "references" => Some("references"),
             _ => None,
         };
         let plugins = provider.and_then(|provider| {
@@ -152,6 +154,7 @@ impl App {
         let diagnostics = lsp::diagnostics_on_line(document, line);
         let sender = self.lsp_sender.clone();
         let feature = feature.to_owned();
+        let root = self.ui.root.clone();
         tokio::spawn(async move {
             let answers = match plugins {
                 Some(plugins) => plugins.await,
@@ -177,16 +180,41 @@ impl App {
                         LspReply::Hover(texts.join("\n\n"), head)
                     }
                 }
-                ("definition", Some(client), Some(path)) => {
-                    match client.definition(&path, position).await {
-                        Ok(Some((target, at))) => LspReply::Definition(target, at),
-                        _ => LspReply::Nothing("no definition found".into()),
+                ("definition", client, path) => {
+                    let mut server = None;
+                    if let (Some(client), Some(path)) = (client, &path) {
+                        server = client.definition(path, position).await.ok().flatten();
+                    }
+                    let mut found = plugin_host::locations(&answers, &root, path.as_deref());
+                    match (server, found.len()) {
+                        (Some((target, at)), 0) => LspReply::Definition(target, at),
+                        (None, 0) => LspReply::Nothing("no definition found".into()),
+                        (None, 1) => {
+                            let (target, line, column) = found.remove(0);
+                            LspReply::Goto(target, line, column)
+                        }
+                        (server, _) => {
+                            let mut all: Vec<_> = server.into_iter().map(lsp::place).collect();
+                            all.extend(found);
+                            all.dedup();
+                            LspReply::References(all)
+                        }
                     }
                 }
-                ("references", Some(client), Some(path)) => {
-                    match client.references(&path, position).await {
-                        Ok(found) if !found.is_empty() => LspReply::References(found),
-                        _ => LspReply::Nothing("no references found".into()),
+                ("references", client, path) => {
+                    let mut all = Vec::new();
+                    if let (Some(client), Some(path)) = (client, &path)
+                        && let Ok(found) = client.references(path, position).await
+                    {
+                        all.extend(found.into_iter().map(lsp::place));
+                    }
+                    all.extend(plugin_host::locations(&answers, &root, path.as_deref()));
+                    all.sort();
+                    all.dedup();
+                    if all.is_empty() {
+                        LspReply::Nothing("no references found".into())
+                    } else {
+                        LspReply::References(all)
                     }
                 }
                 ("actions", client, path) => {
@@ -330,20 +358,50 @@ impl App {
                 .set_status("save the file first so a language server can see it");
             return;
         }
-        let Some(client) = self.lsp.client_for_or_any(path.as_deref()) else {
+        let client = self.lsp.client_for_or_any(path.as_deref());
+        let params = json!({
+            "path": path.as_ref().map(|path| path.to_string_lossy()),
+            "language": plugin_host::language(path.as_deref()),
+            "query": query,
+        });
+        // a search of the whole project goes to every plugin with symbols, whatever the file
+        let providers = if query.is_some() {
+            self.plugins.providers_any("symbols")
+        } else {
+            let language = plugin_host::language(path.as_deref());
+            self.plugins.providers("symbols", language.as_deref())
+        };
+        let plugins = plugin_host::ask_these(providers, "symbols", params, PROVIDER_TIMEOUT);
+        if client.is_none() && plugins.is_none() {
             self.editor.set_status("no language server is running");
             return;
-        };
+        }
         let sender = self.lsp_sender.clone();
+        let root = self.ui.root.clone();
         tokio::spawn(async move {
-            let symbols = match (&query, &path) {
-                (Some(query), _) => client.workspace_symbols(query).await,
-                (None, Some(path)) => client.document_symbols(path).await,
-                (None, None) => Ok(Vec::new()),
+            let answers = match plugins {
+                Some(plugins) => plugins.await,
+                None => Vec::new(),
             };
-            let reply = match symbols {
-                Ok(symbols) => LspReply::Symbols { query, symbols },
-                Err(err) => LspReply::Nothing(format!("could not get symbols: {err}")),
+            let from_server = match (&client, &query, &path) {
+                (Some(client), Some(query), _) => client.workspace_symbols(query).await,
+                (Some(client), None, Some(path)) => client.document_symbols(path).await,
+                _ => Ok(Vec::new()),
+            };
+            let mut symbols: Vec<SymbolEntry> = Vec::new();
+            let mut problem = None;
+            match from_server {
+                Ok(found) => symbols.extend(found.into_iter().map(lsp::to_symbol_entry)),
+                Err(err) => problem = Some(format!("could not get symbols: {err}")),
+            }
+            symbols.extend(plugin_host::symbol_entries(
+                &answers,
+                &root,
+                path.as_deref(),
+            ));
+            let reply = match problem {
+                Some(problem) if symbols.is_empty() => LspReply::Nothing(problem),
+                _ => LspReply::Symbols { query, symbols },
             };
             let _ = sender.send(reply);
         });
@@ -454,6 +512,17 @@ impl App {
                 let pos = convert::position_to_char(self.editor.document().text(), position);
                 self.editor.select(pos, pos);
             }
+            LspReply::Goto(path, line, column) => {
+                if let Err(err) = self.editor.open(&path) {
+                    self.editor
+                        .set_status(format!("could not open {}: {err}", path.display()));
+                    return;
+                }
+                let text = self.editor.document().text();
+                let line = line.min(text.len_lines().saturating_sub(1));
+                let pos = text.line_to_char(line) + column.min(movement::line_len(text, line));
+                self.editor.select(pos, pos);
+            }
             LspReply::Format(path, version, edits) => {
                 let document = self.editor.document();
                 if document.path() != Some(path.as_path()) || document.version() != version {
@@ -472,9 +541,7 @@ impl App {
             LspReply::References(found) => {
                 self.ui.references = found
                     .into_iter()
-                    .map(|(path, position)| {
-                        let line = usize::try_from(position.line).unwrap_or(0);
-                        let column = usize::try_from(position.character).unwrap_or(0);
+                    .map(|(path, line, column)| {
                         let preview = lsp::line_preview(&self.editor, &path, line);
                         (path, line, column, preview)
                     })
@@ -556,7 +623,7 @@ impl App {
                     self.editor.set_status("no symbols in this file");
                     return;
                 }
-                self.ui.symbols = symbols.into_iter().map(lsp::to_symbol_entry).collect();
+                self.ui.symbols = symbols;
                 self.ui.symbols_version += 1;
                 let overlay = if workspace {
                     Overlay::WorkspaceSymbols

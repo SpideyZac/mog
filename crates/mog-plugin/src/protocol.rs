@@ -81,7 +81,15 @@ pub const ACTIONS: &[&str] = &[
 ];
 
 /// Every provider a plugin can register.
-pub const PROVIDERS: &[&str] = &["completion", "hover", "formatting", "code_actions"];
+pub const PROVIDERS: &[&str] = &[
+    "completion",
+    "hover",
+    "formatting",
+    "code_actions",
+    "definition",
+    "references",
+    "symbols",
+];
 
 /// A command a plugin adds to the palette.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

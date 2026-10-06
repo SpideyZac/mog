@@ -154,6 +154,7 @@
 - [x] Plugin protocol 2: manifests and lazy start, events, before save, an editor API, status
   segments, decorations and diagnostics
 - [x] Plugins provide completion, hover, formatting and code actions
+- [x] Plugins provide go to definition, references and symbols, merged with language servers
 - [x] Plugin timeouts, cancellation, crash restarts and logs
 - [x] Plugin SDKs for Python, Node and Rust
 - [x] `mog plugin` to make, install, list, check and remove plugins

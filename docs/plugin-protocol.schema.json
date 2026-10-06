@@ -4,6 +4,21 @@
   "title": "mog plugin protocol 2",
   "description": "The params and results of the JSON-RPC messages between mog and a plugin. See docs/plugins.md. Offsets count chars, lines and columns start at 0.",
   "$defs": {
+    "location": {
+      "type": "object",
+      "required": ["line"],
+      "properties": {
+        "path": { "type": "string", "description": "relative to the project, the asked about file when left out" },
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "locations": {
+      "oneOf": [
+        { "type": "object", "required": ["locations"], "properties": { "locations": { "type": "array", "items": { "$ref": "#/$defs/location" } } } },
+        { "$ref": "#/$defs/location" }
+      ]
+    },
     "offset": { "type": "integer", "minimum": 0 },
     "path": { "type": ["string", "null"], "description": "An absolute path, or relative to the project. null means the focused file." },
     "color": { "type": ["string", "null"], "description": "A theme color name like green or a hex code like #ff5ccd." },
@@ -170,7 +185,10 @@
                 "completion": { "$ref": "#/$defs/languages" },
                 "hover": { "$ref": "#/$defs/languages" },
                 "formatting": { "$ref": "#/$defs/languages" },
-                "code_actions": { "$ref": "#/$defs/languages" }
+                "code_actions": { "$ref": "#/$defs/languages" },
+                "definition": { "$ref": "#/$defs/languages" },
+                "references": { "$ref": "#/$defs/languages" },
+                "symbols": { "$ref": "#/$defs/languages" }
               }
             }
           }
@@ -269,6 +287,47 @@
             "actions": {
               "type": "array",
               "items": { "allOf": [{ "$ref": "#/$defs/actions" }, { "type": "object", "required": ["title"], "properties": { "title": { "type": "string" } } }] }
+            }
+          }
+        }
+      }
+    },
+    "provide/definition": {
+      "description": "mog to plugin request.",
+      "type": "object",
+      "properties": { "result": { "$ref": "#/$defs/locations" } }
+    },
+    "provide/references": {
+      "description": "mog to plugin request.",
+      "type": "object",
+      "properties": { "result": { "$ref": "#/$defs/locations" } }
+    },
+    "provide/symbols": {
+      "description": "mog to plugin request. query is null for the symbols of one file.",
+      "type": "object",
+      "properties": {
+        "params": {
+          "type": "object",
+          "properties": { "path": { "type": ["string", "null"] }, "language": { "$ref": "#/$defs/language" }, "query": { "type": ["string", "null"] } }
+        },
+        "result": {
+          "type": "object",
+          "properties": {
+            "symbols": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "kind": { "type": "string" },
+                  "detail": { "type": "string" },
+                  "path": { "type": "string" },
+                  "line": { "type": "integer", "minimum": 0 },
+                  "column": { "type": "integer", "minimum": 0 },
+                  "depth": { "type": "integer", "minimum": 0 }
+                }
+              }
             }
           }
         }

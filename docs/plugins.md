@@ -475,9 +475,16 @@ in with the language server's answer. Every request has `path`, `language`, `ver
 | `hover` | `provide/hover` | `selection` | `{ "text": "..." }`, shown under the language server's |
 | `formatting` | `provide/formatting` | `text`, `tab_size`, `insert_spaces` | `{ "changes": [...] }` against `text`. A formatter plugin goes before the language server |
 | `code_actions` | `provide/code_actions` | `selection` | `{ "actions": [{ "title": "...", "actions": [...] }] }`, listed with the language server's code actions. Picking one does its actions |
+| `definition` | `provide/definition` | | A location `{ "path", "line", "column" }` or `{ "locations": [...] }`. With one place in all, mog jumps there, with several it lists them with the language server's |
+| `references` | `provide/references` | | `{ "locations": [...] }`, listed with the language server's references |
+| `symbols` | `provide/symbols` | `query`, `null` for the symbols of one file | `{ "symbols": [{ "name", "kind", "detail", "path", "line", "column", "depth" }] }`, shown with the language server's in the outline and the project symbol search. `kind` is shown as it is, or shortened for names like `function` |
 
-Completion works in files with no language server at all, so a plugin can add completion for
-any kind of file.
+Locations have a `path` relative to the project, the file asked about when left out, and a `line`
+and `column` from 0 counting chars. A search of the whole project for symbols goes to every plugin
+with `symbols`, whatever files it lists.
+
+Every feature works in files with no language server at all, so a plugin can add completion, go
+to definition or an outline for any kind of file.
 
 ## Drawing on the screen
 
