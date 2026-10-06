@@ -1,0 +1,46 @@
+# Tests for the todo plugin, run with: mog plugin test examples/plugins/todo
+# See "Testing plugins" in docs/plugins.md for what a step can do.
+
+[[files]]
+path = "notes.txt"
+text = "first  \nTODO: water the mog\nlast\n"
+
+[[steps]]
+name = "marks the note when the file opens"
+open = "notes.txt"
+expect.notifications = [
+  { method = "diagnostics", params = { diagnostics = [{ message = "water the mog", severity = "info" }] } },
+  { method = "segment", params = { text = "1 todo", command = "plugin.todo.list" } },
+]
+
+[[steps]]
+name = "counts again after an edit"
+text = "TODO: one\nFIXME: two\n"
+expect.notifications = [{ method = "segment", params = { text = "2 todos" } }]
+
+[[steps]]
+name = "lists the notes and jumps to the picked one"
+pick = 1
+command = "list"
+expect.requests = [{ method = "ui/pick", params = { items = [{ label = "one" }, { label = "two" }] } }]
+expect.result = { actions = [{ type = "open", line = 1 }] }
+
+[[steps]]
+name = "completes the keywords"
+select = [0, 0]
+provide = "completion"
+params = { prefix = "fi" }
+expect.result = { items = [{ label = "FIXME", insert = "FIXME: " }] }
+
+[[steps]]
+name = "offers to remove the note under the cursor"
+provide = "code_actions"
+params = { line = 0 }
+expect.result = { actions = [{ title = "Remove this note" }] }
+
+[[steps]]
+name = "trims trailing spaces before saving"
+text = "keep  \nme\t\n"
+before_save = true
+expect.text = "keep\nme\n"
+expect.saved = true

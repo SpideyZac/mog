@@ -4,14 +4,15 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{self, IsTerminal as _, Write as _},
-    path::{Path, PathBuf},
+    path::{self, Path, PathBuf},
     process::{self, Command},
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use mog_config::Config;
-use mog_plugin::{MANIFEST_FILE, Manifest, Plugin, PluginEvent, discover};
+use mog_plugin::{MANIFEST_FILE, Manifest, Plugin, PluginEvent, Spec, discover};
+use mog_plugin_test::{Script, run_script};
 use tokio::{sync::mpsc, time};
 
 use crate::{
@@ -47,6 +48,7 @@ pub async fn run(action: PluginAction) -> Result<()> {
         }
         PluginAction::Remove { name } => remove(&dir, &name),
         PluginAction::Doctor { name } => doctor(&dir, name.as_deref()).await,
+        PluginAction::Test { plugin, scripts } => test(&dir, &plugin, scripts).await,
     }
 }
 
@@ -300,6 +302,94 @@ fn remove(dir: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Works out how to run `plugin`, a plugin name or a folder with a manifest, and returns that
+/// with the plugin folder if it has one.
+fn find_plugin(dir: &Path, plugin: &str) -> Result<(Spec, Option<PathBuf>)> {
+    let config = Config::load().unwrap_or_default();
+    let folder = Path::new(plugin);
+    let manifest = if folder.join(MANIFEST_FILE).is_file() {
+        // the plugin runs in another folder, so a relative one would point nowhere
+        let folder = path::absolute(folder).unwrap_or_else(|_| folder.to_owned());
+        Some(Manifest::read(&folder).map_err(|err| anyhow!(err))?)
+    } else {
+        discover(dir)
+            .into_iter()
+            .filter_map(Result::ok)
+            .find(|manifest| manifest.name == plugin)
+    };
+    let name = manifest
+        .as_ref()
+        .map_or_else(|| plugin.to_owned(), |manifest| manifest.name.clone());
+    if manifest.is_none() && !config.plugins.contains_key(&name) {
+        bail!("no plugin called {plugin}, and no folder there with a {MANIFEST_FILE}");
+    }
+    let folder = manifest.as_ref().map(|manifest| manifest.dir.clone());
+    let (spec, _) =
+        resolve(&name, config.plugins.get(&name), manifest).map_err(|err| anyhow!(err))?;
+    Ok((spec, folder))
+}
+
+/// Returns the `.toml` files in `folder`, sorted.
+fn scripts_in(folder: &Path) -> Vec<PathBuf> {
+    let mut scripts: Vec<PathBuf> = fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .collect();
+    scripts.sort();
+    scripts
+}
+
+/// Runs `plugin` against a fake editor with each of `scripts`, or the ones in its `tests`
+/// folder, and prints how every step went.
+async fn test(dir: &Path, plugin: &str, scripts: Vec<PathBuf>) -> Result<()> {
+    let (spec, folder) = find_plugin(dir, plugin)?;
+    let scripts = if scripts.is_empty() {
+        let tests = folder
+            .ok_or_else(|| anyhow!("{plugin} has no folder, name the scripts to run"))?
+            .join("tests");
+        scripts_in(&tests)
+    } else {
+        scripts
+    };
+    if scripts.is_empty() {
+        bail!("no test scripts, put some in the tests folder of the plugin");
+    }
+    let (mut passed, mut failed) = (0, 0);
+    for path in scripts {
+        println!("{}", path.display());
+        let script = Script::read(&path).map_err(|err| anyhow!(err))?;
+        let root = path.parent().unwrap_or(Path::new(".")).to_owned();
+        let reports = match run_script(&spec, &script, &root).await {
+            Ok(reports) => reports,
+            Err(err) => {
+                println!("  FAIL could not start: {err}");
+                failed += 1;
+                continue;
+            }
+        };
+        for report in reports {
+            if report.passed() {
+                passed += 1;
+                println!("  ok   {}", report.name);
+            } else {
+                failed += 1;
+                println!("  FAIL {}", report.name);
+                for problem in &report.problems {
+                    println!("       {problem}");
+                }
+            }
+        }
+    }
+    println!("{passed} passed, {failed} failed");
+    if failed > 0 {
+        bail!("{failed} step(s) failed");
+    }
+    Ok(())
+}
+
 /// Starts each plugin, or just the one called `only`, and reports what it says.
 async fn doctor(dir: &Path, only: Option<&str>) -> Result<()> {
     let config = Config::load().unwrap_or_default();
@@ -404,9 +494,9 @@ async fn doctor(dir: &Path, only: Option<&str>) -> Result<()> {
 #[cfg(test)]
 /// Tests for the plugin tools.
 mod tests {
-    use std::{env, fs, process};
+    use std::{env, fs, path::Path, process};
 
-    use super::{check_name, install, is_git_url, new, remove};
+    use super::{check_name, install, is_git_url, new, remove, test};
     use crate::cli::Language;
 
     /// Names stay simple so they work as folder names and command prefixes.
@@ -416,6 +506,28 @@ mod tests {
         assert!(check_name("").is_err());
         assert!(check_name("../evil").is_err());
         assert!(check_name("a.b").is_err());
+    }
+
+    /// The todo example passes the test scripts in its folder, when Python is around.
+    #[tokio::test]
+    async fn runs_the_todo_example_tests() {
+        let has_python = ["python3", "python"].into_iter().any(|program| {
+            process::Command::new(program)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        });
+        if !has_python {
+            return;
+        }
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/todo");
+        test(
+            Path::new("no-plugins-here"),
+            &example.to_string_lossy(),
+            Vec::new(),
+        )
+        .await
+        .expect("the tests pass");
     }
 
     /// Git urls are told apart from folders.

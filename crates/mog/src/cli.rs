@@ -70,6 +70,13 @@ pub enum PluginAction {
         /// The plugin name.
         name: String,
     },
+    /// Runs a plugin against a fake editor with test scripts, without starting mog.
+    Test {
+        /// The plugin name, or the folder with its plugin.toml.
+        plugin: String,
+        /// The scripts to run, every `.toml` in its `tests` folder when left out.
+        scripts: Vec<PathBuf>,
+    },
     /// Starts plugins and checks they answer, showing what they offer.
     Doctor {
         /// Only this plugin.

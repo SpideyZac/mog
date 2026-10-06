@@ -466,6 +466,7 @@ mog plugin new hello          # a python plugin, --language node for javascript
 mog plugin install <folder or git url>
 mog plugin list
 mog plugin doctor             # starts each plugin and shows what it offers
+mog plugin test hello         # runs its tests against a fake editor, without mog
 mog plugin remove hello
 ```
 

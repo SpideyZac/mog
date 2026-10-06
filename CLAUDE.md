@@ -37,6 +37,7 @@ Cargo workspace, one crate per concern under `crates/`:
 - `mog-dap`: debug adapter client.
 - `mog-plugin`: the plugin host, JSON-RPC over stdio, and plugin manifests.
 - `mog-plugin-sdk`: the Rust SDK for writing plugins. The Python and Node SDKs are in `sdk/`.
+- `mog-plugin-test`: a fake editor that runs a plugin and test scripts, behind `mog plugin test`.
 
 Subsystems never touch the terminal. Everything flows through the event loop in `mog`
 (`crates/mog/src/app.rs`), and only `mog-tui` draws. The app's handling of each subsystem lives

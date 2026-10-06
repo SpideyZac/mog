@@ -45,6 +45,7 @@ program does by itself. So:
 ```sh
 mog plugin new hello                    # a python plugin, or --language node
 mog plugin doctor                       # starts every plugin and shows what it offers
+mog plugin test hello                   # runs its tests against a fake editor
 ```
 
 `mog plugin new` makes a folder in the plugins folder of your config with a `plugin.toml` and a
@@ -152,6 +153,79 @@ menu = true                       # also in the editor's right click menu
 
 The plugin gets `MOG_PLUGIN_DIR`, `MOG_VERSION` and `MOG_SDK_DIR` in its environment, with the
 SDKs on `PYTHONPATH` and `NODE_PATH`, and runs in the project folder.
+
+## Testing plugins
+
+`mog plugin test` runs a plugin against a fake editor, so it can be tested without starting mog:
+
+```sh
+mog plugin test todo                       # every .toml in the plugin's tests folder
+mog plugin test ./my-plugin tests/a.toml   # a plugin folder, and only this script
+```
+
+The fake editor keeps files in memory and answers everything a plugin asks the way mog does:
+`editor/text` and the rest, `ui/pick` and `ui/prompt` with answers the test gives, and actions
+like `edit` and `select` change its files. A test script lists files to open and then steps,
+each doing one thing and saying what should happen. File paths are relative to the script.
+
+```toml
+settings = { loud = true }   # handed to the plugin instead of the config's
+
+[[files]]
+path = "notes.txt"
+text = "first
+TODO: water the mog
+"   # read from disk when left out
+
+[[steps]]
+name = "marks the note when the file opens"
+open = "notes.txt"
+expect.notifications = [{ method = "segment", params = { text = "1 todo" } }]
+
+[[steps]]
+pick = 0                     # the answer to the next ui/pick, false closes the list
+command = "list"
+expect.result = { actions = [{ type = "open", line = 1 }] }
+```
+
+A step first sets things up, then does at most one thing:
+
+| key | does |
+| --- | --- |
+| `open` | Opens or focuses a file, with `text` or from disk, sending `opened` |
+| `text` | Replaces the text of the focused file, sending `changed`, or the text for `open` |
+| `select` | Selects `[anchor, head]` |
+| `pick`, `prompt` | Answers the next `ui/pick` with an index or `ui/prompt` with text, `false` closes it |
+| `command` | Runs a command of the plugin with `args` and does its actions |
+| `event` | Sends an event with `params`, if the plugin listens for it (`click` and `timer` always go) |
+| `provide` | Asks for a feature like `completion` at the cursor, with extra `params` |
+| `request` | Sends any request with `params` |
+| `keys` | Sends keys like `["j", "shift+g"]` as `key` requests and does the actions |
+| `before_save` | Asks the plugin to tidy the focused file, applies its changes and saves |
+| `wait` | Milliseconds to wait for what is expected, 2000 by default |
+
+and `expect` says what should happen. Each is checked once the step is done, waiting up to
+`wait` for the plugin to get there:
+
+| expect | passes when |
+| --- | --- |
+| `result` | The answer has at least this: extra keys are fine, and list items must appear in order with others allowed in between |
+| `error` | The step failed with an error containing this |
+| `status` | The status line contains this |
+| `text` | The focused file holds exactly this |
+| `selection` | The main selection is `[anchor, head]` |
+| `notifications`, `requests` | The plugin sent these during the step, in order, each `{ method, params }` with `params` matched like `result` |
+| `log` | Something the plugin printed or logged during the step contains this |
+| `commands` | The plugin asked mog to run these commands during the step |
+| `saved` | The plugin saved a file during the step, or did not for `false` |
+| `output` | The output panel contains this |
+
+It prints each step and what went wrong, and fails if any step did.
+[`examples/plugins/todo/tests`](../examples/plugins/todo/tests) tests the todo example.
+
+Rust tests can use the fake editor directly: the `mog-plugin-test` crate has `FakeHost`, which
+starts a plugin or talks to one over in-memory pipes, and `run_script`. A test can open files,
+run commands, send events and keys, and look at everything the plugin did.
 
 ## Starting up
 
