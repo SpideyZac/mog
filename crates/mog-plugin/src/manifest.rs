@@ -4,13 +4,15 @@
 //! one of its activation events happens.
 
 use std::{
+    collections::BTreeMap,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use serde::Deserialize;
+use serde_json::Value;
 
-use crate::protocol::{OLDEST_PROTOCOL, PROTOCOL_VERSION, PluginCommand};
+use crate::protocol::{OLDEST_PROTOCOL, PROTOCOL_VERSION, PluginCommand, PluginTool, parse_tools};
 
 /// The name of the manifest file in a plugin folder.
 pub const MANIFEST_FILE: &str = "plugin.toml";
@@ -61,6 +63,33 @@ struct RawCommand {
     menu: bool,
 }
 
+/// What a plugin adds to mog without running, as written in the file.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RawContributions {
+    /// Theme files, relative to the plugin folder.
+    themes: Vec<String>,
+    /// Key bindings it suggests, key to command.
+    keys: BTreeMap<String, String>,
+    /// Extra highlight query files by language, relative to the plugin folder.
+    highlights: BTreeMap<String, String>,
+    /// Tools for the AI chat.
+    tools: Vec<Value>,
+}
+
+/// What a plugin adds to mog without running.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Contributions {
+    /// Theme files, each a table like a `[themes.<name>]` in the config, named after the file.
+    pub themes: Vec<PathBuf>,
+    /// Key bindings it suggests, key to command, bound when the key is free.
+    pub keys: BTreeMap<String, String>,
+    /// Tree-sitter highlight query files added to a language's own, by language.
+    pub highlights: BTreeMap<String, PathBuf>,
+    /// Tools for the AI chat, offered while the plugin runs.
+    pub tools: Vec<PluginTool>,
+}
+
 /// A manifest as written in the file.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,6 +121,9 @@ struct RawManifest {
     /// The commands it adds.
     #[serde(default)]
     commands: Vec<RawCommand>,
+    /// What it adds without running.
+    #[serde(default)]
+    contributes: RawContributions,
 }
 
 /// Returns the protocol a manifest speaks when it does not say.
@@ -120,6 +152,8 @@ pub struct Manifest {
     pub timeout: Option<u64>,
     /// The commands it adds, known before it runs.
     pub commands: Vec<PluginCommand>,
+    /// What it adds without running.
+    pub contributes: Contributions,
     /// The folder the manifest is in.
     pub dir: PathBuf,
 }
@@ -163,6 +197,32 @@ impl Manifest {
                 })
             })
             .collect::<Result<_, String>>()?;
+        let raw_contributes = raw.contributes;
+        let inside = |file: &str| -> Result<PathBuf, String> {
+            let relative = Path::new(file);
+            if relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|part| matches!(part, Component::ParentDir))
+            {
+                return Err(format!("`{file}` must be a path inside the plugin folder"));
+            }
+            Ok(dir.join(relative))
+        };
+        let contributes = Contributions {
+            themes: raw_contributes
+                .themes
+                .iter()
+                .map(|file| inside(file))
+                .collect::<Result<_, _>>()?,
+            keys: raw_contributes.keys,
+            highlights: raw_contributes
+                .highlights
+                .iter()
+                .map(|(language, file)| Ok((language.clone(), inside(file)?)))
+                .collect::<Result<_, String>>()?,
+            tools: parse_tools(&Value::Array(raw_contributes.tools))?,
+        };
         Ok(Self {
             name: raw.name,
             version: raw.version,
@@ -180,6 +240,7 @@ impl Manifest {
                 .collect::<Result<_, _>>()?,
             timeout: raw.timeout,
             commands,
+            contributes,
             dir: dir.to_owned(),
         })
     }
@@ -284,6 +345,43 @@ mod tests {
         assert!(Manifest::parse("name = \"a\"\ncommand = \"x\"\ncolour = 1", dir).is_err());
         let minimal = Manifest::parse("name = \"a\"\ncommand = \"x\"", dir).expect("minimal");
         assert!(minimal.starts_at_once());
+    }
+
+    /// Contributions read with their files inside the plugin folder, and ones outside refused.
+    #[test]
+    fn reads_contributions() {
+        let dir = Path::new("/plugins/neon");
+        let manifest = Manifest::parse(
+            r#"
+            name = "neon"
+            command = "x"
+
+            [contributes]
+            themes = ["themes/neon.toml"]
+            keys = { "alt+n" = "plugin.neon.glow" }
+            highlights = { md = "queries/md.scm" }
+
+            [[contributes.tools]]
+            name = "glow"
+            description = "Makes things glow"
+            input_schema = { type = "object", properties = { what = { type = "string" } } }
+            "#,
+            dir,
+        )
+        .expect("valid");
+        let contributes = &manifest.contributes;
+        assert_eq!(contributes.themes, [dir.join("themes/neon.toml")]);
+        assert_eq!(contributes.keys["alt+n"], "plugin.neon.glow");
+        assert_eq!(contributes.highlights["md"], dir.join("queries/md.scm"));
+        assert_eq!(contributes.tools[0].name, "glow");
+        assert_eq!(
+            contributes.tools[0].input_schema["properties"]["what"]["type"],
+            "string"
+        );
+        let outside = "name = \"a\"\ncommand = \"x\"\n[contributes]\nthemes = [\"../evil.toml\"]";
+        assert!(Manifest::parse(outside, dir).is_err());
+        let bad_tool = "name = \"a\"\ncommand = \"x\"\n[[contributes.tools]]\nname = \"has space\"";
+        assert!(Manifest::parse(bad_tool, dir).is_err());
     }
 
     /// Plugin folders are found by their manifest.

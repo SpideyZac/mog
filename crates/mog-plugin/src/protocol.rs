@@ -93,6 +93,57 @@ pub const PROVIDERS: &[&str] = &[
     "tasks",
 ];
 
+/// A tool a plugin offers the AI chat, which the model may call while it answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginTool {
+    /// The name inside the plugin, letters, digits, `_` and `-`.
+    pub name: String,
+    /// What it does and when to use it, for the model.
+    pub description: String,
+    /// A JSON schema of its input, an object.
+    pub input_schema: Value,
+}
+
+/// Reads the tools in a list like `[{ "name", "description", "input_schema" }]`.
+///
+/// # Errors
+///
+/// Returns why a tool cannot be used, like a name the model cannot call.
+pub fn parse_tools(value: &Value) -> Result<Vec<PluginTool>, String> {
+    let Some(tools) = value.as_array() else {
+        return Ok(Vec::new());
+    };
+    tools
+        .iter()
+        .map(|tool| {
+            let name = string(tool, "name", "a tool")?;
+            let valid = (1..=48).contains(&name.len())
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
+            if !valid {
+                return Err(format!(
+                    "`{name}` is not a valid tool name, use up to 48 letters, digits, _ and -"
+                ));
+            }
+            let input_schema = match &tool["input_schema"] {
+                Value::Null => json!({ "type": "object", "properties": {} }),
+                schema if schema["type"] == "object" => schema.clone(),
+                _ => {
+                    return Err(format!(
+                        "the input_schema of tool {name} must be an object schema"
+                    ));
+                }
+            };
+            Ok(PluginTool {
+                description: tool["description"].as_str().unwrap_or_default().to_owned(),
+                name,
+                input_schema,
+            })
+        })
+        .collect()
+}
+
 /// A command a plugin adds to the palette.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PluginCommand {
@@ -235,6 +286,8 @@ pub struct Hello {
     pub providers: Vec<(String, Languages)>,
     /// Providers it listed that mog does not know, so it is never asked for them.
     pub unknown_providers: Vec<String>,
+    /// Tools it offers the AI chat.
+    pub tools: Vec<PluginTool>,
 }
 
 impl Hello {
@@ -359,6 +412,7 @@ pub fn parse_hello(result: &Value) -> Result<Hello, String> {
         events,
         providers,
         unknown_providers,
+        tools: parse_tools(&result["tools"])?,
     })
 }
 

@@ -9,10 +9,10 @@ pub mod protocol;
 pub mod stats;
 
 pub use host::{DEFAULT_TIMEOUT, Events, Plugin, PluginEvent, Spec};
-pub use manifest::{Activation, MANIFEST_FILE, Manifest, discover};
+pub use manifest::{Activation, Contributions, MANIFEST_FILE, Manifest, discover};
 pub use protocol::{
-    Action, Edit, FileEdit, Hello, Languages, Level, PROTOCOL_VERSION, PluginCommand, Segment,
-    parse_actions, parse_segment,
+    Action, Edit, FileEdit, Hello, Languages, Level, PROTOCOL_VERSION, PluginCommand, PluginTool,
+    Segment, parse_actions, parse_segment,
 };
 pub use stats::{Outcome, Stats};
 
