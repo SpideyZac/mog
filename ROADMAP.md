@@ -155,6 +155,7 @@
   segments, decorations and diagnostics
 - [x] Plugins provide completion, hover, formatting and code actions
 - [x] Plugins provide go to definition, references and symbols, merged with language servers
+- [x] Plugins provide diagnostics when typing pauses and tasks for the task list
 - [x] Plugin timeouts, cancellation, crash restarts and logs
 - [x] Plugin SDKs for Python, Node and Rust
 - [x] `mog plugin` to make, install, list, check and remove plugins

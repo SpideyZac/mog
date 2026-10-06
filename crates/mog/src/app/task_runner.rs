@@ -7,9 +7,39 @@ use super::App;
 use crate::tasks::{self, Task, TaskEvent};
 
 impl App {
-    /// Offers the project's tasks in a picker.
+    /// Returns every task: detected ones, then plugins', then the config's, each winning over
+    /// the ones before it with the same name.
+    pub(super) fn all_tasks(&self) -> Vec<Task> {
+        let mut all = tasks::tasks(&self.ui.root, &self.ui.config.tasks);
+        for task in &self.plugin_state.tasks {
+            let configured = self
+                .ui
+                .config
+                .tasks
+                .get(&task.name)
+                .is_some_and(|config| !config.command.trim().is_empty());
+            if configured {
+                continue;
+            }
+            all.retain(|other| other.name != task.name);
+            all.push(task.clone());
+        }
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        all
+    }
+
+    /// Offers the project's tasks in a picker, once plugins said which they have.
     pub(super) fn pick_task(&mut self) {
-        self.task_list = tasks::tasks(&self.ui.root, &self.ui.config.tasks);
+        if self.ask_plugin_tasks() {
+            self.editor.set_status("asking plugins for their tasks");
+            return;
+        }
+        self.show_tasks();
+    }
+
+    /// Shows every task in a picker.
+    pub(super) fn show_tasks(&mut self) {
+        self.task_list = self.all_tasks();
         if self.task_list.is_empty() {
             self.editor.set_status(
                 "no tasks found, add [tasks.<name>] command = \"...\" to the config or the project",

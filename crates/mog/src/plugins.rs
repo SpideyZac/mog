@@ -63,6 +63,19 @@ pub enum PluginUpdate {
         /// Each plugin's answer as `(plugin, result)`.
         answers: Vec<(String, Result<Value, String>)>,
     },
+    /// A plugin answered `provide/diagnostics` for the file at `path` and `version`.
+    Diagnostics {
+        /// The plugin.
+        plugin: String,
+        /// The file.
+        path: PathBuf,
+        /// The document version it answered for.
+        version: u64,
+        /// Its answer, or why there is none.
+        answer: Result<Value, String>,
+    },
+    /// Plugins answered `provide/tasks`, as `(plugin, answer)`.
+    Tasks(Vec<(String, Value)>),
     /// A plugin that takes keys answered what to do with one.
     Key {
         /// The plugin that took the key.

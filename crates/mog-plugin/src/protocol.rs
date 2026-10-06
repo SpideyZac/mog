@@ -89,6 +89,8 @@ pub const PROVIDERS: &[&str] = &[
     "definition",
     "references",
     "symbols",
+    "diagnostics",
+    "tasks",
 ];
 
 /// A command a plugin adds to the palette.

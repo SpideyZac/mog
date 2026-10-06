@@ -477,6 +477,8 @@ in with the language server's answer. Every request has `path`, `language`, `ver
 | `code_actions` | `provide/code_actions` | `selection` | `{ "actions": [{ "title": "...", "actions": [...] }] }`, listed with the language server's code actions. Picking one does its actions |
 | `definition` | `provide/definition` | | A location `{ "path", "line", "column" }` or `{ "locations": [...] }`. With one place in all, mog jumps there, with several it lists them with the language server's |
 | `references` | `provide/references` | | `{ "locations": [...] }`, listed with the language server's references |
+| `diagnostics` | `provide/diagnostics` | `text`, sent for every open file that changed once typing pauses, not for files over 8 MB | `{ "diagnostics": [...] }` like the [`diagnostics` notification](#talking-first), replacing this plugin's problems for the file. An answer for text that changed since is dropped |
+| `tasks` | `provide/tasks` | only `root`, sent when the task list opens | `{ "tasks": [{ "name": "lint", "command": "ruff check .", "cwd": "" }] }`. They join the detected tasks, winning over ones with the same name, while tasks in the config win over them. `cwd` is relative to the project |
 | `symbols` | `provide/symbols` | `query`, `null` for the symbols of one file | `{ "symbols": [{ "name", "kind", "detail", "path", "line", "column", "depth" }] }`, shown with the language server's in the outline and the project symbol search. `kind` is shown as it is, or shortened for names like `function` |
 
 Locations have a `path` relative to the project, the file asked about when left out, and a `line`

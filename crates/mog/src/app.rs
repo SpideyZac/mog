@@ -1709,6 +1709,92 @@ plugin.run()
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// A plugin that finds shouting and has tasks, for the provider tests.
+    const LINT_PLUGIN: &str = r#"
+from mog_plugin import Plugin
+
+plugin = Plugin()
+
+
+@plugin.provide("diagnostics")
+def diagnostics(params):
+    lines = params["text"].splitlines()
+    found = [{"line": i, "message": "shouty", "severity": "warning"} for i, line in enumerate(lines) if line.isupper()]
+    return {"diagnostics": found}
+
+
+@plugin.provide("tasks")
+def tasks(params):
+    return {"tasks": [{"name": "lint", "command": "echo lint"}, {"name": "build", "command": "echo plugin"}]}
+
+
+plugin.run()
+"#;
+
+    /// Plugins find problems when typing pauses, and add tasks the config can still override.
+    #[tokio::test]
+    async fn plugins_provide_diagnostics_and_tasks() {
+        let Some(python) = python() else {
+            return;
+        };
+        let dir = temp_dir();
+        let file = dir.join("notes.txt");
+        fs::write(&file, "quiet\nLOUD\n").expect("write");
+        let script = dir.join("lint.py");
+        fs::write(&script, LINT_PLUGIN).expect("plugin");
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.tasks.insert(
+            "build".into(),
+            TaskConfig {
+                command: "echo configured".into(),
+                cwd: String::new(),
+            },
+        );
+        config.plugins.insert(
+            "lint".into(),
+            PluginConfig {
+                command: python.into(),
+                args: vec![script.to_string_lossy().into_owned()],
+                ..Default::default()
+            },
+        );
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        app.start_plugins();
+        app.editor.open(&file).expect("open");
+        plugins_until(&mut app, |app| {
+            !app.plugins.providers_any("tasks").is_empty()
+        })
+        .await;
+        app.sync_plugin_events(false);
+        plugins_until(&mut app, |app| {
+            !app.editor.document().diagnostics().is_empty()
+        })
+        .await;
+        assert_eq!(app.editor.document().diagnostics()[0].message, "shouty");
+        let end = app.editor.document().text().len_chars();
+        app.editor.select(end, end);
+        app.execute_command(Command::InsertText("MORE\n".into()));
+        app.sync_plugin_events(false);
+        plugins_until(&mut app, |app| {
+            app.editor.document().diagnostics().len() == 2
+        })
+        .await;
+        app.execute_command(Command::Custom("task.run".into()));
+        plugins_until(&mut app, |app| app.ui.overlay == Some(Overlay::Tasks)).await;
+        let tasks: Vec<(&str, &str)> = app
+            .ui
+            .tasks
+            .iter()
+            .map(|(name, command)| (name.as_str(), command.as_str()))
+            .collect();
+        assert!(tasks.contains(&("lint", "echo lint")), "{tasks:?}");
+        assert!(tasks.contains(&("build", "echo configured")), "{tasks:?}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
     /// Runs the actions in `json` the way a plugin would ask for them.
     fn plugin_actions(app: &mut App, json: Value) -> Result<(), String> {
         let actions = parse_actions(&json).expect("valid actions");

@@ -188,7 +188,9 @@
                 "code_actions": { "$ref": "#/$defs/languages" },
                 "definition": { "$ref": "#/$defs/languages" },
                 "references": { "$ref": "#/$defs/languages" },
-                "symbols": { "$ref": "#/$defs/languages" }
+                "symbols": { "$ref": "#/$defs/languages" },
+                "diagnostics": { "$ref": "#/$defs/languages" },
+                "tasks": { "$ref": "#/$defs/languages" }
               }
             }
           }
@@ -327,6 +329,37 @@
                   "column": { "type": "integer", "minimum": 0 },
                   "depth": { "type": "integer", "minimum": 0 }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provide/diagnostics": {
+      "description": "mog to plugin request, sent when typing pauses for each open file that changed.",
+      "type": "object",
+      "properties": {
+        "params": {
+          "type": "object",
+          "properties": { "path": { "type": "string" }, "language": { "$ref": "#/$defs/language" }, "version": { "type": "integer" }, "text": { "type": "string" } }
+        },
+        "result": { "type": "object", "properties": { "diagnostics": { "type": "array", "items": { "type": "object" } } } }
+      }
+    },
+    "provide/tasks": {
+      "description": "mog to plugin request, sent when the task list opens.",
+      "type": "object",
+      "properties": {
+        "params": { "type": "object", "properties": { "root": { "type": "string" } } },
+        "result": {
+          "type": "object",
+          "properties": {
+            "tasks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "command"],
+                "properties": { "name": { "type": "string" }, "command": { "type": "string" }, "cwd": { "type": "string" } }
               }
             }
           }

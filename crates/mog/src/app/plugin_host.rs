@@ -29,6 +29,7 @@ use super::App;
 use crate::{
     commands,
     plugins::{PluginUpdate, ask_providers, split_command},
+    tasks::Task,
 };
 
 mod edits;
@@ -41,6 +42,9 @@ const BEFORE_SAVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How often the memory and speed of plugins is read again.
 const HEALTH_EVERY: Duration = Duration::from_secs(2);
+
+/// How long a plugin gets to find the problems in a file.
+const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long the cursor has to rest before plugins hear where it is.
 const SELECTION_DELAY: Duration = Duration::from_millis(150);
@@ -80,6 +84,10 @@ pub struct PluginState {
     health_at: Option<Instant>,
     /// The memory each plugin process used when last read, in bytes.
     memory: BTreeMap<String, u64>,
+    /// The document version each plugin was last asked for the problems in, by plugin and file.
+    diagnosed: HashMap<(String, PathBuf), u64>,
+    /// The tasks plugins offered when last asked.
+    pub tasks: Vec<Task>,
 }
 
 /// Reads a severity name.
@@ -172,6 +180,25 @@ pub fn ask_these(
     }
     let method = format!("provide/{provider}");
     Some(async move { ask_providers(providers, &method, params, timeout).await })
+}
+
+/// How long plugins get to say which tasks they have.
+const TASKS_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Reads the tasks plugins answered `provide/tasks` with, each run in `cwd` relative to
+/// `root`.
+pub fn plugin_tasks(answers: &[(String, Value)], root: &Path) -> Vec<Task> {
+    answers
+        .iter()
+        .flat_map(|(_, answer)| answer["tasks"].as_array().cloned().unwrap_or_default())
+        .filter_map(|task| {
+            Some(Task {
+                name: task["name"].as_str()?.to_owned(),
+                command: task["command"].as_str()?.to_owned(),
+                cwd: absolute(root, task["cwd"].as_str().unwrap_or("")),
+            })
+        })
+        .collect()
 }
 
 /// Returns `path` from a plugin made absolute against `root`.
@@ -535,7 +562,100 @@ impl App {
                 chord,
                 answer,
             } => self.finish_key(&plugin, chord, answer),
+            PluginUpdate::Diagnostics {
+                plugin,
+                path,
+                version,
+                answer,
+            } => self.finish_diagnostics(&plugin, &path, version, answer),
+            PluginUpdate::Tasks(answers) => {
+                self.plugin_state.tasks = plugin_tasks(&answers, &self.ui.root);
+                self.show_tasks();
+            }
         }
+    }
+
+    /// Asks plugins that provide `diagnostics` for the problems in each open file that changed
+    /// since they were last asked.
+    fn request_plugin_diagnostics(&mut self) {
+        let mut asks = Vec::new();
+        for document in self.editor.documents() {
+            let Some(path) = document.path() else {
+                continue;
+            };
+            if document.is_large() {
+                continue;
+            }
+            let language = language(Some(path));
+            for plugin in self.plugins.providers("diagnostics", language.as_deref()) {
+                let key = (plugin.name().to_owned(), path.to_owned());
+                if self.plugin_state.diagnosed.get(&key) == Some(&document.version()) {
+                    continue;
+                }
+                let params = json!({
+                    "path": path.to_string_lossy(),
+                    "language": language,
+                    "version": document.version(),
+                    "text": document.text().to_string(),
+                });
+                asks.push((key, document.version(), plugin, params));
+            }
+        }
+        for ((name, path), version, plugin, params) in asks {
+            self.plugin_state
+                .diagnosed
+                .insert((name.clone(), path.clone()), version);
+            self.plugins.spawn(async move {
+                let answer = plugin
+                    .request("provide/diagnostics", params, DIAGNOSTICS_TIMEOUT)
+                    .await;
+                PluginUpdate::Diagnostics {
+                    plugin: name,
+                    path,
+                    version,
+                    answer,
+                }
+            });
+        }
+    }
+
+    /// Shows the problems a plugin found in a file, if it did not change since.
+    fn finish_diagnostics(
+        &mut self,
+        plugin: &str,
+        path: &Path,
+        version: u64,
+        answer: Result<Value, String>,
+    ) {
+        let current = self
+            .find_document(Some(path))
+            .is_some_and(|index| self.editor.documents()[index].version() == version);
+        if !current {
+            return;
+        }
+        let result = answer.and_then(|answer| {
+            let diagnostics = answer.get("diagnostics").cloned().unwrap_or(json!([]));
+            let params = json!({ "path": path.to_string_lossy(), "diagnostics": diagnostics });
+            self.set_plugin_diagnostics(plugin, &params)
+        });
+        if let Err(err) = result {
+            self.plugins
+                .log(plugin, format!("provide/diagnostics: {err}"));
+        }
+    }
+
+    /// Asks plugins that provide `tasks` for theirs and shows every task once they answer.
+    ///
+    /// Returns `false` when no plugin provides tasks, so the tasks can be shown right away.
+    pub(super) fn ask_plugin_tasks(&mut self) -> bool {
+        let providers = self.plugins.providers_any("tasks");
+        let params = json!({ "root": self.ui.root.to_string_lossy() });
+        let Some(asked) = ask_these(providers, "tasks", params, TASKS_TIMEOUT) else {
+            return false;
+        };
+        self.plugins
+            .spawn(async move { PluginUpdate::Tasks(asked.await) });
+        true
     }
 
     /// Cleans up after a plugin that stopped and says so.
@@ -570,6 +690,9 @@ impl App {
         for decorations in self.plugin_state.decorations.values_mut() {
             decorations.remove(plugin);
         }
+        self.plugin_state
+            .diagnosed
+            .retain(|(asked, _), _| asked != plugin);
         self.clear_plugin_screen(plugin);
         self.sync_decorations();
         let source = format!("plugin:{plugin}");
@@ -1204,10 +1327,16 @@ impl App {
             self.plugins
                 .event("closed", &json!({ "path": closed.to_string_lossy() }));
             self.plugin_state.changed.remove(closed);
+            self.plugin_state
+                .diagnosed
+                .retain(|(_, path), _| path != closed);
         }
         self.plugin_state.open = open;
         if !typing && self.plugins.wants("changed") {
             self.send_changes();
+        }
+        if !typing {
+            self.request_plugin_diagnostics();
         }
         if self.plugins.wants("selection") && self.last_input.elapsed() >= SELECTION_DELAY {
             let document = self.editor.document();

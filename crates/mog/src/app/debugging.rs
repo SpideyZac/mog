@@ -9,10 +9,7 @@ use mog_tui::{Focus, debug_panel::FrameEntry};
 use serde_json::json;
 
 use super::App;
-use crate::{
-    debug::{self, DebugReply},
-    tasks::{self},
-};
+use crate::debug::{self, DebugReply};
 
 impl App {
     /// Starts debugging the focused file's project, continuing instead if the program is paused.
@@ -35,7 +32,8 @@ impl App {
             return;
         };
         if !config.before.is_empty() {
-            let task = tasks::tasks(&self.ui.root, &self.ui.config.tasks)
+            let task = self
+                .all_tasks()
                 .into_iter()
                 .find(|task| task.name == config.before);
             if let Some(task) = task {
