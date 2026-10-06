@@ -683,7 +683,7 @@ for things like an outline, a test tree or a log:
 One panel shows on each side, the one opened last. The others on that side show as tabs in its
 title row, and clicking one shows it. The mouse wheel scrolls a panel. Clicking a row sends the
 event `panel_click` with the `id`, the `line` counted from 0 in `lines`, the `x` inside the row
-and the `button`, and closing it with the `\u00d7` sends `panel_closed` with the `id`. A plugin can
+and the `button`, and closing it with its close button sends `panel_closed` with the `id`. A plugin can
 have eight panels with up to 10000 rows each. `ui/layout` answers where the shown panels are as
 `panel_right` and `panel_bottom`.
 
