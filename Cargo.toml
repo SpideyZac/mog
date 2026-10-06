@@ -43,6 +43,7 @@ mog-git = { path = "crates/mog-git", version = "1.0.0" }
 mog-lsp = { path = "crates/mog-lsp", version = "1.0.0" }
 mog-plugin = { path = "crates/mog-plugin", version = "1.0.0" }
 mog-plugin-sdk = { path = "crates/mog-plugin-sdk", version = "1.0.0" }
+mog-plugin-test = { path = "crates/mog-plugin-test", version = "1.0.0" }
 mog-syntax = { path = "crates/mog-syntax", version = "1.0.0" }
 mog-term = { path = "crates/mog-term", version = "1.0.0" }
 mog-tui = { path = "crates/mog-tui", version = "1.0.0" }

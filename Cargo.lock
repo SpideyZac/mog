@@ -1891,6 +1891,7 @@ dependencies = [
  "mog-git",
  "mog-lsp",
  "mog-plugin",
+ "mog-plugin-test",
  "mog-term",
  "mog-tui",
  "notify",
@@ -2009,6 +2010,19 @@ name = "mog-plugin-sdk"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "mog-plugin-test"
+version = "1.0.0"
+dependencies = [
+ "mog-core",
+ "mog-lsp",
+ "mog-plugin",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
 ]
 
 [[package]]

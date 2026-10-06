@@ -1,0 +1,22 @@
+[package]
+name = "mog-plugin-test"
+description = "Test mog plugins against a scripted fake editor, without starting mog."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mog-core.workspace = true
+mog-plugin.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+mog-lsp.workspace = true
