@@ -57,6 +57,9 @@ const TABS_HEIGHT: u16 = 1;
 /// The fewest rows the editor keeps when the terminal panel is open.
 const TERMINAL_MIN_EDITOR: u16 = 6;
 
+/// How many commands the palette remembers.
+const MAX_RECENT_COMMANDS: usize = 20;
+
 /// The part of the screen that takes keyboard input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
@@ -405,6 +408,8 @@ pub struct Ui {
     pub root: PathBuf,
     /// Every command the palette offers.
     pub commands: Vec<CommandInfo>,
+    /// The commands last run from the palette, most recent first.
+    pub recent_commands: Vec<String>,
     /// Every key binding as `(chord, command name)`.
     pub bindings: Vec<(String, String)>,
     /// Whether the terminal sends keys the old way, so some chords cannot reach mog.
@@ -571,6 +576,13 @@ impl Ui {
             text: text.into(),
             hint: hint.into(),
         });
+    }
+
+    /// Notes that the palette ran the command called `name`, so it is offered first next time.
+    pub fn remember_command(&mut self, name: &str) {
+        self.recent_commands.retain(|recent| recent != name);
+        self.recent_commands.insert(0, name.to_owned());
+        self.recent_commands.truncate(MAX_RECENT_COMMANDS);
     }
 
     /// Returns the palette title for the command called `name`, or the name itself.

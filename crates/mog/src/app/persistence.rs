@@ -21,6 +21,8 @@ impl App {
             return;
         };
         let root = self.ui.root.clone();
+        self.ui.recent_commands = state.load_recent_commands();
+        self.saved_recent.clone_from(&self.ui.recent_commands);
         let wanted = self.ui.config.editor.restore_session && self.ui.has_explorer;
         // a file given on the command line is a one off, not the project session
         let opened_file = self.editor.document().path().is_some();
@@ -147,6 +149,17 @@ impl App {
         }
     }
 
+    /// Saves the commands run from the palette if they changed.
+    pub(super) fn save_recent_commands(&mut self) {
+        let Some(state) = self.state.as_ref() else {
+            return;
+        };
+        if self.saved_recent != self.ui.recent_commands {
+            state.save_recent_commands(&self.ui.recent_commands);
+            self.saved_recent.clone_from(&self.ui.recent_commands);
+        }
+    }
+
     /// Writes unsaved documents to swap files and removes the swaps of ones that were saved or
     /// closed.
     pub(super) fn write_swaps(&mut self) {
@@ -248,6 +261,7 @@ impl App {
     /// Saves what should outlive this run and cleans up swap files, right before quitting.
     pub(super) fn shut_down(&mut self) {
         self.save_session();
+        self.save_recent_commands();
         if let Some(state) = self
             .state
             .as_ref()

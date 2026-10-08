@@ -326,6 +326,22 @@ impl State {
         self.writer.run(move || write_json(&path, &session));
     }
 
+    /// Returns the file the recently run commands are kept in.
+    fn recent_path(&self) -> PathBuf {
+        self.dir.join("recent_commands.json")
+    }
+
+    /// Returns the commands last run from the palette, most recent first.
+    pub fn load_recent_commands(&self) -> Vec<String> {
+        read_json(&self.recent_path()).unwrap_or_default()
+    }
+
+    /// Saves the commands last run from the palette, most recent first.
+    pub fn save_recent_commands(&self, commands: &[String]) {
+        let (path, commands) = (self.recent_path(), commands.to_vec());
+        self.writer.run(move || write_json(&path, &commands));
+    }
+
     /// Returns the swap file for the document called `key`, a path or an untitled name.
     pub fn swap_path(&self, key: &str) -> PathBuf {
         let pid = process::id();
@@ -443,6 +459,17 @@ mod tests {
         assert_eq!(state.load_session(Path::new("/code")), Some(session));
         assert_eq!(state.load_session(Path::new("/other")), None);
         assert_eq!(state.take_error(), None);
+    }
+
+    /// The commands run from the palette come back in the same order.
+    #[test]
+    fn recent_commands_round_trip() {
+        let state = state("recent");
+        assert!(state.load_recent_commands().is_empty());
+        let recent = vec!["save".to_owned(), "undo".to_owned()];
+        state.save_recent_commands(&recent);
+        state.flush();
+        assert_eq!(state.load_recent_commands(), recent);
     }
 
     /// Undo history only comes back for the text it was saved with.

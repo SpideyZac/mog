@@ -228,6 +228,8 @@ pub struct App {
     session_enabled: bool,
     /// The session saved last, to skip writing the same one again.
     last_session: Option<Session>,
+    /// The palette history saved last, to skip writing the same one again.
+    saved_recent: Vec<String>,
     /// The swap files this mog wrote, by document key, with the version they hold.
     swaps: HashMap<String, (u64, PathBuf)>,
     /// Files whose saved undo history was already looked for.
@@ -397,6 +399,7 @@ impl App {
             state,
             session_enabled: false,
             last_session: None,
+            saved_recent: Vec::new(),
             swaps: HashMap::new(),
             undo_checked: HashSet::new(),
             recoverable: Vec::new(),
@@ -766,6 +769,7 @@ impl App {
         }
         self.write_swaps();
         self.save_session();
+        self.save_recent_commands();
     }
 
     /// Reacts to the focused document being saved.

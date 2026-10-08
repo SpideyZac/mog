@@ -17,7 +17,7 @@ use crate::{
     picker::{Picker, PickerAction, PickerItem},
     popup,
     theme::Theme,
-    ui::{Focus, Layout, Overlay, PromptKind, Ui},
+    ui::{CommandInfo, Focus, Layout, Overlay, PromptKind, Ui},
 };
 
 /// The most files the finder lists.
@@ -147,13 +147,27 @@ impl Popups {
         let ui = &cx.ui;
         let items = match ui.overlay {
             Some(Overlay::Palette) => {
-                self.commands = ui.commands.iter().map(|info| info.name.clone()).collect();
-                ui.commands
-                    .iter()
+                // what was run lately comes first, the rest keeps the catalog order
+                let rank = |info: &CommandInfo| {
+                    ui.recent_commands
+                        .iter()
+                        .position(|recent| *recent == info.name)
+                        .unwrap_or(usize::MAX)
+                };
+                let mut commands: Vec<&CommandInfo> = ui.commands.iter().collect();
+                commands.sort_by_key(|info| rank(info));
+                self.commands = commands.iter().map(|info| info.name.clone()).collect();
+                commands
+                    .into_iter()
                     .map(|info| {
-                        PickerItem::new(&info.title)
+                        let item = PickerItem::new(&info.title)
                             .detail(&info.name)
-                            .hint(info.keys.join("  "))
+                            .hint(info.keys.join("  "));
+                        if rank(info) == usize::MAX {
+                            item
+                        } else {
+                            item.marker(cx.theme.sidebar_title)
+                        }
                     })
                     .collect()
             }
@@ -341,6 +355,7 @@ impl Popups {
                 let Some(name) = self.commands.get(index) else {
                     return;
                 };
+                cx.ui.remember_command(name);
                 match name.parse::<Command>() {
                     Ok(command) => cx.ui.request(command),
                     Err(err) => cx.editor.set_status(err.to_string()),
@@ -754,6 +769,48 @@ mod tests {
         }
         assert_eq!(ui.requests, [Command::Undo]);
         assert_eq!(ui.overlay, None);
+        assert_eq!(ui.recent_commands, ["undo"]);
+    }
+
+    /// Commands run lately come first in the palette, most recent on top.
+    #[test]
+    fn palette_lists_recent_commands_first() {
+        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        let theme = Theme::default();
+        let info = |name: &str| CommandInfo {
+            name: name.into(),
+            title: name.into(),
+            keys: Vec::new(),
+        };
+        let mut ui = Ui {
+            commands: vec![info("save"), info("undo"), info("redo")],
+            recent_commands: vec!["redo".into(), "undo".into()],
+            ..Ui::default()
+        };
+        ui.open(Overlay::Palette);
+        let mut compositor = Compositor::new();
+        compositor.push(Box::new(Popups::new()));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                let mut cx = Context {
+                    editor: &mut editor,
+                    theme: &theme,
+                    ui: &mut ui,
+                };
+                compositor.render(frame, &mut cx);
+            })
+            .expect("draw");
+        let mut cx = Context {
+            editor: &mut editor,
+            theme: &theme,
+            ui: &mut ui,
+        };
+        compositor.handle_key(KeyChord::new(Key::Enter, Modifiers::default()), &mut cx);
+        assert_eq!(ui.requests, [Command::Redo]);
+        ui.remember_command("save");
+        ui.remember_command("redo");
+        assert_eq!(ui.recent_commands, ["redo", "save", "undo"]);
     }
 
     /// Enter in the key list records the next chord as the new binding.
