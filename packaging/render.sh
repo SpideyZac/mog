@@ -10,7 +10,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 sha() {
   local file
-  file=$(ls "$dist"/mog-v"$version"-"$1".* | grep -v -e '\.sha256$' -e '\.minisig$' | head -n 1)
+  file=$(ls "$dist"/mog-v"$version"-"$1".* | grep -v -e '\.sha256$' -e '\.minisig$' -e '\.sig$' | head -n 1)
   if command -v sha256sum > /dev/null; then
     sha256sum "$file" | cut -d ' ' -f 1
   else

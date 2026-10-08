@@ -13,7 +13,7 @@ for every release.
 | --- | --- | --- |
 | `ci` | Runs `ci.yml`: formatting, clippy, tests on Linux, macOS and Windows, the plugin SDK tests, the minimum Rust version and `cargo deny` | |
 | `build` | Builds `mog` for five targets and packs each with the README, the license and `examples/` as `mog-v<version>-<target>.tar.gz` (`.zip` on Windows) with a `.sha256` next to it | `ci` |
-| `release` | Writes release notes from the commits since the last tag, checks every target is there, signs every archive with minisign and publishes the GitHub release | `build` |
+| `release` | Writes release notes from the commits since the last tag, checks every target is there, signs every archive with minisign (uploading the `.minisig` and a copy named `.sig`, which is what cargo-binstall fetches) and publishes the GitHub release | `build` |
 | `packages` | Renders the Homebrew formula, the AUR `PKGBUILD` and the winget manifests from `packaging/`, attaches them to the release and publishes each one whose secret is set | `release` |
 
 Nothing ships if a check fails or a target is missing, because the updater and `cargo binstall`

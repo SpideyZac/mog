@@ -150,6 +150,8 @@ jobs:
             [ -e "$archive" ] || continue
             name=$(basename "$archive")
             minisign -S -s "$key" -m "$archive" -t "timestamp:$(date +%s) file:$name" < /dev/null
+            # cargo-binstall looks for the signature at <archive>.sig
+            cp "$archive.minisig" "$archive.sig"
           done
           rm -f "$key"
           ls dist
