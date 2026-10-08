@@ -136,6 +136,17 @@ impl App {
                     fs::remove_file(&path)
                 };
                 if result.is_ok() {
+                    // folders take every file open inside them along
+                    let gone: Vec<usize> = (0..self.editor.documents().len())
+                        .filter(|&index| {
+                            self.editor.documents()[index]
+                                .path()
+                                .is_some_and(|open| open.starts_with(&path))
+                        })
+                        .collect();
+                    for index in gone.into_iter().rev() {
+                        self.editor.close(index);
+                    }
                     self.editor
                         .set_status(format!("deleted {}, gone forever", path.display()));
                 }

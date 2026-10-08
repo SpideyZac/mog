@@ -874,10 +874,10 @@ mod tests {
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
     use mog_config::{Config, DebugConfig, PluginConfig, TaskConfig, ThemeConfig};
-    use mog_core::{Command, Key, KeyChord};
+    use mog_core::{Command, Document, Key, KeyChord};
     use mog_plugin::{PluginEvent, parse_actions};
     use mog_tui::{
-        Context, CursorShape, PanelEvent, PluginSegment, PromptKind, Side,
+        Context, CursorShape, PanelEvent, PluginSegment, Prompt, PromptKind, Side,
         popups::PLUGIN_PICKED_COMMAND,
     };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
@@ -2259,6 +2259,39 @@ plugin.run()
     fn plugin_actions(app: &mut App, json: Value) -> Result<(), String> {
         let actions = parse_actions(&json).expect("valid actions");
         app.apply_actions(actions)
+    }
+
+    /// Deleting a file from the explorer closes its tab, and a folder closes the tabs inside it.
+    #[tokio::test]
+    async fn deleting_closes_open_files() {
+        let dir = temp_dir();
+        let keep = dir.join("keep.txt");
+        let gone = dir.join("gone.txt");
+        let nested = dir.join("nested");
+        fs::create_dir_all(&nested).expect("dir");
+        let inside = nested.join("inside.txt");
+        for file in [&keep, &gone, &inside] {
+            fs::write(
+                file, "text
+",
+            )
+            .expect("write");
+        }
+        let mut app = start(&keep);
+        app.editor.open(&gone).expect("open");
+        app.editor.open(&inside).expect("open");
+        for path in [gone.clone(), nested] {
+            app.ui.submitted = Some(Prompt {
+                kind: PromptKind::DeleteFile(path),
+                title: String::new(),
+                text: "y".into(),
+                hint: String::new(),
+            });
+            app.submit_prompt();
+        }
+        let open: Vec<_> = app.editor.documents().iter().map(Document::path).collect();
+        assert_eq!(open, [Some(keep.as_path())]);
+        let _ = fs::remove_dir_all(dir);
     }
 
     /// Two parts of a workspace edit for the same file both land, in offsets of the text
