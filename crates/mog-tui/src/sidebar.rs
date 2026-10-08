@@ -71,7 +71,7 @@ fn buttons(ui: &Ui) -> (Vec<Button>, Vec<Button>) {
     };
     let mut top = Vec::new();
     if ui.has_explorer {
-        top.push(view("\u{25c6}", "Files", SidebarView::Files));
+        top.push(view("\u{25a4}", "Files", SidebarView::Files));
     }
     top.push(view("\u{2387}", "Source control", SidebarView::Git));
     for panel in ui
@@ -110,7 +110,7 @@ fn buttons(ui: &Ui) -> (Vec<Button>, Vec<Button>) {
             "project_search.open",
             false,
         ),
-        action(">_", "Terminal", "terminal.toggle", ui.terminal_open),
+        action("$", "Terminal", "terminal.toggle", ui.terminal_open),
         action("\u{2726}", "AI chat", "ai.chat", ui.chat.open),
         action("\u{2261}", "Settings", "settings.open", false),
     ];
@@ -289,16 +289,10 @@ impl Layer for SidebarResize {
         if view.is_empty() {
             return Rect::default();
         }
-        // the cell next to the edge counts too, since one column is hard to hit
-        let edge = Self::edge(view, ui);
-        let on_right = ui.sidebar.open && ui.sidebar.side == SidebarSide::Right;
+        // the cells around the edge count too, since one column is hard to hit
         Rect {
-            x: if on_right {
-                edge.saturating_sub(1)
-            } else {
-                edge
-            },
-            width: 2,
+            x: Self::edge(view, ui).saturating_sub(1),
+            width: 3,
             ..view
         }
     }
@@ -707,7 +701,7 @@ mod tests {
         let down = MouseEventKind::Down(MouseButton::Left);
         let drag = MouseEventKind::Drag(MouseButton::Left);
         let up = MouseEventKind::Up(MouseButton::Left);
-        mouse(&mut compositor, &mut ui, &mut editor, down, (33, 5));
+        mouse(&mut compositor, &mut ui, &mut editor, down, (32, 5));
         mouse(&mut compositor, &mut ui, &mut editor, drag, (40, 5));
         mouse(&mut compositor, &mut ui, &mut editor, up, (40, 5));
         assert_eq!(ui.sidebar.width, Some(37));
@@ -716,7 +710,7 @@ mod tests {
         ui.sidebar.width = None;
         ui.sidebar.side = SidebarSide::Right;
         draw(&mut compositor, &mut ui, &mut editor, (100, 30));
-        mouse(&mut compositor, &mut ui, &mut editor, down, (66, 5));
+        mouse(&mut compositor, &mut ui, &mut editor, down, (67, 5));
         mouse(&mut compositor, &mut ui, &mut editor, drag, (60, 5));
         mouse(&mut compositor, &mut ui, &mut editor, up, (60, 5));
         assert_eq!(ui.sidebar.width, Some(36));

@@ -6,7 +6,7 @@ expression: text
 1 fn main() {                               │ main                │ ⎇
 2     let answer = 42;                      │  + all   ✔ commit   │ ⌕
 3     println!("{answer}");                 │ STAGED              │
-4 }                                         │ M src/main.rs       │ >_
+4 }                                         │ M src/main.rs       │ $
 5                                           │ CHANGES             │
                                             │ U notes.txt         │ ✦
                                             │                     │
