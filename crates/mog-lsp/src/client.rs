@@ -6,7 +6,7 @@ use std::{
     io::{self, ErrorKind},
     path::{Path, PathBuf},
     process::{self, Stdio},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock, PoisonError},
     time::Duration,
 };
 
@@ -24,7 +24,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader, BufWriter},
     process::Command,
     sync::{
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        mpsc::{self, UnboundedReceiver, UnboundedSender, WeakUnboundedSender},
         oneshot,
     },
     task::JoinHandle,
@@ -136,6 +136,8 @@ pub struct Client {
     outgoing: UnboundedSender<Outgoing>,
     /// What the server said it can do, once the handshake is done.
     capabilities: Arc<OnceLock<Value>>,
+    /// The TypeScript server the Vue server's questions about scripts are passed on to.
+    tsserver: Arc<Mutex<Option<Client>>>,
 }
 
 impl Client {
@@ -217,7 +219,10 @@ impl Client {
         let name = name.into();
         let (outgoing, queue) = mpsc::unbounded_channel();
         let capabilities = Arc::new(OnceLock::new());
+        let tsserver = Arc::new(Mutex::new(None));
         let connection = Connection {
+            replies: outgoing.downgrade(),
+            tsserver: Arc::clone(&tsserver),
             name: name.clone(),
             capabilities: Arc::clone(&capabilities),
             writer: BufWriter::new(writer),
@@ -233,9 +238,16 @@ impl Client {
                 name,
                 outgoing,
                 capabilities,
+                tsserver,
             },
             handle,
         )
+    }
+
+    /// Passes the questions this server asks about TypeScript, like the Vue server does, to
+    /// `tsserver`, a TypeScript language server that has the Vue plugin.
+    pub fn bridge_tsserver(&self, tsserver: Client) {
+        *self.tsserver.lock().unwrap_or_else(PoisonError::into_inner) = Some(tsserver);
     }
 
     /// Returns the name of the server.
@@ -525,6 +537,10 @@ struct Connection<W> {
     settings: Value,
     /// Where the capabilities from the handshake are kept for the client.
     capabilities: Arc<OnceLock<Value>>,
+    /// The TypeScript server that answers the questions of a Vue server, once there is one.
+    tsserver: Arc<Mutex<Option<Client>>>,
+    /// The queue of the client, held weakly so the server still stops when the client is dropped.
+    replies: WeakUnboundedSender<Outgoing>,
 }
 
 impl<W: AsyncWrite + Unpin> Connection<W> {
@@ -654,14 +670,42 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                 }
             }
             Message::Notification { method, params } if method == "tsserver/request" => {
-                // the vue server forwards typescript questions to the editor and waits, and mog
-                // has no tsserver, so it is told there is no answer
+                // the vue server forwards typescript questions to the editor and waits, so they
+                // go to the typescript server, or are answered with nothing if there is none
                 let id = params[0][0].clone();
-                self.write(Message::Notification {
-                    method: "tsserver/response".into(),
-                    params: json!([[id, Value::Null]]),
-                })
-                .await?;
+                let tsserver = self
+                    .tsserver
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone();
+                let Some(tsserver) = tsserver.filter(Client::is_running) else {
+                    return self
+                        .write(Message::Notification {
+                            method: "tsserver/response".into(),
+                            params: json!([[id, Value::Null]]),
+                        })
+                        .await;
+                };
+                let (command, arguments) = (params[0][1].clone(), params[0][2].clone());
+                let replies = self.replies.clone();
+                tokio::spawn(async move {
+                    let asked = tsserver
+                        .request(
+                            "workspace/executeCommand",
+                            json!({
+                                "command": "typescript.tsserverRequest",
+                                "arguments": [command, arguments, { "isAsync": true, "lowPriority": true }],
+                            }),
+                        )
+                        .await;
+                    let body = asked.map_or(Value::Null, |result| result["body"].clone());
+                    if let Some(replies) = replies.upgrade() {
+                        let _ = replies.send(Outgoing::Notification {
+                            method: "tsserver/response".into(),
+                            params: json!([[id, body]]),
+                        });
+                    }
+                });
             }
             Message::Notification { method, params } => self.notification(&method, params),
             Message::Request { id, method, params } => {

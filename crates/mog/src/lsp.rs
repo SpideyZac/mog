@@ -362,6 +362,9 @@ impl LanguageServers {
             if let Some(client) = self.client_for(&path) {
                 client.did_close(&path);
             }
+            if let Some(companion) = self.companion_for(&path) {
+                companion.did_close(&path);
+            }
         }
         for document in documents {
             // servers choke on huge files and sending one every pause would stall mog
@@ -381,13 +384,20 @@ impl LanguageServers {
             let Some(client) = self.clients.get(&name) else {
                 continue;
             };
+            let companion = self.companion_for(path);
             let version = i32::try_from(document.version()).unwrap_or(i32::MAX);
             let text = document.text().to_string();
             if self.synced.contains_key(path) {
                 client.did_change(path, version, &text);
+                if let Some(companion) = companion {
+                    companion.did_change(path, version, &text);
+                }
             } else {
                 let language_id = self.configs[&name].language_id.as_deref().unwrap_or(&name);
                 client.did_open(path, language_id, version, &text);
+                if let Some(companion) = companion {
+                    companion.did_open(path, language_id, version, &text);
+                }
             }
             self.synced.insert(path.to_owned(), document.version());
         }
@@ -417,6 +427,9 @@ impl LanguageServers {
         ) {
             Ok(client) => {
                 self.clients.insert(name.to_owned(), client);
+                if name == "vue" {
+                    self.bridge_vue();
+                }
                 Ok(())
             }
             Err(err) => {
@@ -436,6 +449,32 @@ impl LanguageServers {
                 Err(Some(message))
             }
         }
+    }
+
+    /// Starts the TypeScript server the Vue server needs for scripts and hands the Vue server
+    /// its questions.
+    ///
+    /// Without it the Vue server only knows templates and styles.
+    fn bridge_vue(&mut self) {
+        if !self.configs.contains_key("typescript") {
+            return;
+        }
+        // a missing program is offered for install, the vue server works without it
+        let _ = self.ensure_started("typescript");
+        if let (Some(vue), Some(typescript)) =
+            (self.clients.get("vue"), self.clients.get("typescript"))
+        {
+            vue.bridge_tsserver(typescript.clone());
+        }
+    }
+
+    /// Returns the TypeScript server that sees the same documents as the Vue server, for a Vue
+    /// file.
+    fn companion_for(&self, path: &Path) -> Option<Client> {
+        if self.server_for(path) != Some("vue") {
+            return None;
+        }
+        self.clients.get("typescript").cloned()
     }
 
     /// Tells the server for `path` that it was saved, so checks that run on save start.
@@ -601,6 +640,9 @@ pub fn exit_message(server: &str, reason: Option<&str>) -> String {
 /// The Vue server needs to know where TypeScript is, so the project's copy is used unless the
 /// config already says.
 fn server_settings(name: &str, settings: &Value, root: &Path) -> Value {
+    if name == "typescript" {
+        return with_vue_plugin(settings);
+    }
     if name != "vue" || !settings["typescript"]["tsdk"].is_null() {
         return settings.clone();
     }
@@ -614,6 +656,31 @@ fn server_settings(name: &str, settings: &Value, root: &Path) -> Value {
         json!({})
     };
     settings["typescript"] = json!({ "tsdk": tsdk.to_string_lossy() });
+    settings
+}
+
+/// Adds the Vue plugin to the initialization options of the TypeScript server if the Vue server
+/// is installed, since the plugin is what lets it read the scripts of `.vue` files.
+fn with_vue_plugin(settings: &Value) -> Value {
+    let Some(location) = global_modules()
+        .into_iter()
+        .map(|dir| dir.join("@vue").join("language-server"))
+        .find(|dir| dir.is_dir())
+    else {
+        return settings.clone();
+    };
+    let mut settings = if settings.is_object() {
+        settings.clone()
+    } else {
+        json!({})
+    };
+    if settings["plugins"].is_null() {
+        settings["plugins"] = json!([{
+            "name": "@vue/typescript-plugin",
+            "location": location.to_string_lossy(),
+            "languages": ["vue"],
+        }]);
+    }
     settings
 }
 
@@ -641,8 +708,8 @@ fn has_js_api(dir: &Path) -> bool {
     dir.join("typescript.js").is_file()
 }
 
-/// Returns the `lib` folders of globally installed copies of TypeScript.
-fn global_typescripts() -> Vec<PathBuf> {
+/// Returns the folders global npm packages are installed in.
+fn global_modules() -> Vec<PathBuf> {
     let mut modules: Vec<PathBuf> = env::var_os("NODE_PATH")
         .map(|paths| env::split_paths(&paths).collect())
         .unwrap_or_default();
@@ -667,6 +734,11 @@ fn global_typescripts() -> Vec<PathBuf> {
         .map(PathBuf::from),
     );
     modules
+}
+
+/// Returns the `lib` folders of globally installed copies of TypeScript.
+fn global_typescripts() -> Vec<PathBuf> {
+    global_modules()
         .into_iter()
         .map(|dir| dir.join("typescript").join("lib"))
         .collect()

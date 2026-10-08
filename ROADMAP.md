@@ -97,6 +97,7 @@
 - [x] Auto import: completions apply the imports they need, resolved on pick when the server
   sends them late
 - [x] Start the Vue server with a TypeScript that has a JavaScript api
+- [x] Vue scripts: the Vue server asks a TypeScript server with the Vue plugin (`typescript-language-server` and `@vue/language-server` installed globally), so completion works in `<script>` and templates
 
 ## AI
 
