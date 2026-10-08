@@ -632,6 +632,16 @@ impl<W: AsyncWrite + Unpin> Connection<W> {
                     let _ = reply.send(result);
                 }
             }
+            Message::Notification { method, params } if method == "tsserver/request" => {
+                // the vue server forwards typescript questions to the editor and waits, and mog
+                // has no tsserver, so it is told there is no answer
+                let id = params[0][0].clone();
+                self.write(Message::Notification {
+                    method: "tsserver/response".into(),
+                    params: json!([[id, Value::Null]]),
+                })
+                .await?;
+            }
             Message::Notification { method, params } => self.notification(&method, params),
             Message::Request { id, method, params } => {
                 // answering with nulls keeps servers that wait on us from hanging
@@ -789,6 +799,59 @@ mod tests {
                 "textDocument/didClose"
             ]
         );
+    }
+
+    /// Questions for a tsserver are answered with nothing so the vue server does not wait.
+    #[tokio::test]
+    async fn answers_tsserver_requests() {
+        let (client_side, server_side) = io::duplex(1 << 16);
+        let (client_read, client_write) = io::split(client_side);
+        let (server_read, mut server_write) = io::split(server_side);
+        let (events, _events) = mpsc::unbounded_channel();
+        let (_client, _task) = Client::connect(
+            "test",
+            client_read,
+            client_write,
+            &env::temp_dir(),
+            &Value::Null,
+            events,
+        );
+        let mut server_read = BufReader::new(server_read);
+        let mut read = async || {
+            time::timeout(
+                Duration::from_secs(5),
+                transport::read_message(&mut server_read),
+            )
+            .await
+            .expect("in time")
+            .expect("read")
+            .expect("message")
+        };
+        let Message::Request { id, .. } = read().await else {
+            panic!("expected initialize");
+        };
+        let reply = Message::Response {
+            id,
+            result: Ok(json!({ "capabilities": {} })),
+        };
+        transport::write_message(&mut server_write, &reply)
+            .await
+            .expect("write");
+        let ask = Message::Notification {
+            method: "tsserver/request".into(),
+            params: json!([[7, "_vue:projectInfo", { "file": "a.vue" }]]),
+        };
+        transport::write_message(&mut server_write, &ask)
+            .await
+            .expect("write");
+        loop {
+            if let Message::Notification { method, params } = read().await
+                && method == "tsserver/response"
+            {
+                assert_eq!(params, json!([[7, null]]));
+                break;
+            }
+        }
     }
 
     /// Asking to show a document becomes an event and is answered with success.

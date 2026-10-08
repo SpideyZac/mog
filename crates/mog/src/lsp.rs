@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    fs,
+    env, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -373,10 +373,11 @@ impl LanguageServers {
         }
         let config = &self.configs[name];
         let settings = server_settings(name, &config.settings, &self.root);
+        let args = server_args(name, &config.args, &settings);
         match Client::start(
             name,
             &config.command,
-            &config.args,
+            &args,
             &self.root,
             &settings,
             self.events.clone(),
@@ -583,6 +584,61 @@ fn server_settings(name: &str, settings: &Value, root: &Path) -> Value {
     settings
 }
 
+/// Returns the arguments to start the server `name` with, adding what it cannot run without.
+///
+/// The Vue server loads TypeScript itself and falls back to a copy that has no JavaScript api
+/// (TypeScript 7), which crashes it on the first diagnostic, so it is pointed at one that has.
+fn server_args(name: &str, args: &[String], settings: &Value) -> Vec<String> {
+    let mut args = args.to_vec();
+    if name == "vue" && !args.iter().any(|arg| arg.starts_with("--tsdk")) {
+        let given = settings["typescript"]["tsdk"].as_str().map(PathBuf::from);
+        if let Some(tsdk) = given
+            .into_iter()
+            .chain(global_typescripts())
+            .find(has_js_api)
+        {
+            args.push(format!("--tsdk={}", tsdk.display()));
+        }
+    }
+    args
+}
+
+/// Returns whether the TypeScript `lib` folder `dir` has the JavaScript api.
+fn has_js_api(dir: &PathBuf) -> bool {
+    dir.join("typescript.js").is_file()
+}
+
+/// Returns the `lib` folders of globally installed copies of TypeScript.
+fn global_typescripts() -> Vec<PathBuf> {
+    let mut modules: Vec<PathBuf> = env::var_os("NODE_PATH")
+        .map(|paths| env::split_paths(&paths).collect())
+        .unwrap_or_default();
+    if let Some(prefix) = env::var_os("NPM_CONFIG_PREFIX") {
+        modules.push(PathBuf::from(&prefix).join("lib").join("node_modules"));
+        modules.push(PathBuf::from(prefix).join("node_modules"));
+    }
+    if let Some(data) = env::var_os("APPDATA") {
+        modules.push(PathBuf::from(data).join("npm").join("node_modules"));
+    }
+    if let Some(home) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")) {
+        let home = PathBuf::from(home);
+        modules.push(home.join(".npm-global").join("lib").join("node_modules"));
+        modules.push(home.join(".local").join("lib").join("node_modules"));
+    }
+    modules.extend(
+        [
+            "/usr/local/lib/node_modules",
+            "/usr/lib/node_modules",
+            "/opt/homebrew/lib/node_modules",
+        ]
+        .map(PathBuf::from),
+    );
+    modules
+        .into_iter()
+        .map(|dir| dir.join("typescript").join("lib"))
+        .collect()
+}
+
 #[cfg(test)]
 /// Tests for language server helpers.
 mod tests {
@@ -592,7 +648,7 @@ mod tests {
     use serde_json::{Value, json};
     use tokio::sync::mpsc;
 
-    use super::{LanguageServers, exit_message, server_settings};
+    use super::{LanguageServers, exit_message, server_args, server_settings};
 
     /// The Vue server is pointed at the project's TypeScript, other servers are left alone.
     #[test]
@@ -608,6 +664,22 @@ mod tests {
         let given = json!({ "typescript": { "tsdk": "/mine" } });
         assert_eq!(server_settings("vue", &given, &root), given);
         assert_eq!(server_settings("rust", &Value::Null, &root), Value::Null);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The Vue server is told which TypeScript has a JavaScript api, other servers are left alone.
+    #[test]
+    fn vue_gets_a_tsdk_argument() {
+        let root = env::temp_dir().join(format!("mog-tsdk-{}", process::id()));
+        fs::create_dir_all(&root).expect("temp dir");
+        fs::write(root.join("typescript.js"), "").expect("file");
+        let settings = json!({ "typescript": { "tsdk": root.to_string_lossy() } });
+        let args = server_args("vue", &["--stdio".into()], &settings);
+        assert_eq!(args[0], "--stdio");
+        assert_eq!(args[1], format!("--tsdk={}", root.display()));
+        let own = ["--tsdk=/mine".to_owned()];
+        assert_eq!(server_args("vue", &own, &settings), own);
+        assert_eq!(server_args("go", &[], &settings), Vec::<String>::new());
         let _ = fs::remove_dir_all(&root);
     }
 
