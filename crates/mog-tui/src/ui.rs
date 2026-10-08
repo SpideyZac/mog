@@ -43,7 +43,7 @@ const EXPLORER_MAX_WIDTH: u16 = 30;
 const SIDEBAR_MIN_WIDTH: u16 = 12;
 
 /// The width of the bar of sidebar buttons.
-pub const ACTIVITY_WIDTH: u16 = 3;
+pub const ACTIVITY_WIDTH: u16 = 4;
 
 /// The fewest rows the terminal panel can be dragged to, its border row included.
 const TERMINAL_MIN_HEIGHT: u16 = 3;

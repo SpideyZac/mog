@@ -289,9 +289,16 @@ impl Layer for SidebarResize {
         if view.is_empty() {
             return Rect::default();
         }
+        // the cell next to the edge counts too, since one column is hard to hit
+        let edge = Self::edge(view, ui);
+        let on_right = ui.sidebar.open && ui.sidebar.side == SidebarSide::Right;
         Rect {
-            x: Self::edge(view, ui),
-            width: 1,
+            x: if on_right {
+                edge.saturating_sub(1)
+            } else {
+                edge
+            },
+            width: 2,
             ..view
         }
     }
@@ -299,8 +306,9 @@ impl Layer for SidebarResize {
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
         self.view = view_rect(&cx.ui.layout(buf.area));
         if self.dragging {
+            let x = Self::edge(self.view, cx.ui);
             for y in area.top()..area.bottom() {
-                buf.set_string(area.x, y, "\u{2503}", cx.theme.sidebar_title);
+                buf.set_string(x, y, "\u{2503}", cx.theme.sidebar_title);
             }
         }
     }
@@ -645,15 +653,15 @@ mod tests {
         let mut ui = ui();
         let screen = Rect::new(0, 0, 100, 30);
         let layout = ui.layout(screen);
-        assert_eq!(layout.activity_bar, Rect::new(0, 0, 3, 29));
-        assert_eq!(layout.explorer, Rect::new(3, 0, 30, 29));
-        assert_eq!(layout.editor.x, 33);
+        assert_eq!(layout.activity_bar, Rect::new(0, 0, 4, 29));
+        assert_eq!(layout.explorer, Rect::new(4, 0, 30, 29));
+        assert_eq!(layout.editor.x, 34);
         ui.sidebar.side = SidebarSide::Right;
         let layout = ui.layout(screen);
-        assert_eq!(layout.activity_bar, Rect::new(97, 0, 3, 29));
-        assert_eq!(layout.explorer, Rect::new(67, 0, 30, 29));
+        assert_eq!(layout.activity_bar, Rect::new(96, 0, 4, 29));
+        assert_eq!(layout.explorer, Rect::new(66, 0, 30, 29));
         assert_eq!(layout.editor.x, 0);
-        assert_eq!(layout.editor.right(), 67);
+        assert_eq!(layout.editor.right(), 66);
     }
 
     /// A view that is folded away leaves just the bar.
@@ -663,10 +671,10 @@ mod tests {
         ui.toggle_view(SidebarView::Files);
         let layout = ui.layout(Rect::new(0, 0, 100, 30));
         assert!(layout.explorer.is_empty());
-        assert_eq!(layout.editor.x, 3);
+        assert_eq!(layout.editor.x, 4);
         ui.toggle_view(SidebarView::Git);
         let layout = ui.layout(Rect::new(0, 0, 100, 30));
-        assert_eq!(layout.sidebar_view, Rect::new(3, 0, 30, 29));
+        assert_eq!(layout.sidebar_view, Rect::new(4, 0, 30, 29));
         assert!(layout.explorer.is_empty());
     }
 
@@ -699,19 +707,19 @@ mod tests {
         let down = MouseEventKind::Down(MouseButton::Left);
         let drag = MouseEventKind::Drag(MouseButton::Left);
         let up = MouseEventKind::Up(MouseButton::Left);
-        mouse(&mut compositor, &mut ui, &mut editor, down, (32, 5));
+        mouse(&mut compositor, &mut ui, &mut editor, down, (33, 5));
         mouse(&mut compositor, &mut ui, &mut editor, drag, (40, 5));
         mouse(&mut compositor, &mut ui, &mut editor, up, (40, 5));
-        assert_eq!(ui.sidebar.width, Some(38));
-        assert_eq!(ui.layout(Rect::new(0, 0, 100, 30)).explorer.width, 38);
+        assert_eq!(ui.sidebar.width, Some(37));
+        assert_eq!(ui.layout(Rect::new(0, 0, 100, 30)).explorer.width, 37);
 
         ui.sidebar.width = None;
         ui.sidebar.side = SidebarSide::Right;
         draw(&mut compositor, &mut ui, &mut editor, (100, 30));
-        mouse(&mut compositor, &mut ui, &mut editor, down, (67, 5));
+        mouse(&mut compositor, &mut ui, &mut editor, down, (66, 5));
         mouse(&mut compositor, &mut ui, &mut editor, drag, (60, 5));
         mouse(&mut compositor, &mut ui, &mut editor, up, (60, 5));
-        assert_eq!(ui.sidebar.width, Some(37));
+        assert_eq!(ui.sidebar.width, Some(36));
     }
 
     /// Without the sidebar the explorer is a plain column that can still be resized.

@@ -1963,6 +1963,36 @@ plugin.run()
         })
     }
 
+    /// Dragging the edge of the sidebar view through the whole app resizes it.
+    #[tokio::test]
+    async fn drags_the_sidebar_edge() {
+        let dir = temp_dir();
+        let mut config = Config::default();
+        config.flair.enabled = false;
+        config.updates.check = false;
+        config.ui.git_blame = false;
+        config.ui.sidebar = true;
+        let args = Args::parse_from([Path::new("mog"), dir.as_path()]);
+        let mut app = App::with_config(args, config, Vec::new(), None);
+        let _ = app.snapshot("100x30", Duration::ZERO, &[]).await;
+        let width = |app: &App| app.ui.layout(Rect::new(0, 0, 100, 30)).explorer.width;
+        let before = width(&app);
+        let edge = 4 + before - 1;
+        let event = |kind, column| {
+            Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row: 5,
+                modifiers: KeyModifiers::empty(),
+            })
+        };
+        app.handle_event(event(MouseEventKind::Down(MouseButton::Left), edge));
+        app.handle_event(event(MouseEventKind::Drag(MouseButton::Left), edge + 8));
+        app.handle_event(event(MouseEventKind::Up(MouseButton::Left), edge + 8));
+        assert_eq!(width(&app), before + 8);
+        let _ = fs::remove_dir_all(dir);
+    }
+
     /// Plugin segments go on either end, and a click on one without a command is passed on,
     /// while the badge still opens the palette.
     #[tokio::test]
