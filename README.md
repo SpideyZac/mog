@@ -85,7 +85,7 @@ ready the next time you start mog, which then shows what changed. Turn that off 
 To check a download yourself:
 
 ```sh
-minisign -Vm mog-<version>-<target>.zip -P RWQEyQrj2l2VtRVkLbwHBkVxhMbDdbOGc7wHR8hjR27Ry+epMjmzedE0
+minisign -Vm mog-<version>-<target>.zip -P RWQxm0+WtCFyKauL+lbkHe5SYv81b5BxDzeYRCmfEwgPf062L0qEbDxb
 ```
 
 ### Building it yourself
