@@ -26,6 +26,7 @@ pub mod project_search;
 pub mod release_notes;
 pub mod search;
 pub mod settings;
+pub mod sidebar;
 pub mod status_line;
 pub mod tabs;
 pub mod theme;
@@ -53,6 +54,7 @@ pub use project_search::ProjectSearchPanel;
 pub use release_notes::ReleaseNotesPopup;
 pub use search::SearchBar;
 pub use settings::{SettingKey, SettingsPanel};
+pub use sidebar::{ActivityBar, SidebarResize, SourceControlView};
 pub use status_line::StatusLine;
 pub use tabs::Tabs;
 pub use theme::Theme;
@@ -60,8 +62,8 @@ pub use theme_editor::ThemeEditor;
 pub use toasts::{Toast, ToastButton, ToastClick, ToastLevel, ToastProgress, Toasts};
 pub use ui::{
     CommandInfo, CopilotState, Focus, Layout, Overlay, Pane, PluginHealth, PluginPick,
-    PluginSegment, Prompt, PromptKind, Segment, SegmentClick, Side, SignatureHint, SplitState,
-    SymbolEntry, Ui, UiEvent,
+    PluginSegment, Prompt, PromptKind, Segment, SegmentClick, Side, SidebarSide, SidebarState,
+    SidebarView, SignatureHint, SplitState, SymbolEntry, Ui, UiEvent,
 };
 pub use widgets::{
     Anchor, CursorShape, CursorStyle, Edge, Motion, PluginWidget, PluginWidgets, WidgetClick,

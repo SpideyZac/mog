@@ -124,7 +124,7 @@ impl GitPanelState {
 }
 
 /// Returns the letter and style for `status`.
-fn status_mark(status: FileStatus, theme: &Theme) -> (&'static str, Style) {
+pub(crate) fn status_mark(status: FileStatus, theme: &Theme) -> (&'static str, Style) {
     match status {
         FileStatus::Modified => ("M", theme.git_modified),
         FileStatus::Added => ("A", theme.git_added),
@@ -136,7 +136,7 @@ fn status_mark(status: FileStatus, theme: &Theme) -> (&'static str, Style) {
 }
 
 /// Returns `path` relative to `root` with `/` separators.
-fn relative(path: &Path, root: &Path) -> String {
+pub(crate) fn relative(path: &Path, root: &Path) -> String {
     let parts: Vec<String> = path
         .strip_prefix(root)
         .unwrap_or(path)

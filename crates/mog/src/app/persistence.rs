@@ -6,7 +6,7 @@ use std::{
 };
 
 use mog_core::Change;
-use mog_tui::{Pane, PromptKind, SplitState};
+use mog_tui::{Pane, PromptKind, SidebarSide, SidebarView, SplitState};
 
 use super::App;
 use crate::session::{Session, SessionFile};
@@ -95,6 +95,24 @@ impl App {
             self.editor.focus(active);
         }
         self.ui.explorer_open = session.explorer_open && self.ui.has_explorer;
+        if let Some(open) = session.sidebar_open {
+            self.ui.sidebar.open = open;
+        }
+        if let Some(right) = session.sidebar_right {
+            self.ui.sidebar.side = if right {
+                SidebarSide::Right
+            } else {
+                SidebarSide::Left
+            };
+        }
+        match session.sidebar_view.as_deref() {
+            Some("git") => self.ui.sidebar.view = Some(SidebarView::Git),
+            Some("none") => self.ui.sidebar.view = None,
+            Some(_) => self.ui.sidebar.view = Some(SidebarView::Files),
+            None => {}
+        }
+        self.ui.sidebar.width = session.sidebar_width;
+        self.ui.terminal_height = session.terminal_height;
     }
 
     /// Returns what is open now as a session.
@@ -127,6 +145,18 @@ impl App {
                 .as_ref()
                 .and_then(|split| indexes.get(&split.other_document).copied()),
             explorer_open: self.ui.explorer_open,
+            sidebar_open: Some(self.ui.sidebar.open),
+            sidebar_right: Some(self.ui.sidebar.side == SidebarSide::Right),
+            sidebar_view: Some(
+                match self.ui.sidebar.view {
+                    Some(SidebarView::Git) => "git",
+                    Some(_) => "files",
+                    None => "none",
+                }
+                .to_owned(),
+            ),
+            sidebar_width: self.ui.sidebar.width,
+            terminal_height: self.ui.terminal_height,
             breakpoints: self
                 .ui
                 .breakpoints

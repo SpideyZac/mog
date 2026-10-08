@@ -123,3 +123,60 @@ fn settings_menu() {
     ui.open(Overlay::Settings);
     assert_snapshot!(screen(&mut editor, &mut ui, 100, 34));
 }
+
+/// The sidebar on the right with the source control view and its bar of buttons.
+#[test]
+fn sidebar_source_control() {
+    use mog_git::FileStatus;
+    use mog_tui::{ActivityBar, SidebarSide, SidebarView, SourceControlView, git_panel::GitRow};
+
+    let mut editor = editor_with(CODE);
+    let mut ui = quiet_ui();
+    ui.root = "/code".into();
+    ui.branch = Some("main".into());
+    ui.git_panel.loaded = true;
+    ui.git_panel.rows = vec![
+        GitRow {
+            path: "/code/src/main.rs".into(),
+            staged: true,
+            status: FileStatus::Modified,
+        },
+        GitRow {
+            path: "/code/notes.txt".into(),
+            staged: false,
+            status: FileStatus::Untracked,
+        },
+    ];
+    ui.sidebar.open = true;
+    ui.sidebar.side = SidebarSide::Right;
+    ui.show_view(SidebarView::Git);
+    let mut compositor = Compositor::new();
+    compositor.push(Box::new(EditorView::new()));
+    compositor.push(Box::new(Tabs::new()));
+    compositor.push(Box::new(SourceControlView::new()));
+    compositor.push(Box::new(ActivityBar::new()));
+    compositor.push(Box::new(StatusLine::new()));
+    let theme = Theme::default();
+    let mut terminal = Terminal::new(TestBackend::new(70, 12)).expect("test terminal");
+    for _ in 0..2 {
+        terminal
+            .draw(|frame| {
+                let mut cx = Context {
+                    editor: &mut editor,
+                    theme: &theme,
+                    ui: &mut ui,
+                };
+                let _ = compositor.render(frame, &mut cx);
+            })
+            .expect("draw");
+    }
+    let buffer = terminal.backend().buffer();
+    let text = (0..12)
+        .map(|y| {
+            let row: String = (0..70).map(|x| buffer[(x, y)].symbol()).collect();
+            row.trim_end().to_owned()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_snapshot!(text);
+}

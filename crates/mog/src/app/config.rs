@@ -8,7 +8,7 @@ use mog_config::{
 };
 use mog_core::{Command, KeyChord};
 use mog_tui::{
-    Focus, Overlay, PromptKind, Theme,
+    Focus, Overlay, PromptKind, SidebarSide, Theme,
     settings::{SettingKey, change as settings_change, persisted},
     theme::to_hex,
 };
@@ -98,6 +98,17 @@ impl App {
             return;
         }
         for key in &changes {
+            match key {
+                SettingKey::Ui("sidebar") => self.ui.sidebar.open = self.ui.config.ui.sidebar,
+                SettingKey::Ui("sidebar_right") => {
+                    self.ui.sidebar.side = if self.ui.config.ui.sidebar_right {
+                        SidebarSide::Right
+                    } else {
+                        SidebarSide::Left
+                    };
+                }
+                _ => {}
+            }
             let (path, value) = persisted(&self.ui.config, key);
             if let Err(err) = save_setting(&path, &value) {
                 self.editor

@@ -28,11 +28,12 @@ use mog_flair::{GraphView, builtin::screensaver};
 use mog_lsp::{LspEvent, convert, features::CodeAction};
 use mog_term::TerminalPanel;
 use mog_tui::{
-    Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu, CursorStyle,
-    DebugPanel, EditorView, EventResult, Explorer, Focus, GitPanel, Minimap, OutputPanel, Overlay,
-    PluginCanvases, PluginPanels, PluginWidgets, Popups, ProjectSearchPanel, PromptKind,
-    ReleaseNotesPopup, SearchBar, SettingsPanel, StatusLine, Tabs, Theme, ThemeEditor, Toasts, Ui,
-    UiEvent, input,
+    ActivityBar, Annotations, ChatPanel, CompletionMenu, Compositor, Context, ContextMenu,
+    CursorStyle, DebugPanel, EditorView, EventResult, Explorer, Focus, GitPanel, Minimap,
+    OutputPanel, Overlay, PluginCanvases, PluginPanels, PluginWidgets, Popups, ProjectSearchPanel,
+    PromptKind, ReleaseNotesPopup, SearchBar, SettingsPanel, SidebarResize, SidebarSide,
+    SidebarView, SourceControlView, StatusLine, Tabs, Theme, ThemeEditor, Toasts, Ui, UiEvent,
+    input,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use tokio::{
@@ -318,6 +319,13 @@ impl App {
             ui.has_explorer = true;
             ui.explorer_open = config.ui.explorer;
             compositor.push(Box::new(Explorer::new(tree)));
+        }
+        compositor.push(Box::new(SourceControlView::new()));
+        compositor.push(Box::new(ActivityBar::new()));
+        compositor.push(Box::new(SidebarResize::new()));
+        ui.sidebar.open = config.ui.sidebar;
+        if config.ui.sidebar_right {
+            ui.sidebar.side = SidebarSide::Right;
         }
         let flair = settings::flair_layer(&config);
         ui.flairs = flair.describe();
@@ -766,6 +774,12 @@ impl App {
         if changed || self.git_refreshed.elapsed() >= GIT_REFRESH_TIME {
             self.git.refresh();
             self.git_refreshed = Instant::now();
+            if self.ui.sidebar_active() == Some(&SidebarView::Git) {
+                self.git.request_changes();
+            }
+        }
+        if self.ui.sidebar_active() == Some(&SidebarView::Git) && !self.git.is_repo() {
+            self.ui.git_panel.loaded = true;
         }
         self.write_swaps();
         self.save_session();
@@ -881,8 +895,8 @@ mod tests {
     use mog_core::{Command, Document, Key, KeyChord};
     use mog_plugin::{PluginEvent, parse_actions};
     use mog_tui::{
-        Context, CursorShape, PanelEvent, PluginSegment, Prompt, PromptKind, Side,
-        popups::PLUGIN_PICKED_COMMAND,
+        Context, CursorShape, Focus, PanelEvent, PluginSegment, Prompt, PromptKind, Side,
+        SidebarSide, SidebarView, popups::PLUGIN_PICKED_COMMAND,
     };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
     use serde_json::{Value, json, to_string};
@@ -1036,6 +1050,40 @@ mod tests {
         assert_eq!(again.editor.document().path(), Some(file.as_path()));
         let selection = again.editor.document().selection();
         assert_eq!((selection.anchor, selection.head), (4, 6));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// The sidebar commands show views and move the bar, and the sizes come back next time.
+    #[tokio::test]
+    async fn sidebar_commands_and_sizes() {
+        let dir = temp_dir();
+        let project = dir.join("project");
+        fs::create_dir_all(&project).expect("project");
+        let state = State::at(dir.join("state"));
+        let mut app = start_with_state(&project, state.clone());
+        app.restore_session();
+        assert!(!app.ui.sidebar.open);
+        app.execute_custom("sidebar.toggle");
+        assert!(app.ui.sidebar.open);
+        assert_eq!(app.ui.sidebar_active(), Some(&SidebarView::Files));
+        // the explorer key folds the view away and brings it back
+        app.execute_custom("explorer.toggle");
+        assert_eq!(app.ui.sidebar_active(), None);
+        app.execute_custom("sidebar.git");
+        assert_eq!(app.ui.sidebar_active(), Some(&SidebarView::Git));
+        assert_eq!(app.ui.focus, Focus::Sidebar);
+        app.execute_custom("sidebar.side");
+        assert_eq!(app.ui.sidebar.side, SidebarSide::Right);
+        app.ui.sidebar.width = Some(40);
+        app.ui.terminal_height = Some(9);
+        app.shut_down();
+        let mut again = start_with_state(&project, state);
+        again.restore_session();
+        assert!(again.ui.sidebar.open);
+        assert_eq!(again.ui.sidebar.side, SidebarSide::Right);
+        assert_eq!(again.ui.sidebar.view, Some(SidebarView::Git));
+        assert_eq!(again.ui.sidebar.width, Some(40));
+        assert_eq!(again.ui.terminal_height, Some(9));
         let _ = fs::remove_dir_all(dir);
     }
 

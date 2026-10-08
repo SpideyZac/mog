@@ -49,7 +49,7 @@ impl App {
         // staging and committing change the gutter, the explorer colors and the panel
         self.git.refresh();
         self.git_refreshed = Instant::now();
-        if self.ui.overlay == Some(Overlay::Git) {
+        if self.ui.git_list_visible() {
             self.git.request_changes();
             self.ui.git_panel.diff_for = None;
         }

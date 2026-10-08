@@ -85,6 +85,8 @@ pub struct TerminalPanel {
     restart_button: Rect,
     /// Whether the panel was drawn since the last tick, so a hidden shell does not animate.
     shown: bool,
+    /// Whether its top edge is being dragged to change its height.
+    resizing: bool,
 }
 
 impl TerminalPanel {
@@ -201,13 +203,18 @@ impl Layer for TerminalPanel {
         let p = theme.palette;
         buf.set_style(area, Style::new().fg(p.fg).bg(p.bg));
         let focused = Self::focused(cx.ui);
-        let border = if focused {
+        let border = if focused || self.resizing {
             theme.sidebar_title
         } else {
             theme.border
         };
+        let rule = if self.resizing {
+            "\u{2501}"
+        } else {
+            "\u{2500}"
+        };
         for x in area.left()..area.right() {
-            buf.set_string(x, area.y, "\u{2500}", border);
+            buf.set_string(x, area.y, rule, border);
         }
         self.screen = Rect {
             y: area.y + 1,
@@ -287,19 +294,22 @@ impl Layer for TerminalPanel {
         EventResult::Consumed
     }
 
-    fn handle_mouse(
-        &mut self,
-        event: MouseEvent,
-        _area: Rect,
-        cx: &mut Context<'_>,
-    ) -> EventResult {
+    fn handle_mouse(&mut self, event: MouseEvent, area: Rect, cx: &mut Context<'_>) -> EventResult {
         let point = Position::new(event.column, event.row);
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) if self.restart_button.contains(point) => {
                 self.restart();
                 cx.ui.focus = Focus::Terminal;
             }
-            MouseEventKind::Down(MouseButton::Left) => cx.ui.focus = Focus::Terminal,
+            MouseEventKind::Down(MouseButton::Left) => {
+                cx.ui.focus = Focus::Terminal;
+                // the top edge is a handle, dragging it up makes the panel taller
+                self.resizing = event.row == area.y;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.resizing => {
+                cx.ui.terminal_height = Some(area.bottom().saturating_sub(event.row));
+            }
+            MouseEventKind::Up(_) => self.resizing = false,
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let up = event.kind == MouseEventKind::ScrollUp;
                 if !self.wheel_to_app(up) {

@@ -2,7 +2,7 @@
 
 use mog_core::movement;
 use mog_tui::{
-    Focus, Overlay, Pane, PromptKind, SplitState, completion,
+    Focus, Overlay, Pane, PromptKind, SidebarSide, SidebarView, SplitState, completion,
     debug_panel::{self},
     ghost, git_panel,
     popups::{PLUGIN_PICKED_COMMAND, SYMBOL_SEARCH_COMMAND},
@@ -61,10 +61,39 @@ impl App {
             "copilot.sign_in" => self.assistant.copilot_sign_in(),
             "copilot.sign_out" => self.assistant.copilot_sign_out(),
             "copilot.status" => self.assistant.copilot_check(),
+            "sidebar.toggle" => {
+                self.ui.toggle_sidebar();
+                self.ui.config.ui.sidebar = self.ui.sidebar.open;
+            }
+            "sidebar.side" => {
+                let right = self.ui.sidebar.side == SidebarSide::Left;
+                self.ui.sidebar.side = if right {
+                    SidebarSide::Right
+                } else {
+                    SidebarSide::Left
+                };
+                self.ui.config.ui.sidebar_right = right;
+            }
+            "sidebar.files" => {
+                if self.ui.has_explorer {
+                    self.ui.show_view(SidebarView::Files);
+                } else {
+                    self.editor
+                        .set_status("open a folder to get a file explorer: mog <folder>");
+                }
+            }
+            "sidebar.git" => {
+                self.ui.show_view(SidebarView::Git);
+                self.git.request_changes();
+            }
             "explorer.toggle" => {
                 if !self.ui.has_explorer {
                     self.editor
                         .set_status("open a folder to get a file explorer: mog <folder>");
+                    return;
+                }
+                if self.ui.sidebar.open {
+                    self.ui.toggle_view(SidebarView::Files);
                     return;
                 }
                 self.ui.explorer_open = !self.ui.explorer_open;
@@ -453,7 +482,9 @@ impl App {
                 self.ui.focus = Focus::Terminal;
             }
             "explorer.focus" => {
-                if self.ui.has_explorer {
+                if self.ui.has_explorer && self.ui.sidebar.open {
+                    self.ui.show_view(SidebarView::Files);
+                } else if self.ui.has_explorer {
                     self.ui.explorer_open = true;
                     self.ui.focus = Focus::Explorer;
                 }

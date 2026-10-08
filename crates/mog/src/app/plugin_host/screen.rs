@@ -11,8 +11,8 @@ use mog_core::KeyChord;
 use mog_plugin::parse_actions;
 use mog_tui::{
     Anchor, CanvasCell, CursorShape, CursorStyle, Edge, Focus, Motion, PanelEvent, PanelSide,
-    PluginCanvas, PluginPanel, PluginWidget, Toast, ToastButton, ToastLevel, ToastProgress,
-    WidgetLine, WidgetSpan,
+    PluginCanvas, PluginPanel, PluginWidget, SidebarView, Toast, ToastButton, ToastLevel,
+    ToastProgress, WidgetLine, WidgetSpan,
 };
 use ratatui::layout::Rect;
 use serde_json::{Value, json};
@@ -43,6 +43,9 @@ const TOAST_TIME: Duration = Duration::from_secs(6);
 
 /// The most panels one plugin can have.
 const MAX_PANELS: usize = 8;
+
+/// The most chars a sidebar button shows.
+const MAX_ICON_CHARS: usize = 2;
 
 /// The most rows a panel can hold.
 const MAX_PANEL_LINES: usize = 10_000;
@@ -547,7 +550,12 @@ impl App {
         let side = match params["side"].as_str() {
             None | Some("right") => PanelSide::Right,
             Some("bottom") => PanelSide::Bottom,
-            Some(other) => return Err(format!("`{other}` is not a side, use right or bottom")),
+            Some("sidebar") => PanelSide::Sidebar,
+            Some(other) => {
+                return Err(format!(
+                    "`{other}` is not a side, use right, bottom or sidebar"
+                ));
+            }
         };
         let lines = match &params["lines"] {
             Value::Null => at.map(|at| panels[at].lines.clone()).unwrap_or_default(),
@@ -565,7 +573,7 @@ impl App {
             }
         };
         let default_size: u16 = match side {
-            PanelSide::Right => 40,
+            PanelSide::Right | PanelSide::Sidebar => 40,
             PanelSide::Bottom => 10,
         };
         let size = params["size"]
@@ -588,6 +596,11 @@ impl App {
                 .map(str::to_owned)
                 .or_else(|| previous.as_ref().map(|panel| panel.title.clone()))
                 .unwrap_or_else(|| plugin.to_owned()),
+            icon: params["icon"]
+                .as_str()
+                .map(|icon| icon.chars().take(MAX_ICON_CHARS).collect())
+                .or_else(|| previous.as_ref().map(|panel| panel.icon.clone()))
+                .unwrap_or_default(),
             id,
             side,
             size: u16::try_from(size).unwrap_or(default_size),
@@ -596,10 +609,13 @@ impl App {
             opened: previous.as_ref().map_or(0, |panel| panel.opened),
             scroll,
         };
-        // a panel that opens, or asks to be shown, goes on top of its side
+        // a panel that opens, or asks to be shown, goes on top of its side. One in the sidebar
+        // only takes the sidebar when it asks to, so a plugin cannot open it by starting up
+        let asked = params["focus"].as_bool().unwrap_or(false);
         let raise = open
-            && (previous.as_ref().is_none_or(|panel| !panel.open)
-                || params["focus"].as_bool().unwrap_or(false));
+            && (asked
+                || (side != PanelSide::Sidebar
+                    && previous.as_ref().is_none_or(|panel| !panel.open)));
         let index = match at {
             Some(at) => {
                 panels[at] = panel;
@@ -615,6 +631,14 @@ impl App {
         };
         if raise {
             self.ui.raise_panel(index);
+            if side == PanelSide::Sidebar {
+                let panel = &self.ui.plugin_panels[index];
+                let view = SidebarView::Plugin {
+                    plugin: panel.plugin.clone(),
+                    id: panel.id.clone(),
+                };
+                self.ui.show_view(view);
+            }
         }
         Ok(())
     }
@@ -736,6 +760,8 @@ impl App {
             "status": rect(layout.status),
             "panel_right": (!layout.plugin_right.is_empty()).then(|| rect(layout.plugin_right)),
             "panel_bottom": (!layout.plugin_bottom.is_empty()).then(|| rect(layout.plugin_bottom)),
+            "sidebar": (!layout.activity_bar.is_empty()).then(|| rect(layout.activity_bar)),
+            "sidebar_view": (!layout.sidebar_view.is_empty()).then(|| rect(layout.sidebar_view)),
             "cursor": self.ui.cursor_screen.map(|at| json!({ "x": at.x, "y": at.y })),
             "flair": config.flair.enabled && !config.ui.serious,
             "reduced_motion": config.ui.reduced_motion,

@@ -14,7 +14,7 @@ use crate::{
     compositor::{Context, EventResult, Layer},
     icons,
     menu::{self, MenuItem},
-    ui::{Focus, Layout, PromptKind, Ui},
+    ui::{Focus, Layout, PromptKind, SidebarSide, Ui},
 };
 
 /// Rows above the file list, taken by the folder name.
@@ -238,7 +238,13 @@ impl Layer for Explorer {
         let theme = cx.theme;
         let focused = cx.ui.focus == Focus::Explorer && cx.ui.overlay.is_none();
         buf.set_style(area, theme.sidebar);
-        let border_x = area.right() - 1;
+        // the rule faces the editor, which is on the other side when the sidebar is on the right
+        let on_right = cx.ui.sidebar.open && cx.ui.sidebar.side == SidebarSide::Right;
+        let (border_x, left) = if on_right {
+            (area.x, area.x + 1)
+        } else {
+            (area.right() - 1, area.x)
+        };
         let border = if focused {
             theme.sidebar_title
         } else {
@@ -249,7 +255,7 @@ impl Layer for Explorer {
         }
         let content = usize::from(area.width - 1);
         buf.set_stringn(
-            area.x,
+            left,
             area.y,
             format!(" \u{25c6} {}", self.tree.name().to_uppercase()),
             content,
@@ -264,7 +270,7 @@ impl Layer for Explorer {
         let entries = self.tree.entries().iter().enumerate().skip(self.scroll);
         for (row, (index, entry)) in (0..self.rows).zip(entries) {
             let y = area.y + HEADER_HEIGHT + u16::try_from(row).unwrap_or(u16::MAX);
-            let line = Rect::new(area.x, y, area.width - 1, 1);
+            let line = Rect::new(left, y, area.width - 1, 1);
             let is_open = open == Some(entry.path.as_path());
             let base = if focused && index == self.selected {
                 theme.sidebar.patch(theme.selection)
@@ -275,7 +281,7 @@ impl Layer for Explorer {
             };
             buf.set_style(line, base);
             let indent = "  ".repeat(entry.depth);
-            let mut x = area.x;
+            let mut x = left;
             let mut put = |text: &str, style: Style| {
                 let room = usize::from(line.right().saturating_sub(x));
                 let (end, _) = buf.set_stringn(x, y, text, room, base.patch(style));

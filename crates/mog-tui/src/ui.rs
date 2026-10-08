@@ -36,8 +36,17 @@ use crate::{
     widgets::{CursorStyle, PluginWidget, WidgetClick},
 };
 
-/// The widest the file explorer gets, in cells.
+/// The width the file explorer and the other sidebar views start with, in cells.
 const EXPLORER_MAX_WIDTH: u16 = 30;
+
+/// The narrowest a sidebar view can be dragged to.
+const SIDEBAR_MIN_WIDTH: u16 = 12;
+
+/// The width of the bar of sidebar buttons.
+pub const ACTIVITY_WIDTH: u16 = 3;
+
+/// The fewest rows the terminal panel can be dragged to, its border row included.
+const TERMINAL_MIN_HEIGHT: u16 = 3;
 
 /// The widest the AI chat panel gets, in cells.
 const CHAT_MAX_WIDTH: u16 = 52;
@@ -74,6 +83,59 @@ pub enum Focus {
     Chat,
     /// The terminal panel.
     Terminal,
+    /// The source control view in the sidebar.
+    Sidebar,
+}
+
+/// Which side of the screen the sidebar is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarSide {
+    /// Before the editor.
+    #[default]
+    Left,
+    /// After the editor.
+    Right,
+}
+
+/// What the sidebar shows next to its buttons.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SidebarView {
+    /// The file explorer.
+    #[default]
+    Files,
+    /// The changed files in git.
+    Git,
+    /// A panel a plugin put in the sidebar.
+    Plugin {
+        /// The plugin that fills it.
+        plugin: String,
+        /// The panel id.
+        id: String,
+    },
+}
+
+/// The sidebar: a bar of buttons with one view beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarState {
+    /// Whether the sidebar is shown. When it is not, the explorer is a plain column.
+    pub open: bool,
+    /// Which side it is on.
+    pub side: SidebarSide,
+    /// The view shown beside the buttons, or none when it is folded away.
+    pub view: Option<SidebarView>,
+    /// How wide the view was dragged to, or none for the usual width.
+    pub width: Option<u16>,
+}
+
+impl Default for SidebarState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            side: SidebarSide::Left,
+            view: Some(SidebarView::Files),
+            width: None,
+        }
+    }
 }
 
 /// One of the two editor panes.
@@ -369,6 +431,10 @@ pub struct Layout {
     pub screen: Rect,
     /// The tab bar, empty when hidden.
     pub tabs: Rect,
+    /// The bar of sidebar buttons, empty when the sidebar is hidden.
+    pub activity_bar: Rect,
+    /// The sidebar view that is not the explorer, empty when none is shown.
+    pub sidebar_view: Rect,
     /// The file explorer, empty when hidden.
     pub explorer: Rect,
     /// Room under the file explorer for flair, empty when hidden or unused.
@@ -416,8 +482,10 @@ pub struct Ui {
     pub legacy_keys: bool,
     /// Whether a folder is open, so there is something to explore.
     pub has_explorer: bool,
-    /// Whether the file explorer is shown.
+    /// Whether the file explorer is shown when the sidebar is not.
     pub explorer_open: bool,
+    /// The sidebar.
+    pub sidebar: SidebarState,
     /// Commands layers want the app to run after the current event.
     pub requests: Vec<Command>,
     /// Things that happened since the last frame.
@@ -520,6 +588,8 @@ pub struct Ui {
     pub split: Option<SplitState>,
     /// Whether the terminal panel is shown.
     pub terminal_open: bool,
+    /// How tall the terminal panel was dragged to, or none for the usual height.
+    pub terminal_height: Option<u16>,
     /// Bytes waiting to be sent to the terminal, like pasted text.
     pub terminal_input: Vec<u8>,
     /// Set to have the terminal panel start a fresh shell.
@@ -600,9 +670,79 @@ impl Ui {
         self.requests.push(command);
     }
 
+    /// Returns the view the sidebar shows beside its buttons, if it shows one.
+    pub fn sidebar_active(&self) -> Option<&SidebarView> {
+        if !self.sidebar.open {
+            return None;
+        }
+        let view = self.sidebar.view.as_ref()?;
+        let available = match view {
+            SidebarView::Files => self.has_explorer,
+            SidebarView::Git => true,
+            SidebarView::Plugin { plugin, id } => self.plugin_panels.iter().any(|panel| {
+                panel.open
+                    && panel.side == PanelSide::Sidebar
+                    && panel.plugin == *plugin
+                    && panel.id == *id
+            }),
+        };
+        available.then_some(view)
+    }
+
     /// Returns whether the explorer is visible.
     pub fn explorer_visible(&self) -> bool {
+        if self.sidebar.open {
+            return self.sidebar_active() == Some(&SidebarView::Files);
+        }
         self.has_explorer && self.explorer_open
+    }
+
+    /// Returns whether the changed files are listed in the sidebar or the source control popup.
+    pub fn git_list_visible(&self) -> bool {
+        self.overlay == Some(Overlay::Git) || self.sidebar_active() == Some(&SidebarView::Git)
+    }
+
+    /// Opens the sidebar showing `view`.
+    pub fn show_view(&mut self, view: SidebarView) {
+        self.focus = match view {
+            SidebarView::Files => Focus::Explorer,
+            SidebarView::Git => Focus::Sidebar,
+            SidebarView::Plugin { .. } => Focus::Editor,
+        };
+        self.sidebar.open = true;
+        self.sidebar.view = Some(view);
+    }
+
+    /// Shows `view` in the sidebar, or folds the view away if it is already shown.
+    pub fn toggle_view(&mut self, view: SidebarView) {
+        if self.sidebar_active() == Some(&view) {
+            self.sidebar.view = None;
+            if matches!(self.focus, Focus::Explorer | Focus::Sidebar) {
+                self.focus = Focus::Editor;
+            }
+        } else {
+            self.show_view(view);
+        }
+    }
+
+    /// Shows or hides the whole sidebar.
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar.open = !self.sidebar.open;
+        if self.sidebar.open {
+            if self.sidebar.view.is_none() {
+                self.sidebar.view = Some(SidebarView::Files);
+            }
+        } else if matches!(self.focus, Focus::Explorer | Focus::Sidebar) {
+            self.focus = Focus::Editor;
+        }
+    }
+
+    /// Returns how wide a sidebar view is when `available` cells are left for it.
+    fn sidebar_width(&self, available: u16) -> u16 {
+        match self.sidebar.width {
+            Some(width) => width.clamp(SIDEBAR_MIN_WIDTH.min(available / 2), available / 2),
+            None => EXPLORER_MAX_WIDTH.min(available / 3),
+        }
     }
 
     /// Splits `screen` into the parts of the editor.
@@ -617,29 +757,63 @@ impl Ui {
             height: screen.height - status_height,
             ..screen
         };
-        let explorer_width = if self.explorer_visible() {
-            EXPLORER_MAX_WIDTH.min(body.width / 3)
+        let bar_width = if self.sidebar.open {
+            ACTIVITY_WIDTH.min(body.width / 4)
         } else {
             0
         };
-        let footer_height = if explorer_width > 0 {
+        let view_width = if self.sidebar.open {
+            self.sidebar_active()
+                .map_or(0, |_| self.sidebar_width(body.width - bar_width))
+        } else if self.explorer_visible() {
+            self.sidebar_width(body.width)
+        } else {
+            0
+        };
+        let on_right = self.sidebar.open && self.sidebar.side == SidebarSide::Right;
+        let (bar_x, view_x, rest_x) = if on_right {
+            let bar_x = body.right() - bar_width;
+            (bar_x, bar_x - view_width, body.x)
+        } else {
+            (body.x, body.x + bar_width, body.x + bar_width + view_width)
+        };
+        let activity_bar = Rect {
+            x: bar_x,
+            width: bar_width,
+            ..body
+        };
+        let view = Rect {
+            x: view_x,
+            width: view_width,
+            ..body
+        };
+        let explorer_shown = view_width > 0 && self.explorer_visible();
+        let footer_height = if explorer_shown {
             self.explorer_footer.min(body.height / 2)
         } else {
             0
         };
-        let explorer = Rect {
-            width: explorer_width,
-            height: body.height - footer_height,
-            ..body
+        let explorer = if explorer_shown {
+            Rect {
+                height: body.height - footer_height,
+                ..view
+            }
+        } else {
+            Rect::default()
         };
         let explorer_footer = Rect {
             y: explorer.bottom(),
             height: footer_height,
             ..explorer
         };
+        let sidebar_view = if view_width > 0 && !explorer_shown {
+            view
+        } else {
+            Rect::default()
+        };
         let rest = Rect {
-            x: body.x + explorer_width,
-            width: body.width - explorer_width,
+            x: rest_x,
+            width: body.width - bar_width - view_width,
             ..body
         };
         let debug_width = if self.debug.open {
@@ -681,7 +855,11 @@ impl Ui {
             ..above
         };
         let terminal_height = if self.terminal_open {
-            (above.height * 2 / 5).min(above.height.saturating_sub(TERMINAL_MIN_EDITOR))
+            let most = above.height.saturating_sub(TERMINAL_MIN_EDITOR);
+            let wanted = self.terminal_height.map_or(above.height * 2 / 5, |height| {
+                height.max(TERMINAL_MIN_HEIGHT)
+            });
+            wanted.min(most)
         } else {
             0
         };
@@ -749,6 +927,8 @@ impl Ui {
         Layout {
             screen,
             tabs,
+            activity_bar,
+            sidebar_view,
             explorer,
             explorer_footer,
             editor,

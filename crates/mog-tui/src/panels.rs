@@ -1,4 +1,5 @@
-//! Panels plugins fill with styled text, docked on the right of the editor or under it.
+//! Panels plugins fill with styled text, docked on the right of the editor, under it or in the
+//! sidebar.
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -11,7 +12,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::{
     compositor::{Context, EventResult, Layer},
     theme::Theme,
-    ui::{Layout, Ui},
+    ui::{Layout, SidebarSide, SidebarView, Ui},
     widgets::{WidgetLine, WidgetSpan},
 };
 
@@ -23,6 +24,8 @@ pub enum PanelSide {
     Right,
     /// Under the editor.
     Bottom,
+    /// In the sidebar, with a button in its bar.
+    Sidebar,
 }
 
 /// A panel a plugin fills.
@@ -34,6 +37,8 @@ pub struct PluginPanel {
     pub id: String,
     /// What its tab says.
     pub title: String,
+    /// The few chars on its sidebar button.
+    pub icon: String,
     /// Where it is docked.
     pub side: PanelSide,
     /// Columns wide on the right, rows tall at the bottom, borders included.
@@ -126,6 +131,16 @@ fn span_style(span: &WidgetSpan, theme: &Theme) -> Style {
     style
 }
 
+/// Returns the index of the plugin panel the sidebar shows, if it shows one.
+pub fn sidebar_panel(ui: &Ui) -> Option<usize> {
+    let Some(SidebarView::Plugin { plugin, id }) = ui.sidebar_active() else {
+        return None;
+    };
+    ui.plugin_panels
+        .iter()
+        .position(|panel| panel.plugin == *plugin && panel.id == *id)
+}
+
 /// What clicking a part of a panel does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Hit {
@@ -182,15 +197,37 @@ impl PluginPanels {
                     ),
                 )
             }
+            PanelSide::Sidebar => {
+                // the rule sits on the edge facing the editor, like the explorer's
+                let on_right = ui.sidebar.side == SidebarSide::Right;
+                let rule_x = if on_right { area.x } else { area.right() - 1 };
+                for y in area.y..area.bottom() {
+                    buf.set_string(rule_x, y, "\u{2502}", theme.border);
+                }
+                let left = if on_right { area.x + 1 } else { area.x };
+                let width = area.width.saturating_sub(1);
+                (
+                    Rect::new(left, area.y, width, 1),
+                    Rect::new(
+                        left + 1,
+                        area.y + 1,
+                        width.saturating_sub(2),
+                        area.height.saturating_sub(1),
+                    ),
+                )
+            }
         };
         let mut x = title_row.x + 1;
-        let tabs: Vec<usize> = ui
-            .plugin_panels
-            .iter()
-            .enumerate()
-            .filter(|(_, other)| other.open && other.side == panel.side)
-            .map(|(other, _)| other)
-            .collect();
+        let tabs: Vec<usize> = if panel.side == PanelSide::Sidebar {
+            vec![index]
+        } else {
+            ui.plugin_panels
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| other.open && other.side == panel.side)
+                .map(|(other, _)| other)
+                .collect()
+        };
         for other in tabs {
             let label = format!(" {} ", ui.plugin_panels[other].title);
             let width = u16::try_from(label.width()).unwrap_or(0);
@@ -236,8 +273,9 @@ impl PluginPanels {
 }
 
 impl Layer for PluginPanels {
-    fn area(&self, layout: &Layout, _ui: &Ui) -> Rect {
-        if layout.plugin_right.is_empty() && layout.plugin_bottom.is_empty() {
+    fn area(&self, layout: &Layout, ui: &Ui) -> Rect {
+        let sidebar = layout.sidebar_view.is_empty() || sidebar_panel(ui).is_none();
+        if layout.plugin_right.is_empty() && layout.plugin_bottom.is_empty() && sidebar {
             Rect::default()
         } else {
             layout.screen
@@ -255,6 +293,10 @@ impl Layer for PluginPanels {
             if let (Some(index), false) = (cx.ui.shown_panel(side), rect.is_empty()) {
                 self.draw(index, rect, buf, cx.ui, cx.theme);
             }
+        }
+        let rect = layout.sidebar_view.intersection(area);
+        if let (Some(index), false) = (sidebar_panel(cx.ui), rect.is_empty()) {
+            self.draw(index, rect, buf, cx.ui, cx.theme);
         }
     }
 

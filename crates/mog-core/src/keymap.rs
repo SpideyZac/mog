@@ -123,6 +123,7 @@ const DEFAULT_BINDINGS: &[(&str, &str)] = &[
     ("ctrl+w", "close_tab"),
     ("ctrl+b", "explorer.toggle"),
     ("ctrl+shift+e", "explorer.focus"),
+    ("ctrl+alt+b", "sidebar.toggle"),
     ("alt+e", "ai.explain"),
     ("ctrl+l", "ai.chat"),
     ("ctrl+`", "terminal.toggle"),

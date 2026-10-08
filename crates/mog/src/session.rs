@@ -57,6 +57,21 @@ pub struct Session {
     pub split: Option<usize>,
     /// Whether the file explorer was open.
     pub explorer_open: bool,
+    /// Whether the sidebar was shown, or none for a session from before it existed.
+    #[serde(default)]
+    pub sidebar_open: Option<bool>,
+    /// Whether the sidebar was on the right.
+    #[serde(default)]
+    pub sidebar_right: Option<bool>,
+    /// The sidebar view that was shown: `files`, `git` or `none` when it was folded away.
+    #[serde(default)]
+    pub sidebar_view: Option<String>,
+    /// How wide the sidebar view was dragged to.
+    #[serde(default)]
+    pub sidebar_width: Option<u16>,
+    /// How tall the terminal panel was dragged to.
+    #[serde(default)]
+    pub terminal_height: Option<u16>,
     /// The breakpoints of each file, lines counted from 0.
     #[serde(default)]
     pub breakpoints: BTreeMap<PathBuf, Vec<usize>>,
@@ -452,6 +467,11 @@ mod tests {
             active: 0,
             split: Some(0),
             explorer_open: true,
+            sidebar_open: Some(true),
+            sidebar_right: Some(false),
+            sidebar_view: Some("git".into()),
+            sidebar_width: Some(40),
+            terminal_height: Some(12),
             breakpoints: BTreeMap::from([("/code/a.rs".into(), vec![3])]),
         };
         state.save_session(Path::new("/code"), &session);
