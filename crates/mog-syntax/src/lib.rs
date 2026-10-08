@@ -94,6 +94,16 @@ const LANGUAGES: &[(&str, &[&str])] = &[
     ("make", &["mk", "mak"]),
 ];
 
+/// The highlight query for HTML files.
+///
+/// HTML is parsed with the Vue grammar. The `tree-sitter-html` crate cannot be linked next to it
+/// because both export the `tree_sitter_html_external_scanner_*` symbols, and the linker gives
+/// the HTML parser the wrong scanner, so every tag after the first one is an error.
+const HTML_HIGHLIGHTS: &str = include_str!("../queries/html/highlights.scm");
+
+/// The injection query for HTML files, for their script and style blocks.
+const HTML_INJECTIONS: &str = include_str!("../queries/html/injections.scm");
+
 /// The highlight query for Vue files.
 const VUE_HIGHLIGHTS: &str = include_str!("../queries/vue/highlights.scm");
 
@@ -373,9 +383,9 @@ fn grammar_parts(language: &str) -> Option<(Language, String, &'static str, &'st
             "",
         ),
         "html" => (
-            tree_sitter_html::LANGUAGE.into(),
-            tree_sitter_html::HIGHLIGHTS_QUERY.to_owned(),
-            tree_sitter_html::INJECTIONS_QUERY,
+            tree_sitter_vue3::LANGUAGE.into(),
+            HTML_HIGHLIGHTS.to_owned(),
+            HTML_INJECTIONS,
             "",
         ),
         "vue" => (
@@ -611,6 +621,23 @@ fn main() {}
             kind_at(&spans, md.find("fn").expect("in sample")),
             Some(Kind::Keyword)
         );
+    }
+
+    /// Tags deep in an HTML page and its script and style blocks all get colors.
+    #[test]
+    fn highlights_whole_html_pages() {
+        let mut highlighter = Highlighter::new();
+        let page = "<!DOCTYPE html>\n<html>\n<head><style>a { color: red; }</style></head>\n<body class=\"a\"><p>hi</p>\n<script>let s = 1</script></body>\n</html>\n";
+        let spans = highlighter.highlight("html", page);
+        let kind = |needle: &str| {
+            let at = page.find(needle).expect("in sample");
+            kind_at(&spans, page[..at].chars().count())
+        };
+        assert_eq!(kind("body"), Some(Kind::Markup));
+        assert_eq!(kind("class"), Some(Kind::Attribute));
+        assert_eq!(kind("</p"), Some(Kind::Punctuation));
+        assert_eq!(kind("color"), Some(Kind::Property));
+        assert_eq!(kind("let"), Some(Kind::Keyword));
     }
 
     /// Injection names resolve by name, alias and extension.

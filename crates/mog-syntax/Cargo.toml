@@ -25,7 +25,6 @@ tree-sitter-cpp.workspace = true
 tree-sitter-css.workspace = true
 tree-sitter-elixir.workspace = true
 tree-sitter-haskell.workspace = true
-tree-sitter-html.workspace = true
 tree-sitter-java.workspace = true
 tree-sitter-lua.workspace = true
 tree-sitter-make.workspace = true
