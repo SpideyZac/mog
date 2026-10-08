@@ -474,7 +474,7 @@ A plugin does not have to wait to be asked. These notifications can be sent at a
 | `capture` | `{ "keys": "all", "except": ["ctrl+s"] }` | Takes keys before the editor, see [Taking keys](#taking-keys) |
 | `timer` | `{ "id": "...", "every": 500 }` | Sends the `timer` event every so many milliseconds, 0 stops it, see [Timers](#timers) |
 | `toast` | `{ "id": "...", "title": "...", "text": "...", "level": "info", "progress": 40, "timeout": 6000, "buttons": [...] }` | Shows a notification in the top right corner, or replaces the one with the same `id`, see [Notifications](#notifications) |
-| `panel` | `{ "id": "...", "title": "...", "side": "right", "size": 40, "lines": [...] }` | Shows or fills a panel docked on the right or at the bottom, see [Panels](#panels) |
+| `panel` | `{ "id": "...", "title": "...", "side": "right", "size": 40, "lines": [...] }` | Shows or fills a panel docked on the right, at the bottom or in the sidebar, see [Panels](#panels) |
 | `canvas` | `{ "id": "...", "cells": [[x, y, "*", "cyan"]], "rows": [...], "clear": true }` | Paints cells over the editor as flair, see [Painting flair](#painting-flair) |
 
 A diagnostic is `{ "start": 0, "end": 4, "severity": "warning", "message": "..." }` in char
@@ -663,8 +663,8 @@ newest four that fit.
 
 ## Panels
 
-The notification `panel` docks a panel of styled text on the right of the editor or under it,
-for things like an outline, a test tree or a log:
+The notification `panel` docks a panel of styled text on the right of the editor, under it or in
+the sidebar, for things like an outline, a test tree or a log:
 
 ```json
 { "id": "tests", "title": "Tests", "side": "right", "size": 40, "lines": ["\u2713 parses", [{ "text": "\u2717 saves", "fg": "red" }]] }
@@ -674,8 +674,9 @@ for things like an outline, a test tree or a log:
 | --- | --- | --- |
 | `id` | `panel` | Which panel of this plugin it is. Sending the same `id` again changes it |
 | `title` | the plugin name | What its tab says |
-| `side` | `right` | `right` or `bottom` |
-| `size` | 40 or 10 | Columns wide on the right or rows tall at the bottom, at most a third of the width or half the height |
+| `side` | `right` | `right`, `bottom` or `sidebar` |
+| `icon` | the first letter of the title | One or two chars on the panel's button in the sidebar, only used with `"side": "sidebar"` |
+| `size` | 40 or 10 | Columns wide on the right or rows tall at the bottom, at most a third of the width or half the height. Ignored in the sidebar, which the user resizes by dragging its edge |
 | `lines` | | The rows, each a string or a list of spans like a [widget](#drawing-on-the-screen)'s. Left out, the rows stay as they were |
 | `open` | `true` | `false` hides it, keeping its rows |
 | `focus` | `false` | Shows it on top of the other panels on its side. A panel that opens goes on top by itself |
@@ -688,6 +689,14 @@ event `panel_click` with the `id`, the `line` counted from 0 in `lines`, the `x`
 and the `button`, and closing it with its close button sends `panel_closed` with the `id`. A plugin can
 have eight panels with up to 10000 rows each. `ui/layout` answers where the shown panels are as
 `panel_right` and `panel_bottom`.
+
+A panel with `"side": "sidebar"` adds a button with its `icon` to the bar of buttons in the
+[sidebar](../README.md#sidebar), under the ones for the file explorer and source control, and shows in the
+sidebar when that button is clicked. The sidebar keeps one view at a time, so there are no tabs.
+Adding the panel does not show it or open the sidebar, since that would be rude on startup. `focus`
+does both. `"open": false` takes the button away, and the close button in the panel's title row does
+the same and sends `panel_closed`. `ui/layout` answers where the sidebar is as `sidebar` (the bar of
+buttons) and `sidebar_view` (the panel or source control, when one is shown).
 
 ## Painting flair
 

@@ -308,8 +308,9 @@ class Plugin:
         self.notify("toast", {"id": id, "done": True})
 
     def panel(self, id, title=None, lines=None, side="right", **options):
-        """Shows or fills a panel docked on the right or at the bottom. options are size, open,
-        focus, scroll and remove, see the docs."""
+        """Shows or fills a panel docked on the right, at the bottom or in the sidebar (side is
+        "right", "bottom" or "sidebar"). options are icon, size, open, focus, scroll and remove,
+        see the docs."""
         params = dict(options, id=id, side=side)
         if title is not None:
             params["title"] = title

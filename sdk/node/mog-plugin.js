@@ -225,7 +225,8 @@ class Plugin {
     this.notify("toast", { id, done: true });
   }
 
-  /** Shows or fills a panel docked on the right or at the bottom, see the docs for options. */
+  /** Shows or fills a panel docked on the right, at the bottom or in the sidebar (side is
+   * "right", "bottom" or "sidebar"), see the docs for options like icon, size and focus. */
   panel(id, { title, lines, side = "right", ...options } = {}) {
     this.notify("panel", { ...options, id, title, lines, side });
   }

@@ -22,7 +22,10 @@ mog .
   (drag select, double and triple click, right click menus)
 - Tabs, splits, multiple cursors, find and replace in a file or the whole project, a built in
   terminal you can scroll and restart
-- File explorer, fuzzy finder, command palette and a key list you can rebind from
+- File explorer, fuzzy finder, command palette that lists what you ran last first, and a key
+  list you can rebind from
+- A sidebar with buttons for the explorer, source control, the terminal and whatever plugins add,
+  on the left or the right. The explorer, the sidebar and the terminal resize by dragging
 - Tree-sitter highlighting for over thirty languages, including code inside Vue, HTML and
   Markdown blocks
 - LSP: diagnostics with error lens, completion, hover, go to definition, references, rename,
@@ -183,6 +186,26 @@ npm i -g @github/copilot-language-server
 Ghost text shows up in gray when you stop typing. `tab` takes all of it, `ctrl+right` takes the
 next word, `alt+]` and `alt+[` cycle suggestions, `esc` dismisses.
 
+## Sidebar
+
+`ctrl+alt+b` (or `sidebar = true` in `[ui]`) shows a bar of buttons on the left edge. The top
+ones switch the view beside the bar, and clicking the button of the view that is showing folds it
+away:
+
+| button | |
+| --- | --- |
+| `◆` | The file explorer |
+| `⎇` | Source control: the changed files, with buttons to stage everything, commit and open the full panel with diffs. Click a file to open it, or its letter to stage or unstage it |
+| plugin buttons | Panels plugins put in the sidebar, see [Panels](docs/plugins.md#panels) |
+
+The bottom ones search the project, toggle the terminal and the AI chat, and open the settings.
+Right click the bar to move the sidebar to the other side or hide it. The `sidebar.files` and
+`sidebar.git` commands show a view from the palette, and `ctrl+b` shows or folds the explorer
+whether the sidebar is on or not.
+
+Drag the edge of the explorer or any sidebar view to make it wider or narrower, and the top edge
+of the terminal to make it taller or shorter. mog remembers the sizes for each project.
+
 ## Config
 
 Everything is optional. A missing or empty file is a valid config. Unknown keys are an error, so
@@ -243,6 +266,8 @@ API keys are never read from or written to the config file.
 | `git_gutter` | `true` | Mark changed lines next to the line numbers |
 | `git_blame` | `true` | Show who last changed the cursor line |
 | `explorer` | `true` | Open the file explorer when opening a folder |
+| `sidebar` | `false` | Show the [sidebar](#sidebar) with buttons for the explorer, source control and plugin views |
+| `sidebar_right` | `false` | Put the sidebar on the right instead of the left |
 | `icons` | `true` | File icons |
 | `serious` | `false` | Serious mode: turns off every flair, sound and music at once |
 | `reduced_motion` | `false` | Hide sparks, the combo counter, critters and matrix rain, and stop things shimmering |
@@ -658,6 +683,7 @@ The selecting versions are named `select_*`, like `select_word_left` and `select
 | --- | --- | --- |
 | `ctrl+b` | `explorer.toggle` | Toggle file explorer |
 | `ctrl+shift+e` | `explorer.focus` | Focus file explorer |
+| `ctrl+alt+b` | `sidebar.toggle` | Toggle the [sidebar](#sidebar) |
 | `ctrl+\` | `split.toggle` | Split editor |
 | `alt+\` | `split.focus` | Focus other split |
 | ``ctrl+` `` ``alt+` `` | `terminal.toggle` | Toggle terminal |
@@ -732,6 +758,9 @@ These have no default keys. Run them from the palette, bind them in `[keys]`, or
 | `search.toggle_word` | Toggle whole word in the open search |
 | `search.toggle_regex` | Toggle regex in the open search |
 | `terminal.restart` | Start a fresh shell in the terminal |
+| `sidebar.side` | Move the sidebar to the other side |
+| `sidebar.files` | Show the file explorer in the sidebar |
+| `sidebar.git` | Show source control in the sidebar |
 | `audio.toggle_music` | Toggle music |
 | `audio.toggle_effects` | Toggle sound effects |
 | `copilot.sign_in` | Sign in to Copilot |
@@ -899,12 +928,15 @@ Every key goes to the shell except the ones bound to `terminal.toggle`, `command
 | wheel | Scroll back through the output, or scroll inside full screen programs like `less` |
 | `shift+pageup` `shift+pagedown` | Scroll back a page |
 | click `⟳ restart` | Start a fresh shell, same as `terminal.restart` |
+| drag the top edge | Make the panel taller or shorter |
 
 ### Mouse
 
 Click to place the cursor, drag to select, shift click to extend, double click for a word, triple
 click for a line, click the gutter to select lines. The wheel scrolls whatever is under it. Right
-click opens a context menu. Tabs, the explorer, panels and popups are all clickable.
+click opens a context menu. Tabs, the explorer, panels and popups are all clickable. Middle click
+opens a file in the explorer, like a left click does, and closes a tab. Dragging the edge of the
+explorer or the top edge of the terminal resizes it.
 
 ## License
 

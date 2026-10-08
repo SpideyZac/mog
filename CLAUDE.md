@@ -51,6 +51,9 @@ for plugins.
 - App level command (needs AI, UI): use a namespaced `Command::Custom` like
   `ai.explain`, handle it in `App::execute_custom` (`crates/mog/src/app/custom.rs`) and list it
   in `crates/mog/src/commands.rs` for the palette.
+- Sidebar view or button: `crates/mog-tui/src/sidebar.rs` has the bar of buttons (`buttons`), the
+  source control view and the drag handle, `SidebarView` and `SidebarState` in `ui.rs` name the
+  views, and plugins add one with a `panel` on the `sidebar` side.
 - Screen element (panel, palette, popup): implement `mog_tui::Layer` and push it in `App::new`.
   Layers get mouse events by hit testing and can animate via `tick`.
 - Flair: implement `mog_flair::Flair` in `crates/mog-flair/src/builtin/` and add it to

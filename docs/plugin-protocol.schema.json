@@ -425,7 +425,8 @@
           "properties": {
             "id": { "type": "string" },
             "title": { "type": "string" },
-            "side": { "enum": ["right", "bottom"] },
+            "side": { "enum": ["right", "bottom", "sidebar"] },
+            "icon": { "type": "string", "maxLength": 8 },
             "size": { "type": "integer", "minimum": 3, "maximum": 200 },
             "lines": { "type": "array" },
             "open": { "type": "boolean" },

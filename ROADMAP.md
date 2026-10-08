@@ -22,6 +22,7 @@
 - [x] Refresh the file explorer when files change on disk
 - [x] Fuzzy file finder
 - [x] Command palette
+- [x] The palette lists the commands you ran last first
 - [x] Key binding list (`ctrl+k` and `mog --keys`)
 - [x] Change key bindings from the key list
 - [x] Search and replace
@@ -33,6 +34,11 @@
 - [x] Save as and new files
 - [x] Problems list
 - [x] Create, rename and delete files from the explorer
+- [x] Open files in the explorer with a middle click
+- [x] Close a file's tab when it is deleted from the explorer
+- [x] Drag the edges of the explorer and the terminal to resize them
+- [x] A sidebar on the left or right with buttons for the explorer, source control, the
+  terminal and plugin views
 - [x] Right click menu
 - [x] Multiple cursors
 - [x] Splits
@@ -88,6 +94,9 @@
 - [x] Document and workspace symbols (outline and go to symbol)
 - [x] Semantic tokens
 - [x] Suggest installing a language server that isn't on `PATH`
+- [x] Auto import: completions apply the imports they need, resolved on pick when the server
+  sends them late
+- [x] Start the Vue server with a TypeScript that has a JavaScript api
 
 ## AI
 
@@ -162,7 +171,7 @@
   entries with `when` conditions
 - [x] Plugin pick lists with previews and choosing several rows
 - [x] Plugin notifications with progress bars and buttons
-- [x] Plugin panels docked on the right or at the bottom
+- [x] Plugin panels docked on the right, at the bottom or in the sidebar
 - [x] A flair canvas plugins paint cell by cell
 - [x] Plugin timeouts, cancellation, crash restarts and logs
 - [x] Plugin SDKs for Python, Node and Rust
