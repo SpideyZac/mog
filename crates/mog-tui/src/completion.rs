@@ -86,6 +86,8 @@ pub struct CompletionItem {
     pub extra: Vec<Change>,
     /// The item as the server sent it, when the server has more to say about it once picked.
     pub resolve: Option<String>,
+    /// Where the server wants the replaced text to start, when it is before the typed word.
+    pub start: Option<usize>,
 }
 
 /// An open completion menu.
@@ -184,7 +186,10 @@ pub fn accept(ui: &mut Ui, editor: &mut Editor) {
         return;
     };
     let head = editor.document().selection().head;
-    editor.complete(state.anchor, head, &item.insert, &item.extra);
+    let start = item
+        .start
+        .map_or(state.anchor, |start| start.min(state.anchor));
+    editor.complete(start, head, &item.insert, &item.extra);
     if let (true, Some(raw)) = (item.extra.is_empty(), &item.resolve) {
         ui.completion_resolve = Some(CompletionResolve {
             raw: raw.clone(),

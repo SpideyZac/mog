@@ -153,6 +153,12 @@ pub fn to_item(item: LspItem, text: &Rope) -> CompletionItem {
             .clone()
             .unwrap_or_else(|| item.label.clone()),
     };
+    let start = match &item.text_edit {
+        Some(CompletionTextEdit::Edit(edit)) => Some(edit.range.start),
+        Some(CompletionTextEdit::InsertAndReplace(edit)) => Some(edit.insert.start),
+        None => None,
+    }
+    .map(|position| convert::position_to_char(text, position));
     let detail = item
         .detail
         .clone()
@@ -178,6 +184,7 @@ pub fn to_item(item: LspItem, text: &Rope) -> CompletionItem {
         insert,
         extra,
         resolve,
+        start,
     }
 }
 
