@@ -128,11 +128,14 @@ impl App {
         let Some(client) = self.lsp.client_for(path) else {
             return;
         };
+        let Ok(resolving) = client.resolve_completion(&item) else {
+            return;
+        };
         let text = document.text().clone();
         let index = self.editor.active();
         let sender = self.lsp_sender.clone();
         tokio::spawn(async move {
-            let Ok(Some(resolved)) = client.resolve_completion(&item).await else {
+            let Ok(Some(resolved)) = resolving.await else {
                 return;
             };
             let changes = lsp::text_changes(

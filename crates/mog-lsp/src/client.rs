@@ -259,6 +259,22 @@ impl Client {
     ///
     /// Returns an error if the server is gone or answers with an error.
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, LspError> {
+        self.send_request(method, params)?.await
+    }
+
+    /// Queues a request right now and returns what waits for the result.
+    ///
+    /// Unlike [`Client::request`] the request is ordered against other messages when this is
+    /// called, not when the result is first polled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is gone.
+    pub fn send_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<impl Future<Output = Result<Value, LspError>> + use<>, LspError> {
         let (reply, response) = oneshot::channel();
         self.outgoing
             .send(Outgoing::Request {
@@ -267,10 +283,12 @@ impl Client {
                 reply,
             })
             .map_err(|_| LspError::Closed)?;
-        response
-            .await
-            .map_err(|_| LspError::Closed)?
-            .map_err(LspError::Server)
+        Ok(async move {
+            response
+                .await
+                .map_err(|_| LspError::Closed)?
+                .map_err(LspError::Server)
+        })
     }
 
     /// Sends a notification. Notifications to a dead server are dropped.
@@ -459,6 +477,9 @@ fn initialize_params(root: &Path, settings: &Value) -> Value {
     // these are plain json since the typed versions take far more lines to say the same
     let text_document = &mut params["capabilities"]["textDocument"];
     text_document["inlayHint"] = json!({ "dynamicRegistration": false });
+    // rust-analyzer only offers items that need an import to clients that can resolve them
+    text_document["completion"]["completionItem"]["resolveSupport"] =
+        json!({ "properties": ["additionalTextEdits"] });
     text_document["signatureHelp"] = json!({
         "signatureInformation": {
             "documentationFormat": ["plaintext", "markdown"],

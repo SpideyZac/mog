@@ -1,6 +1,9 @@
 //! Typed requests for editor features like completion, hover and go to definition.
 
-use std::path::{Path, PathBuf};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+};
 
 use lsp_types::{
     CodeActionOrCommand, CodeActionResponse, CompletionItem, CompletionResponse, Diagnostic,
@@ -116,20 +119,22 @@ impl Client {
 
     /// Asks the server to fill in the rest of a completion `item`, like the imports it needs.
     ///
+    /// The request is sent right away, before any later change to the document, because servers
+    /// answer for the version of the document the item was made for.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the server is gone or fails the request.
-    pub async fn resolve_completion(
+    /// Returns an error if the server is gone.
+    pub fn resolve_completion(
         &self,
         item: &CompletionItem,
-    ) -> Result<Option<CompletionItem>, LspError> {
-        let value = self
-            .request(
-                "completionItem/resolve",
-                serde_json::to_value(item).unwrap_or(Value::Null),
-            )
-            .await?;
-        Ok(serde_json::from_value(value).ok())
+    ) -> Result<impl Future<Output = Result<Option<CompletionItem>, LspError>> + use<>, LspError>
+    {
+        let sent = self.send_request(
+            "completionItem/resolve",
+            serde_json::to_value(item).unwrap_or(Value::Null),
+        )?;
+        Ok(async move { Ok(serde_json::from_value(sent.await?).ok()) })
     }
 
     /// Asks what is at `position` in `path`, as plain text.
