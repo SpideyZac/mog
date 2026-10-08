@@ -621,7 +621,7 @@ fn server_args(name: &str, args: &[String], settings: &Value) -> Vec<String> {
         if let Some(tsdk) = given
             .into_iter()
             .chain(global_typescripts())
-            .find(has_js_api)
+            .find(|dir| has_js_api(dir))
         {
             args.push(format!("--tsdk={}", tsdk.display()));
         }
@@ -630,7 +630,7 @@ fn server_args(name: &str, args: &[String], settings: &Value) -> Vec<String> {
 }
 
 /// Returns whether the TypeScript `lib` folder `dir` has the JavaScript api.
-fn has_js_api(dir: &PathBuf) -> bool {
+fn has_js_api(dir: &Path) -> bool {
     dir.join("typescript.js").is_file()
 }
 
