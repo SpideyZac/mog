@@ -619,6 +619,45 @@ impl Editor {
         self.replace_with(changes);
     }
 
+    /// Replaces `from..to` with `text` and makes the `extra` changes, like imports, as one undo
+    /// step with the cursor after the text.
+    ///
+    /// Extra changes that do not end before `from` are dropped, so the cursor can follow them.
+    pub fn complete(&mut self, from: usize, to: usize, text: &str, extra: &[Change]) {
+        let len = self.document().text().len_chars();
+        let (to, from) = (to.min(len), from.min(to.min(len)));
+        let mut changes: Vec<Change> = extra
+            .iter()
+            .filter(|change| change.start <= change.end && change.end <= from)
+            .cloned()
+            .collect();
+        changes.sort_by_key(|change| change.start);
+        let mut kept: Vec<Change> = Vec::with_capacity(changes.len() + 1);
+        for change in changes {
+            if kept.last().is_none_or(|last| last.end <= change.start) {
+                kept.push(change);
+            }
+        }
+        let shift: isize = kept
+            .iter()
+            .map(|change| {
+                let added = isize::try_from(change.text.chars().count()).unwrap_or(0);
+                added - isize::try_from(change.end - change.start).unwrap_or(0)
+            })
+            .sum();
+        kept.push(Change {
+            start: from,
+            end: to,
+            text: text.to_owned(),
+        });
+        let end = from + text.chars().count();
+        let after = Range::point(end.saturating_add_signed(shift));
+        self.document_mut()
+            .apply(Transaction::new(kept), after, false);
+        self.typing_at = None;
+        self.reveal_cursor();
+    }
+
     /// Applies `changes`, sorted and not overlapping, as one undo step with the cursor after the
     /// first one.
     pub fn replace_with(&mut self, changes: Vec<Change>) {
@@ -1092,6 +1131,50 @@ mod tests {
         let mut editor = editor_with("    foo", 7);
         editor.execute(Command::InsertNewline);
         assert_eq!(text(&editor), "    foo\n    ");
+    }
+
+    /// Completing makes the extra changes above the word in the same undo step.
+    #[test]
+    fn complete_adds_imports() {
+        let mut editor = editor_with(
+            "fn main() {
+    io
+}
+",
+            18,
+        );
+        let import = Change {
+            start: 0,
+            end: 0,
+            text: "use std::io;
+
+"
+            .into(),
+        };
+        let below = Change {
+            start: 18,
+            end: 18,
+            text: "dropped".into(),
+        };
+        editor.complete(16, 18, "io", &[import, below]);
+        assert_eq!(
+            text(&editor),
+            "use std::io;
+
+fn main() {
+    io
+}
+"
+        );
+        assert_eq!(editor.document().selection().head, 32);
+        editor.execute(Command::Undo);
+        assert_eq!(
+            text(&editor),
+            "fn main() {
+    io
+}
+"
+        );
     }
 
     /// Tab inserts spaces to the next stop.

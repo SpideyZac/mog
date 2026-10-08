@@ -3,7 +3,7 @@
 use std::mem;
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use mog_core::{Command, Editor, Key, KeyChord, fuzzy_match};
+use mog_core::{Change, Command, Editor, Key, KeyChord, fuzzy_match};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
@@ -32,7 +32,7 @@ const HOVER_WIDTH: usize = 72;
 const HOVER_LINES: usize = 14;
 
 /// What kind of thing a completion is, for its icon.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ItemKind {
     /// A function or method.
     Function,
@@ -49,6 +49,7 @@ pub enum ItemKind {
     /// A constant or enum member.
     Constant,
     /// Anything else.
+    #[default]
     Other,
 }
 
@@ -69,7 +70,7 @@ impl ItemKind {
 }
 
 /// One completion.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompletionItem {
     /// What the menu shows.
     pub label: String,
@@ -81,6 +82,10 @@ pub struct CompletionItem {
     pub insert: String,
     /// The text to filter by.
     pub filter: String,
+    /// Changes elsewhere that come with it, like the import the item needs.
+    pub extra: Vec<Change>,
+    /// The item as the server sent it, when the server has more to say about it once picked.
+    pub resolve: Option<String>,
 }
 
 /// An open completion menu.
@@ -96,6 +101,8 @@ pub struct CompletionState {
     pub filtered: Vec<usize>,
     /// The highlighted entry of `filtered`.
     pub selected: usize,
+    /// Whether typing more should ask the server again, since it left some items out.
+    pub incomplete: bool,
     /// The typed prefix `filtered` was computed for.
     prefix: Option<String>,
 }
@@ -109,6 +116,7 @@ impl CompletionState {
             document,
             filtered: Vec::new(),
             selected: 0,
+            incomplete: false,
             prefix: None,
         }
     }
@@ -176,7 +184,26 @@ pub fn accept(ui: &mut Ui, editor: &mut Editor) {
         return;
     };
     let head = editor.document().selection().head;
-    editor.replace_ranges(&[(state.anchor, head)], &item.insert);
+    editor.complete(state.anchor, head, &item.insert, &item.extra);
+    if let (true, Some(raw)) = (item.extra.is_empty(), &item.resolve) {
+        ui.completion_resolve = Some(CompletionResolve {
+            raw: raw.clone(),
+            anchor: state.anchor,
+        });
+        ui.request(Command::Custom(RESOLVE_COMMAND.into()));
+    }
+}
+
+/// The command the app runs to ask the server what else a picked completion needs.
+pub const RESOLVE_COMMAND: &str = "lsp.completion_resolve";
+
+/// A picked completion the server may have more to say about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionResolve {
+    /// The item as the server sent it.
+    pub raw: String,
+    /// Where the completed word started.
+    pub anchor: usize,
 }
 
 /// Wraps `text` to `width` columns, keeping at most `max_lines` lines.
@@ -473,10 +500,10 @@ mod tests {
     fn item(label: &str) -> CompletionItem {
         CompletionItem {
             label: label.into(),
-            detail: String::new(),
             kind: ItemKind::Function,
             insert: label.into(),
             filter: label.into(),
+            ..CompletionItem::default()
         }
     }
 

@@ -26,7 +26,13 @@ impl App {
         }
         let word = ch.is_alphanumeric() || ch == '_';
         if word {
-            if self.ui.completion.is_none() {
+            // a list with items left out, like ones that need an import, is asked for again
+            if self
+                .ui
+                .completion
+                .as_ref()
+                .is_none_or(|menu| menu.incomplete)
+            {
                 self.request_completion(false);
             }
         } else if matches!(ch, '.' | ':') {
@@ -65,6 +71,7 @@ impl App {
             return;
         }
         let position = convert::char_to_position(text, head);
+        let text = text.clone();
         self.completion_request += 1;
         let request = self.completion_request;
         let index = self.editor.active();
@@ -72,14 +79,16 @@ impl App {
         tokio::spawn(async move {
             let from_server = async {
                 match (client, path) {
-                    (Some(client), Some(path)) => client
-                        .completion(&path, position)
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(lsp::to_item)
-                        .collect(),
-                    _ => Vec::new(),
+                    (Some(client), Some(path)) => {
+                        let found = client.completion(&path, position).await.unwrap_or_default();
+                        let items = found
+                            .items
+                            .into_iter()
+                            .map(|item| lsp::to_item(item, &text))
+                            .collect();
+                        (items, found.incomplete)
+                    }
+                    _ => (Vec::new(), false),
                 }
             };
             let from_plugins = async {
@@ -88,7 +97,8 @@ impl App {
                     None => Vec::new(),
                 }
             };
-            let (mut items, answers): (Vec<_>, _) = future::join(from_server, from_plugins).await;
+            let ((mut items, incomplete), answers): ((Vec<_>, _), _) =
+                future::join(from_server, from_plugins).await;
             for (_, answer) in answers {
                 items.extend(plugin_host::completion_items(&answer));
             }
@@ -97,7 +107,48 @@ impl App {
                 document: index,
                 anchor,
                 items,
+                incomplete,
             });
+        });
+    }
+
+    /// Asks the language server what else the completion that was just picked needs, like an
+    /// import, and applies it when the answer comes.
+    pub(super) fn resolve_completion(&mut self) {
+        let Some(picked) = self.ui.completion_resolve.take() else {
+            return;
+        };
+        let Ok(item) = serde_json::from_str(&picked.raw) else {
+            return;
+        };
+        let document = self.editor.document();
+        let Some(path) = document.path() else {
+            return;
+        };
+        let Some(client) = self.lsp.client_for(path) else {
+            return;
+        };
+        let text = document.text().clone();
+        let index = self.editor.active();
+        let sender = self.lsp_sender.clone();
+        tokio::spawn(async move {
+            let Ok(Some(resolved)) = client.resolve_completion(&item).await else {
+                return;
+            };
+            let changes = lsp::text_changes(
+                &text,
+                resolved
+                    .additional_text_edits
+                    .as_deref()
+                    .unwrap_or_default(),
+            );
+            if !changes.is_empty() {
+                let _ = sender.send(LspReply::CompletionEdits {
+                    document: index,
+                    anchor: picked.anchor,
+                    changes,
+                });
+            }
         });
     }
 
@@ -495,12 +546,31 @@ impl App {
                 document,
                 anchor,
                 items,
+                incomplete,
             } => {
                 if request != self.completion_request || document != self.editor.active() {
                     return;
                 }
-                self.ui.completion =
-                    (!items.is_empty()).then(|| CompletionState::new(items, anchor, document));
+                self.ui.completion = (!items.is_empty()).then(|| {
+                    let mut menu = CompletionState::new(items, anchor, document);
+                    menu.incomplete = incomplete;
+                    menu
+                });
+            }
+            LspReply::CompletionEdits {
+                document,
+                anchor,
+                changes,
+            } => {
+                if document != self.editor.active() {
+                    return;
+                }
+                // only edits above the word are safe to make now that it has been typed in
+                let changes = changes
+                    .into_iter()
+                    .filter(|change| change.end <= anchor)
+                    .collect();
+                self.editor.apply_changes(changes);
             }
             LspReply::Hover(text, pos) => self.ui.hover = Some((text, pos)),
             LspReply::Definition(path, position) => {

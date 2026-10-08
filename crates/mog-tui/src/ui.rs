@@ -18,7 +18,7 @@ use crate::{
     annotate::AnnotateState,
     canvas::PluginCanvas,
     chat::ChatState,
-    completion::CompletionState,
+    completion::{CompletionResolve, CompletionState},
     debug_panel::DebugState,
     ghost::Ghost,
     git_panel::GitPanelState,
@@ -490,6 +490,8 @@ pub struct Ui {
     pub cursor_screen: Option<Position>,
     /// The open completion menu.
     pub completion: Option<CompletionState>,
+    /// A picked completion waiting for the app to ask the server about.
+    pub completion_resolve: Option<CompletionResolve>,
     /// Hover text and the char offset it is about.
     pub hover: Option<(String, usize)>,
     /// The signature of the call being typed.

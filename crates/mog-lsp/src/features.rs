@@ -17,6 +17,15 @@ use crate::{
 /// Edits for each file that changes, as `(file, edits)`.
 pub type FileEdits = Vec<(PathBuf, Vec<TextEdit>)>;
 
+/// The answer to a completion request.
+#[derive(Debug, Clone, Default)]
+pub struct Completions {
+    /// The completions.
+    pub items: Vec<CompletionItem>,
+    /// Whether typing more should ask again, since the server leaves some out.
+    pub incomplete: bool,
+}
+
 /// A code action as its title and the edits it makes.
 pub type CodeAction = (String, FileEdits);
 
@@ -85,18 +94,42 @@ impl Client {
         &self,
         path: &Path,
         position: Position,
-    ) -> Result<Vec<CompletionItem>, LspError> {
+    ) -> Result<Completions, LspError> {
         let Some(params) = at(path, position) else {
-            return Ok(Vec::new());
+            return Ok(Completions::default());
         };
         let value = self.request("textDocument/completion", params).await?;
         Ok(
             match serde_json::from_value::<Option<CompletionResponse>>(value) {
-                Ok(Some(CompletionResponse::Array(items))) => items,
-                Ok(Some(CompletionResponse::List(list))) => list.items,
-                _ => Vec::new(),
+                Ok(Some(CompletionResponse::Array(items))) => Completions {
+                    items,
+                    incomplete: false,
+                },
+                Ok(Some(CompletionResponse::List(list))) => Completions {
+                    items: list.items,
+                    incomplete: list.is_incomplete,
+                },
+                _ => Completions::default(),
             },
         )
+    }
+
+    /// Asks the server to fill in the rest of a completion `item`, like the imports it needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is gone or fails the request.
+    pub async fn resolve_completion(
+        &self,
+        item: &CompletionItem,
+    ) -> Result<Option<CompletionItem>, LspError> {
+        let value = self
+            .request(
+                "completionItem/resolve",
+                serde_json::to_value(item).unwrap_or(Value::Null),
+            )
+            .await?;
+        Ok(serde_json::from_value(value).ok())
     }
 
     /// Asks what is at `position` in `path`, as plain text.

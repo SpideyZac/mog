@@ -2,7 +2,7 @@
 
 use mog_core::movement;
 use mog_tui::{
-    Focus, Overlay, Pane, PromptKind, SplitState,
+    Focus, Overlay, Pane, PromptKind, SplitState, completion,
     debug_panel::{self},
     ghost, git_panel,
     popups::{PLUGIN_PICKED_COMMAND, SYMBOL_SEARCH_COMMAND},
@@ -177,6 +177,7 @@ impl App {
                 self.ui.focus = Focus::Editor;
             }
             "lsp.complete" => self.request_completion(true),
+            completion::RESOLVE_COMMAND => self.resolve_completion(),
             "lsp.hover" => self.request_feature("hover"),
             "lsp.definition" => self.request_feature("definition"),
             "lsp.format" => self.request_feature("format"),

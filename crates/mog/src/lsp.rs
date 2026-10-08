@@ -13,7 +13,7 @@ use lsp_types::{
 };
 use mog_config::{Install, ServerConfig, install_hint};
 use mog_core::{
-    Change, Diagnostic, Document, Editor, InlayHint, SemanticToken, Severity, TokenKind,
+    Change, Diagnostic, Document, Editor, InlayHint, Rope, SemanticToken, Severity, TokenKind,
 };
 use mog_lsp::{
     Client, LspEvent, convert,
@@ -41,6 +41,17 @@ pub enum LspReply {
         anchor: usize,
         /// The completions.
         items: Vec<CompletionItem>,
+        /// Whether typing more should ask again.
+        incomplete: bool,
+    },
+    /// Changes a server wants made along with a completion that was picked, like an import.
+    CompletionEdits {
+        /// The document index the completion was in.
+        document: usize,
+        /// Where the completed word started.
+        anchor: usize,
+        /// The changes.
+        changes: Vec<Change>,
     },
     /// What is under the cursor, as text, for the char offset `pos`.
     Hover(String, usize),
@@ -99,8 +110,21 @@ pub fn place((path, position): (PathBuf, Position)) -> (PathBuf, usize, usize) {
     (path, line, column)
 }
 
-/// Converts a server completion to a menu item.
-pub fn to_item(item: LspItem) -> CompletionItem {
+/// Converts the text edits of a server, like the import a completion needs, to changes of
+/// `text`.
+pub fn text_changes(text: &Rope, edits: &[TextEdit]) -> Vec<Change> {
+    edits
+        .iter()
+        .map(|edit| Change {
+            start: convert::position_to_char(text, edit.range.start),
+            end: convert::position_to_char(text, edit.range.end),
+            text: edit.new_text.clone(),
+        })
+        .collect()
+}
+
+/// Converts a server completion to a menu item for the document `text`.
+pub fn to_item(item: LspItem, text: &Rope) -> CompletionItem {
     let kind = match item.kind {
         Some(
             CompletionItemKind::FUNCTION
@@ -138,12 +162,22 @@ pub fn to_item(item: LspItem) -> CompletionItem {
                 .map(|doc| features::documentation_text(doc).to_owned())
         })
         .unwrap_or_default();
+    let extra = text_changes(
+        text,
+        item.additional_text_edits.as_deref().unwrap_or_default(),
+    );
+    // servers that leave the imports out of the list send them when the item is resolved
+    let resolve = (extra.is_empty() && item.data.is_some())
+        .then(|| serde_json::to_string(&item).ok())
+        .flatten();
     CompletionItem {
         filter: item.filter_text.unwrap_or_else(|| item.label.clone()),
         label: item.label,
         detail,
         kind,
         insert,
+        extra,
+        resolve,
     }
 }
 
@@ -227,15 +261,7 @@ pub fn to_tokens(
 
 /// Converts server text edits to changes on `document`.
 pub fn to_changes(document: &Document, edits: &[TextEdit]) -> Vec<Change> {
-    let text = document.text();
-    edits
-        .iter()
-        .map(|edit| Change {
-            start: convert::position_to_char(text, edit.range.start),
-            end: convert::position_to_char(text, edit.range.end),
-            text: edit.new_text.clone(),
-        })
-        .collect()
+    text_changes(document.text(), edits)
 }
 
 /// The language servers for the current project.
@@ -644,11 +670,54 @@ fn global_typescripts() -> Vec<PathBuf> {
 mod tests {
     use std::{env, fs, path::PathBuf, process};
 
+    use lsp_types::{CompletionItem, Position, Range, TextEdit};
     use mog_config::{Config, ServerConfig};
+    use mog_core::{Change, Rope};
     use serde_json::{Value, json};
     use tokio::sync::mpsc;
 
-    use super::{LanguageServers, exit_message, server_args, server_settings};
+    use super::{LanguageServers, exit_message, server_args, server_settings, to_item};
+
+    /// Imports sent with a completion become changes, and ones left to resolve are kept for it.
+    #[test]
+    fn completion_carries_its_imports() {
+        let text = Rope::from_str(
+            "fn main() {
+    io
+}
+",
+        );
+        let import = TextEdit {
+            range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+            new_text: "use std::io;
+"
+            .into(),
+        };
+        let with_edit = CompletionItem {
+            label: "io".into(),
+            additional_text_edits: Some(vec![import]),
+            ..CompletionItem::default()
+        };
+        let item = to_item(with_edit, &text);
+        let expected = Change {
+            start: 0,
+            end: 0,
+            text: "use std::io;
+"
+            .into(),
+        };
+        assert_eq!(item.extra, [expected]);
+        assert_eq!(item.resolve, None);
+        let lazy = CompletionItem {
+            label: "io".into(),
+            data: Some(json!({ "id": 1 })),
+            ..CompletionItem::default()
+        };
+        let item = to_item(lazy, &text);
+        assert!(item.extra.is_empty());
+        assert!(item.resolve.is_some_and(|raw| raw.contains("\"id\":1")));
+        assert_eq!(to_item(CompletionItem::default(), &text).resolve, None);
+    }
 
     /// The Vue server is pointed at the project's TypeScript, other servers are left alone.
     #[test]

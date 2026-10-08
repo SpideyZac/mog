@@ -146,6 +146,7 @@ pub fn completion_items(answer: &Value) -> Vec<CompletionItem> {
                         filter: item["filter"].as_str().unwrap_or(&label).to_owned(),
                         kind,
                         label,
+                        ..CompletionItem::default()
                     })
                 })
                 .collect()
