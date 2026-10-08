@@ -323,6 +323,7 @@ impl App {
         compositor.push(Box::new(SourceControlView::new()));
         compositor.push(Box::new(ActivityBar::new()));
         compositor.push(Box::new(SidebarResize::new()));
+        compositor.push(Box::new(SidebarResize::bar_edge()));
         ui.sidebar.open = config.ui.sidebar;
         if config.ui.sidebar_right {
             ui.sidebar.side = SidebarSide::Right;
@@ -1968,7 +1969,6 @@ plugin.run()
     async fn drags_the_sidebar_edge() {
         let dir = temp_dir();
         let mut config = Config::default();
-        config.flair.enabled = false;
         config.updates.check = false;
         config.ui.git_blame = false;
         config.ui.sidebar = true;

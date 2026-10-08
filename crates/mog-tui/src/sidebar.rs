@@ -258,27 +258,61 @@ fn view_rect(layout: &Layout) -> Rect {
     }
 }
 
-/// The edge of the sidebar view, which changes its width when dragged.
+/// Which line next to the sidebar view a [`SidebarResize`] is the handle of.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Handle {
+    /// The line between the view and the editor.
+    #[default]
+    ViewEdge,
+    /// The line between the bar of buttons and the view.
+    BarEdge,
+}
+
+/// A line next to the sidebar view, which changes its width when dragged.
 #[derive(Debug, Default)]
 pub struct SidebarResize {
+    /// The line this is the handle of.
+    handle: Handle,
     /// The whole view in the last frame.
     view: Rect,
-    /// Whether a drag is going on.
-    dragging: bool,
+    /// The column and the width of the view when the drag started, if one is going on.
+    grabbed: Option<(u16, u16)>,
 }
 
 impl SidebarResize {
-    /// Creates the layer.
+    /// Creates the handle on the line between the view and the editor.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Creates the handle on the line between the bar of buttons and the view.
+    pub fn bar_edge() -> Self {
+        Self {
+            handle: Handle::BarEdge,
+            ..Self::default()
+        }
+    }
+
+    /// Returns whether the sidebar is on the right.
+    fn on_right(ui: &Ui) -> bool {
+        ui.sidebar.open && ui.sidebar.side == SidebarSide::Right
+    }
+
     /// Returns the column of the edge in `view`.
     fn edge(view: Rect, ui: &Ui) -> u16 {
-        if ui.sidebar.open && ui.sidebar.side == SidebarSide::Right {
+        if Self::on_right(ui) {
             view.x
         } else {
             view.right().saturating_sub(1)
+        }
+    }
+
+    /// Returns the column of the line this handle is on.
+    fn line(&self, view: Rect, ui: &Ui) -> u16 {
+        match (self.handle, Self::on_right(ui)) {
+            (Handle::ViewEdge, _) => Self::edge(view, ui),
+            (Handle::BarEdge, true) => view.right(),
+            (Handle::BarEdge, false) => view.x.saturating_sub(1),
         }
     }
 }
@@ -286,12 +320,12 @@ impl SidebarResize {
 impl Layer for SidebarResize {
     fn area(&self, layout: &Layout, ui: &Ui) -> Rect {
         let view = view_rect(layout);
-        if view.is_empty() {
+        if view.is_empty() || (self.handle == Handle::BarEdge && !ui.sidebar.open) {
             return Rect::default();
         }
-        // the cells around the edge count too, since one column is hard to hit
+        // the cells around the line count too, since one column is hard to hit
         Rect {
-            x: Self::edge(view, ui).saturating_sub(1),
+            x: self.line(view, ui).saturating_sub(1),
             width: 3,
             ..view
         }
@@ -299,10 +333,10 @@ impl Layer for SidebarResize {
 
     fn render(&mut self, area: Rect, buf: &mut Buffer, cx: &mut Context<'_>) {
         self.view = view_rect(&cx.ui.layout(buf.area));
-        if self.dragging {
-            let x = Self::edge(self.view, cx.ui);
+        if self.grabbed.is_some() {
+            let x = self.line(self.view, cx.ui);
             for y in area.top()..area.bottom() {
-                buf.set_string(x, y, "\u{2503}", cx.theme.sidebar_title);
+                buf.set_string(x, y, "┃", cx.theme.sidebar_title);
             }
         }
     }
@@ -314,17 +348,22 @@ impl Layer for SidebarResize {
         cx: &mut Context<'_>,
     ) -> EventResult {
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => self.dragging = true,
-            MouseEventKind::Drag(MouseButton::Left) if self.dragging => {
-                let on_right = cx.ui.sidebar.open && cx.ui.sidebar.side == SidebarSide::Right;
-                let width = if on_right {
-                    self.view.right().saturating_sub(event.column)
-                } else {
-                    (event.column + 1).saturating_sub(self.view.x)
-                };
-                cx.ui.sidebar.width = Some(width.min(MAX_DRAGGED_WIDTH));
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.grabbed = Some((event.column, self.view.width));
             }
-            MouseEventKind::Up(_) => self.dragging = false,
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some((column, width)) = self.grabbed {
+                    let (from, to) = if Self::on_right(cx.ui) {
+                        (event.column, column)
+                    } else {
+                        (column, event.column)
+                    };
+                    let wanted = i32::from(width) + i32::from(to) - i32::from(from);
+                    let wanted = u16::try_from(wanted.max(0)).unwrap_or(0);
+                    cx.ui.sidebar.width = Some(wanted.min(MAX_DRAGGED_WIDTH));
+                }
+            }
+            MouseEventKind::Up(_) => self.grabbed = None,
             _ => {}
         }
         EventResult::Consumed
@@ -704,8 +743,8 @@ mod tests {
         mouse(&mut compositor, &mut ui, &mut editor, down, (32, 5));
         mouse(&mut compositor, &mut ui, &mut editor, drag, (40, 5));
         mouse(&mut compositor, &mut ui, &mut editor, up, (40, 5));
-        assert_eq!(ui.sidebar.width, Some(37));
-        assert_eq!(ui.layout(Rect::new(0, 0, 100, 30)).explorer.width, 37);
+        assert_eq!(ui.sidebar.width, Some(38));
+        assert_eq!(ui.layout(Rect::new(0, 0, 100, 30)).explorer.width, 38);
 
         ui.sidebar.width = None;
         ui.sidebar.side = SidebarSide::Right;
@@ -713,7 +752,7 @@ mod tests {
         mouse(&mut compositor, &mut ui, &mut editor, down, (67, 5));
         mouse(&mut compositor, &mut ui, &mut editor, drag, (60, 5));
         mouse(&mut compositor, &mut ui, &mut editor, up, (60, 5));
-        assert_eq!(ui.sidebar.width, Some(36));
+        assert_eq!(ui.sidebar.width, Some(37));
     }
 
     /// Without the sidebar the explorer is a plain column that can still be resized.
