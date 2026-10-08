@@ -36,6 +36,9 @@ error_lens = true
 git_gutter = true
 git_blame = true
 explorer = true
+# a bar of buttons for the explorer, source control and plugin views, on the left or the right
+sidebar = false
+sidebar_right = false
 icons = true
 # 0 to 100, below 100 a see through terminal shows through
 opacity = 100

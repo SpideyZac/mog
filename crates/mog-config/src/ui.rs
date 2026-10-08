@@ -36,6 +36,11 @@ pub struct UiConfig {
     pub git_blame: bool,
     /// Whether the file explorer starts open when a folder is opened.
     pub explorer: bool,
+    /// Whether the sidebar with buttons for the file explorer, source control and plugin views
+    /// is shown.
+    pub sidebar: bool,
+    /// Whether the sidebar is on the right instead of the left.
+    pub sidebar_right: bool,
     /// Whether files get little colored icons.
     pub icons: bool,
     /// How solid backgrounds are, from 0 to 100. Below 100 the terminal shows through, if it
@@ -65,6 +70,8 @@ impl Default for UiConfig {
             git_gutter: true,
             git_blame: true,
             explorer: true,
+            sidebar: false,
+            sidebar_right: false,
             icons: true,
             opacity: 100,
             serious: false,
