@@ -345,7 +345,7 @@ impl Layer for Explorer {
 
     fn handle_mouse(&mut self, event: MouseEvent, area: Rect, cx: &mut Context<'_>) -> EventResult {
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Middle) => {
                 cx.ui.focus = Focus::Explorer;
                 let row = event.row.saturating_sub(area.y);
                 let Some(row) = row.checked_sub(HEADER_HEIGHT) else {
@@ -468,6 +468,31 @@ mod tests {
         };
         assert_eq!(row(1), " \u{25be} src");
         assert_eq!(row(2), "   \u{25cf} main.rs");
+    }
+
+    /// Middle clicking a file opens it like a left click does.
+    #[test]
+    fn middle_click_opens_files() {
+        let dir = project("middle");
+        let mut editor = Editor::new(Box::new(MemoryClipboard::default()));
+        let theme = Theme::default();
+        let mut ui = ui();
+        let mut compositor = Compositor::new();
+        compositor.push(Box::new(Explorer::new(FileTree::new(&dir).expect("tree"))));
+        let event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Middle),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        let mut cx = Context {
+            editor: &mut editor,
+            theme: &theme,
+            ui: &mut ui,
+        };
+        compositor.handle_mouse(event, Rect::new(0, 0, 60, 10), &mut cx);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(editor.document().name(), "notes.txt");
     }
 
     /// The keyboard moves the highlight, expands folders and opens files.
