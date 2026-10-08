@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     io::ErrorKind,
+    iter,
     path::{Path, PathBuf},
 };
 
@@ -417,6 +418,13 @@ impl LanguageServers {
         let config = &self.configs[name];
         let settings = server_settings(name, &config.settings, &self.root);
         let args = server_args(name, &config.args, &settings);
+        if name == "vue" && !args.iter().any(|arg| arg.starts_with("--tsdk")) {
+            self.failed.insert(name.to_owned());
+            return Err(Some(
+                "the vue language server needs TypeScript 5 or 6, and TypeScript 7 has no                  JavaScript api: npm i -g typescript@5"
+                    .into(),
+            ));
+        }
         match Client::start(
             name,
             &config.command,
@@ -641,7 +649,7 @@ pub fn exit_message(server: &str, reason: Option<&str>) -> String {
 /// config already says.
 fn server_settings(name: &str, settings: &Value, root: &Path) -> Value {
     if name == "typescript" {
-        return with_vue_plugin(settings);
+        return with_tsserver(&with_vue_plugin(settings), root);
     }
     if name != "vue" || !settings["typescript"]["tsdk"].is_null() {
         return settings.clone();
@@ -656,6 +664,28 @@ fn server_settings(name: &str, settings: &Value, root: &Path) -> Value {
         json!({})
     };
     settings["typescript"] = json!({ "tsdk": tsdk.to_string_lossy() });
+    settings
+}
+
+/// Points the TypeScript server at a TypeScript that has a JavaScript api, since it falls back to
+/// one that has none (TypeScript 7) and stops.
+fn with_tsserver(settings: &Value, root: &Path) -> Value {
+    if !settings["tsserver"]["path"].is_null() {
+        return settings.clone();
+    }
+    let project = root.join("node_modules").join("typescript").join("lib");
+    let Some(tsdk) = iter::once(project)
+        .chain(global_typescripts())
+        .find(|dir| has_js_api(dir))
+    else {
+        return settings.clone();
+    };
+    let mut settings = if settings.is_object() {
+        settings.clone()
+    } else {
+        json!({})
+    };
+    settings["tsserver"] = json!({ "path": tsdk.join("tsserver.js").to_string_lossy() });
     settings
 }
 
@@ -828,6 +858,26 @@ mod tests {
         let own = ["--tsdk=/mine".to_owned()];
         assert_eq!(server_args("vue", &own, &settings), own);
         assert_eq!(server_args("go", &[], &settings), Vec::<String>::new());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The TypeScript server is pointed at the project's TypeScript when it has a JavaScript api.
+    #[test]
+    fn typescript_server_gets_a_tsserver() {
+        let root = env::temp_dir().join(format!("mog-tsserver-{}", process::id()));
+        let tsdk = root.join("node_modules").join("typescript").join("lib");
+        fs::create_dir_all(&tsdk).expect("temp dir");
+        fs::write(tsdk.join("typescript.js"), "").expect("file");
+        let settings = server_settings("typescript", &Value::Null, &root);
+        assert_eq!(
+            settings["tsserver"]["path"],
+            json!(tsdk.join("tsserver.js").to_string_lossy())
+        );
+        let given = json!({ "tsserver": { "path": "/mine" } });
+        assert_eq!(
+            server_settings("typescript", &given, &root)["tsserver"],
+            given["tsserver"]
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
